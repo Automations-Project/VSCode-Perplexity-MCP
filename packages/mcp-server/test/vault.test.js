@@ -129,3 +129,56 @@ describe("getMasterKey — fail-fast in stdio-server mode", () => {
     await expect(getMasterKey()).rejects.toThrow(/Vault locked/);
   });
 });
+
+import { mkdtempSync, rmSync as rm2 } from "node:fs";
+import { tmpdir as tmp2 } from "node:os";
+import { join as join2 } from "node:path";
+import { Vault } from "../src/vault.js";
+import { createProfile as cp } from "../src/profiles.js";
+
+describe("Vault interface", () => {
+  let TMP;
+  beforeEach(() => {
+    TMP = mkdtempSync(join2(tmp2(), "pplx-vault-"));
+    process.env.PERPLEXITY_CONFIG_DIR = TMP;
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "test-passphrase-xyz";
+    __resetKeyCache();
+  });
+  afterEach(() => {
+    rm2(TMP, { recursive: true, force: true });
+    delete process.env.PERPLEXITY_CONFIG_DIR;
+    delete process.env.PERPLEXITY_VAULT_PASSPHRASE;
+  });
+
+  it("set+get roundtrip", async () => {
+    cp("work");
+    const v = new Vault();
+    await v.set("work", "cookies", JSON.stringify([{ name: "session", value: "abc" }]));
+    const got = await v.get("work", "cookies");
+    expect(JSON.parse(got)).toEqual([{ name: "session", value: "abc" }]);
+  });
+
+  it("get returns null for unknown key", async () => {
+    cp("work");
+    const v = new Vault();
+    expect(await v.get("work", "nothing")).toBeNull();
+  });
+
+  it("delete removes a single key", async () => {
+    cp("work");
+    const v = new Vault();
+    await v.set("work", "email", "alice@co.co");
+    await v.set("work", "cookies", "[]");
+    await v.delete("work", "email");
+    expect(await v.get("work", "email")).toBeNull();
+    expect(await v.get("work", "cookies")).toBe("[]");
+  });
+
+  it("deleteAll removes the whole vault", async () => {
+    cp("work");
+    const v = new Vault();
+    await v.set("work", "cookies", "[]");
+    await v.deleteAll("work");
+    expect(await v.get("work", "cookies")).toBeNull();
+  });
+});

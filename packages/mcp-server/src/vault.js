@@ -128,3 +128,49 @@ export async function getMasterKey() {
     "See https://github.com/<OWNER>/perplexity-user-mcp/blob/main/docs/vault-unseal.md"
   );
 }
+
+async function readVaultObject(profileName) {
+  const p = getProfilePaths(profileName).vault;
+  if (!existsSync(p)) return {};
+  const key = await getMasterKey();
+  const blob = readFileSync(p);
+  const plain = decryptBlob(blob, key);
+  try {
+    return JSON.parse(plain.toString("utf8"));
+  } catch {
+    return {};
+  }
+}
+
+async function writeVaultObject(profileName, obj) {
+  const paths = getProfilePaths(profileName);
+  if (!existsSync(paths.dir)) mkdirSync(paths.dir, { recursive: true });
+  const key = await getMasterKey();
+  const blob = encryptBlob(Buffer.from(JSON.stringify(obj)), key);
+  writeFileSync(paths.vault + ".tmp", blob);
+  // rename is atomic on POSIX; on Windows we need to remove first
+  if (existsSync(paths.vault)) rmSync(paths.vault, { force: true });
+  writeFileSync(paths.vault, blob);  // safer cross-platform than rename-over
+  rmSync(paths.vault + ".tmp", { force: true });
+}
+
+export class Vault {
+  async get(profile, key) {
+    const obj = await readVaultObject(profile);
+    return obj[key] ?? null;
+  }
+  async set(profile, key, value) {
+    const obj = await readVaultObject(profile);
+    obj[key] = value;
+    await writeVaultObject(profile, obj);
+  }
+  async delete(profile, key) {
+    const obj = await readVaultObject(profile);
+    delete obj[key];
+    await writeVaultObject(profile, obj);
+  }
+  async deleteAll(profile) {
+    const p = getProfilePaths(profile).vault;
+    if (existsSync(p)) rmSync(p, { force: true });
+  }
+}
