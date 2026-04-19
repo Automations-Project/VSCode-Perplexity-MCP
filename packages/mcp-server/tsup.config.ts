@@ -12,6 +12,7 @@ export default defineConfig({
     redact: "src/redact.js",
     "health-check": "src/health-check.js",
     "manual-login-runner": "src/manual-login-runner.js",
+    "login-runner": "src/login-runner.js",
   },
   format: ["esm"],
   platform: "node",
