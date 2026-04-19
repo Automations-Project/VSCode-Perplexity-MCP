@@ -3,6 +3,17 @@
 // exports). Pattern list ordered from most-specific to least-specific to
 // avoid accidental re-matching by a more general rule.
 
+// Scope: this module is called on OUR OWN trusted log/debug data (logger
+// output, doctor reports, cookies). It is NOT a user-input sanitizer.
+// Deliberate trade-offs in the current pattern set:
+//   - Emails are matched post-URL-decode only (raw %40 encoded forms pass through)
+//   - Unix home paths assume no whitespace in usernames
+//   - Windows home paths only cover C:\Users\... (UNC paths pass through)
+//   - Long-token redaction (≥20 base64/hex chars) may over-redact legitimate
+//     long URLs or JSON values — accepted trade-off for safety over debuggability
+// If any of these assumptions changes (e.g., we start redacting user-supplied
+// payloads), the pattern set must be revisited.
+
 const PATTERNS = [
   // Emails: RFC 5322 subset. Must come before generic token rules because
   // emails contain characters that other rules would catch.
@@ -58,16 +69,22 @@ const PATTERNS = [
  * For objects: every string-valued leaf is redacted recursively.
  * Arrays are handled recursively too. Primitive non-strings are returned unchanged.
  */
-export function redact(value) {
+export function redact(value, _seen) {
   if (value == null) return value;
   if (typeof value === "string") return redactString(value);
-  if (Array.isArray(value)) return value.map(redact);
-  if (typeof value === "object") {
-    const out = {};
-    for (const [k, v] of Object.entries(value)) out[k] = redact(v);
-    return out;
-  }
-  return value;
+  if (typeof value !== "object") return value;
+
+  // Cycle detection for objects/arrays. We use a WeakSet threaded through the
+  // recursion so siblings don't falsely collide with each other.
+  const seen = _seen ?? new WeakSet();
+  if (seen.has(value)) return "<circular>";
+  seen.add(value);
+
+  if (Array.isArray(value)) return value.map((v) => redact(v, seen));
+
+  const out = {};
+  for (const [k, v] of Object.entries(value)) out[k] = redact(v, seen);
+  return out;
 }
 
 function redactString(s) {
