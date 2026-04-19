@@ -47,3 +47,52 @@ export function decryptBlob(blob, key) {
     throw new Error("Vault decrypt failed: wrong key or corrupted blob.");
   }
 }
+
+const KEYTAR_SERVICE = "perplexity-user-mcp";
+const KEYTAR_ACCOUNT = "vault-master-key";
+
+let _keyCache = null;
+
+export function __resetKeyCache() { _keyCache = null; }
+
+async function tryKeytar() {
+  try {
+    const mod = await import("keytar");
+    return mod.default ?? mod;
+  } catch {
+    return null;
+  }
+}
+
+async function keyFromKeychain() {
+  const keytar = await tryKeytar();
+  if (!keytar) return null;
+  try {
+    let hex = await keytar.getPassword(KEYTAR_SERVICE, KEYTAR_ACCOUNT);
+    if (!hex) {
+      // Generate + persist
+      const fresh = randomBytes(32);
+      hex = fresh.toString("hex");
+      await keytar.setPassword(KEYTAR_SERVICE, KEYTAR_ACCOUNT, hex);
+    }
+    const buf = Buffer.from(hex, "hex");
+    if (buf.length !== 32) return null;
+    return buf;
+  } catch {
+    return null;
+  }
+}
+
+export async function getMasterKey() {
+  if (_keyCache) return _keyCache;
+  const k = await keyFromKeychain();
+  if (k) {
+    _keyCache = k;
+    return k;
+  }
+  // Fallbacks land in Task 12.
+  throw new Error(
+    "Vault locked: keychain unavailable. " +
+    "Install OS keychain (libsecret on Linux) or set PERPLEXITY_VAULT_PASSPHRASE."
+  );
+}
