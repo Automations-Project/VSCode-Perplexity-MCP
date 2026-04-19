@@ -63,7 +63,9 @@ export async function start(opts = {}) {
     const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
     sessions.set(token, { email, userId: makeUserId(email) });
     pendingOtp.delete(email);
-    res.cookie("__Secure-next-auth.session-token", token, { httpOnly: true, secure: false, path: "/" });
+    // `__Secure-` prefix requires secure:true — Chromium rejects the cookie otherwise.
+    // 127.0.0.1 is a potentially-trustworthy origin so Chromium accepts Secure cookies over plain HTTP.
+    res.cookie("__Secure-next-auth.session-token", token, { httpOnly: true, secure: true, path: "/" });
     res.cookie("cf_clearance", "mock-cf", { path: "/" });
     res.status(200).json({ ok: true });
   });
