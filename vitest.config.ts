@@ -19,6 +19,7 @@ export default defineConfig({
         "packages/**/node_modules/**",
         "packages/mcp-server/dev-tools/**",
       ],
+      all: true,
       // Per-file thresholds — security-critical modules must clear ≥95%.
       // Build fails if any listed module drops below its floor.
       thresholds: {
