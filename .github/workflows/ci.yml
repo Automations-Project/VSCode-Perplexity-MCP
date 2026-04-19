@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+env:
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
+
+      - name: Verify MCP tarball is clean
+        if: matrix.node-version == 22
+        run: |
+          cd packages/mcp-server
+          npm pack --dry-run 2>&1 | tee /tmp/pack.txt
+          if grep -qE "dev-tools/|\.chrome-profile|captures/" /tmp/pack.txt; then
+            echo "ERROR: Private files would leak into npm tarball!"
+            exit 1
+          fi
+
+      - name: Verify VSIX is clean
+        if: matrix.node-version == 22
+        run: |
+          cd packages/extension
+          npm run prepare:package-deps || true
+          npx @vscode/vsce ls --no-dependencies 2>&1 | tee /tmp/vsix.txt
+          if grep -qE "\.ts$|dev-tools" /tmp/vsix.txt; then
+            echo "ERROR: Source files would leak into VSIX!"
+            exit 1
+          fi

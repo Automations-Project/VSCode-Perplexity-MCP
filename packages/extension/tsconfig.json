@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022", "DOM"],
+    "types": ["node", "vscode", "vitest/globals"],
+    "rootDir": "../..",
+    "allowJs": false
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts", "../../src/**/*.ts"]
+}

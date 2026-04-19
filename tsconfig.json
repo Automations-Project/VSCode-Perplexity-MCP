@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "sourceMap": true
+  },
+  "references": [
+    { "path": "packages/shared" },
+    { "path": "packages/mcp-server" },
+    { "path": "packages/extension" }
+  ],
+  "include": [],
+  "exclude": ["node_modules", "dist"]
+}

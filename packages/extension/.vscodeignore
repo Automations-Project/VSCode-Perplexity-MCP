@@ -1,0 +1,12 @@
+**
+!dist/**
+!dist/mcp/**
+!dist/node_modules/**
+!media/**
+!package.json
+!README.md
+!LICENSE*
+**/*.ts
+**/*.map
+**/tsup.config.*
+**/tsconfig.*

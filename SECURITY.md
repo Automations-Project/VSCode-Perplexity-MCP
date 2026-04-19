@@ -12,7 +12,7 @@
 If you discover a security vulnerability in perplexity-user-mcp, please
 report it privately via GitHub Security Advisories:
 
-https://github.com/<OWNER>/perplexity-user-mcp/security/advisories/new
+https://github.com/Automations-Project/VSCode-Perplexity-MCP/security/advisories/new
 
 Or via email to security@<TBD — user to fill>.
 

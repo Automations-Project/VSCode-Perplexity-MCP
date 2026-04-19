@@ -1,0 +1,653 @@
+// Auto-generated from a captured /rest/models/config response (2026-04-18).
+// Used as a fallback when the extension has no live cache yet (pre-login) or
+// when Cloudflare blocks a refresh fetch. Regenerate by replaying a capture.
+
+import type { ModelsConfigResponse } from "./models.js";
+
+export const MODELS_FALLBACK_CAPTURED_AT = "2026-04-18T21:05:07.321Z";
+
+export const MODELS_FALLBACK: ModelsConfigResponse = {
+  "config_schema": "v1",
+  "models": {
+    "turbo": {
+      "label": "Best",
+      "description": "Adapts to each query",
+      "mode": "search",
+      "provider": "PERPLEXITY"
+    },
+    "pplx_pro": {
+      "label": "Best",
+      "description": "Automatically selects the best model based on the query",
+      "mode": "search",
+      "provider": null
+    },
+    "pplx_pro_upgraded": {
+      "label": "Pro",
+      "description": "Automatically selects the most responsive model based on the query",
+      "mode": "search",
+      "provider": "PERPLEXITY"
+    },
+    "experimental": {
+      "label": "Sonar",
+      "description": "Perplexity's latest model",
+      "mode": "search",
+      "provider": "PERPLEXITY"
+    },
+    "gpt4o": {
+      "label": "GPT-4o",
+      "description": "OpenAI's versatile model",
+      "mode": "search",
+      "provider": "OPENAI"
+    },
+    "gpt41": {
+      "label": "GPT-4.1",
+      "description": "OpenAI's advanced model",
+      "mode": "search",
+      "provider": "OPENAI"
+    },
+    "gpt5": {
+      "label": "GPT-5",
+      "description": "OpenAI's latest model",
+      "mode": "search",
+      "provider": "OPENAI"
+    },
+    "gpt5_thinking": {
+      "label": "GPT-5 Thinking",
+      "description": "OpenAI's latest model with thinking",
+      "mode": "search",
+      "provider": "OPENAI"
+    },
+    "gpt51": {
+      "label": "GPT-5.1",
+      "description": "OpenAI's latest model",
+      "mode": "search",
+      "provider": "OPENAI"
+    },
+    "gpt51_thinking": {
+      "label": "GPT-5.1 Thinking",
+      "description": "OpenAI's latest model with thinking",
+      "mode": "search",
+      "provider": "OPENAI"
+    },
+    "gpt51_low_thinking": {
+      "label": "GPT-5.1 Low Thinking",
+      "description": "OpenAI's latest model with low reasoning effort",
+      "mode": "search",
+      "provider": "OPENAI"
+    },
+    "gpt5_mini": {
+      "label": "GPT-5 Mini",
+      "description": "OpenAI's compact model",
+      "mode": "search",
+      "provider": "OPENAI"
+    },
+    "gpt5_nano": {
+      "label": "GPT-5 Nano",
+      "description": "OpenAI's smallest model",
+      "mode": "search",
+      "provider": "OPENAI"
+    },
+    "gpt5_pro": {
+      "label": "GPT-5 Pro",
+      "description": "OpenAI's latest, most powerful reasoning model",
+      "mode": "search",
+      "provider": "OPENAI"
+    },
+    "chatgpt_tools": {
+      "label": "ChatGPT Tools",
+      "description": "OpenAI's tool-enabled model",
+      "mode": "search",
+      "provider": "OPENAI"
+    },
+    "gpt52": {
+      "label": "GPT-5.2",
+      "description": "OpenAI's latest model",
+      "mode": "search",
+      "provider": "OPENAI"
+    },
+    "gpt52_thinking": {
+      "label": "GPT-5.2 Thinking",
+      "description": "OpenAI's latest model with thinking",
+      "mode": "search",
+      "provider": "OPENAI"
+    },
+    "gpt52_pro": {
+      "label": "GPT-5.2 Pro",
+      "description": "OpenAI's most powerful reasoning model",
+      "mode": "search",
+      "provider": "OPENAI"
+    },
+    "gpt54": {
+      "label": "GPT-5.4",
+      "description": "OpenAI's latest model",
+      "mode": "search",
+      "provider": "OPENAI"
+    },
+    "gpt54_thinking": {
+      "label": "GPT-5.4 Thinking",
+      "description": "OpenAI's latest model with thinking",
+      "mode": "search",
+      "provider": "OPENAI"
+    },
+    "claude2": {
+      "label": "Claude Sonnet 4.0",
+      "description": "Anthropic's advanced model",
+      "mode": "search",
+      "provider": "ANTHROPIC"
+    },
+    "claude37sonnetthinking": {
+      "label": "Claude Sonnet 4.0 Thinking",
+      "description": "Anthropic's reasoning model",
+      "mode": "search",
+      "provider": "ANTHROPIC"
+    },
+    "claude40sonnetthinking": {
+      "label": "Claude Sonnet 4.0 Thinking",
+      "description": "Anthropic's reasoning model",
+      "mode": "search",
+      "provider": "ANTHROPIC"
+    },
+    "gemini25pro": {
+      "label": "Gemini 2.5 Pro",
+      "description": "Google's latest model",
+      "mode": "search",
+      "provider": "GOOGLE"
+    },
+    "gemini30pro": {
+      "label": "Gemini 3 Pro",
+      "description": "Google's most advanced model",
+      "mode": "search",
+      "provider": "GOOGLE"
+    },
+    "gemini30flash": {
+      "label": "Gemini 3 Flash",
+      "description": "Google's fast model",
+      "mode": "search",
+      "provider": "GOOGLE"
+    },
+    "gemini30flash_high": {
+      "label": "Gemini 3 Flash Thinking",
+      "description": "Google's fast model",
+      "mode": "search",
+      "provider": "GOOGLE"
+    },
+    "gemini31pro_low": {
+      "label": "Gemini 3.1 Pro",
+      "description": "Google's latest model",
+      "mode": "search",
+      "provider": "GOOGLE"
+    },
+    "gemini31pro_high": {
+      "label": "Gemini 3.1 Pro Thinking",
+      "description": "Google's latest model with thinking",
+      "mode": "search",
+      "provider": "GOOGLE"
+    },
+    "grok": {
+      "label": "Grok 3 Beta",
+      "description": "xAI's Grok 3 model",
+      "mode": "search",
+      "provider": "XAI"
+    },
+    "claude40opus": {
+      "label": "Claude Opus 4.0",
+      "description": "Anthropic's Opus reasoning model",
+      "mode": "search",
+      "provider": "ANTHROPIC"
+    },
+    "claude40opusthinking": {
+      "label": "Claude Opus 4.0 Thinking",
+      "description": "Anthropic's Opus reasoning model with thinking",
+      "mode": "search",
+      "provider": "ANTHROPIC"
+    },
+    "claude41opus": {
+      "label": "Claude Opus 4.1",
+      "description": "Anthropic's Opus reasoning model",
+      "mode": "search",
+      "provider": "ANTHROPIC"
+    },
+    "claude41opusthinking": {
+      "label": "Claude Opus 4.1 Thinking",
+      "description": "Anthropic's Opus reasoning model with thinking",
+      "mode": "search",
+      "provider": "ANTHROPIC"
+    },
+    "claude45opus": {
+      "label": "Claude Opus 4.5",
+      "description": "Anthropic's most advanced model",
+      "mode": "search",
+      "provider": "ANTHROPIC"
+    },
+    "claude45opusthinking": {
+      "label": "Claude Opus 4.5 Thinking",
+      "description": "Anthropic's Opus reasoning model with thinking",
+      "mode": "search",
+      "provider": "ANTHROPIC"
+    },
+    "claude46opus": {
+      "label": "Claude Opus 4.6",
+      "description": "Anthropic's most advanced model",
+      "mode": "search",
+      "provider": "ANTHROPIC"
+    },
+    "claude46opusthinking": {
+      "label": "Claude Opus 4.6 Thinking",
+      "description": "Anthropic's Opus reasoning model with thinking",
+      "mode": "search",
+      "provider": "ANTHROPIC"
+    },
+    "claude47opus": {
+      "label": "Claude Opus 4.7",
+      "description": "Anthropic's most advanced model",
+      "mode": "search",
+      "provider": "ANTHROPIC"
+    },
+    "claude47opusthinking": {
+      "label": "Claude Opus 4.7 Thinking",
+      "description": "Anthropic's most advanced model with thinking",
+      "mode": "search",
+      "provider": "ANTHROPIC"
+    },
+    "claude45sonnet": {
+      "label": "Claude Sonnet 4.5",
+      "description": "Anthropic's fast model",
+      "mode": "search",
+      "provider": "ANTHROPIC"
+    },
+    "claude45sonnetthinking": {
+      "label": "Claude Sonnet 4.5 Thinking",
+      "description": "Anthropic's newest reasoning model",
+      "mode": "search",
+      "provider": "ANTHROPIC"
+    },
+    "claude46sonnet": {
+      "label": "Claude Sonnet 4.6",
+      "description": "Anthropic's fast model",
+      "mode": "search",
+      "provider": "ANTHROPIC"
+    },
+    "claude46sonnetthinking": {
+      "label": "Claude Sonnet 4.6 Thinking",
+      "description": "Anthropic's newest reasoning model",
+      "mode": "search",
+      "provider": "ANTHROPIC"
+    },
+    "claude45haiku": {
+      "label": "Claude Haiku 4.5",
+      "description": "Anthropic's compact model",
+      "mode": "search",
+      "provider": "ANTHROPIC"
+    },
+    "claude45haikuthinking": {
+      "label": "Claude Haiku 4.5 Thinking",
+      "description": "Anthropic's compact reasoning model",
+      "mode": "search",
+      "provider": "ANTHROPIC"
+    },
+    "kimik2thinking": {
+      "label": "Kimi K2",
+      "description": "Moonshot AI's latest model",
+      "mode": "search",
+      "provider": "MOONSHOT_AI"
+    },
+    "kimik25thinking": {
+      "label": "Kimi K2.5 Thinking",
+      "description": "Moonshot AI's latest model",
+      "mode": "search",
+      "provider": "MOONSHOT_AI"
+    },
+    "grok4": {
+      "label": "Grok 4",
+      "description": "xAI's reasoning model",
+      "mode": "search",
+      "provider": "XAI"
+    },
+    "grok4nonthinking": {
+      "label": "Grok 4",
+      "description": "xAI's advanced model",
+      "mode": "search",
+      "provider": "XAI"
+    },
+    "grok41reasoning": {
+      "label": "Grok 4.1",
+      "description": "xAI's latest model",
+      "mode": "search",
+      "provider": "XAI"
+    },
+    "grok41nonreasoning": {
+      "label": "Grok 4.1",
+      "description": "xAI's latest model",
+      "mode": "search",
+      "provider": "XAI"
+    },
+    "nv_nemotron_3_super": {
+      "label": "Nemotron 3 Super",
+      "description": "NVIDIA's Nemotron 3 Super 120B model",
+      "mode": "search",
+      "provider": "NVIDIA"
+    },
+    "o4mini": {
+      "label": "o4-mini",
+      "description": "OpenAI's latest reasoning model",
+      "mode": "research",
+      "provider": "OPENAI"
+    },
+    "o3pro": {
+      "label": "o3-pro",
+      "description": "OpenAI's powerful reasoning model",
+      "mode": "search",
+      "provider": "OPENAI"
+    },
+    "pplx_sonar_internal_testing": {
+      "label": "Sonar Testing - Alpha",
+      "description": "Sonar model alpha variant",
+      "mode": "search",
+      "provider": "SONAR"
+    },
+    "pplx_sonar_internal_testing_v2": {
+      "label": "Sonar Testing - Beta",
+      "description": "Sonar model beta variant",
+      "mode": "search",
+      "provider": "SONAR"
+    },
+    "pplx_alpha": {
+      "label": "Deep research",
+      "description": "Fast and thorough for routine research",
+      "mode": "research",
+      "provider": "PERPLEXITY"
+    },
+    "pplx_beta": {
+      "label": "Create files and apps",
+      "description": "Multi-step tasks with advanced troubleshooting",
+      "mode": "studio",
+      "provider": "PERPLEXITY"
+    },
+    "pplx_study": {
+      "label": "Study",
+      "description": "Fast model for routine research",
+      "mode": "study",
+      "provider": "PERPLEXITY"
+    },
+    "pplx_agentic_research": {
+      "label": "Agentic research",
+      "description": "Delegate research tasks to specialized sub-agents",
+      "mode": "agentic_research",
+      "provider": "PERPLEXITY"
+    },
+    "pplx_asi": {
+      "label": "Computer",
+      "description": "Computer (default model)",
+      "mode": "asi",
+      "provider": "ANTHROPIC"
+    },
+    "pplx_asi_opus": {
+      "label": "Claude Opus 4.7",
+      "description": "Computer powered by Claude 4.7 Opus",
+      "mode": "asi",
+      "provider": "ANTHROPIC"
+    },
+    "pplx_asi_opus_thinking": {
+      "label": "Claude Opus 4.7 Thinking",
+      "description": "Computer powered by Claude 4.7 Opus with thinking",
+      "mode": "asi",
+      "provider": "ANTHROPIC"
+    },
+    "pplx_asi_gpt54": {
+      "label": "GPT-5.4",
+      "description": "Computer powered by GPT-5.4",
+      "mode": "asi",
+      "provider": "OPENAI"
+    },
+    "pplx_asi_kimi": {
+      "label": "Kimi K2.5",
+      "description": "Computer powered by Kimi K2.5",
+      "mode": "asi",
+      "provider": "FIREWORKS"
+    },
+    "pplx_asi_qwen": {
+      "label": "Qwen 3.6 Plus",
+      "description": "Computer powered by Qwen 3.6 Plus",
+      "mode": "asi",
+      "provider": "FIREWORKS"
+    },
+    "pplx_asi_sonnet": {
+      "label": "Claude Sonnet 4.6",
+      "description": "Computer powered by Claude 4.6 Sonnet",
+      "mode": "asi",
+      "provider": "ANTHROPIC"
+    },
+    "pplx_asi_sonnet_thinking": {
+      "label": "Claude Sonnet 4.6 Thinking",
+      "description": "Computer powered by Claude 4.6 Sonnet with thinking",
+      "mode": "asi",
+      "provider": "ANTHROPIC"
+    },
+    "pplx_business_assistant": {
+      "label": "Business Assistant",
+      "description": "Business AI assistant",
+      "mode": "asi",
+      "provider": "ANTHROPIC"
+    },
+    "pplx_document_review": {
+      "label": "Document Review",
+      "description": "Comprehensive document analysis and fact-checking",
+      "mode": "document_review",
+      "provider": "PERPLEXITY"
+    },
+    "comet_browser_agent_sonnet": {
+      "label": "Claude Sonnet 4.6",
+      "description": "Browser agent powered by Claude 4.6 Sonnet",
+      "mode": "browser_agent",
+      "provider": "ANTHROPIC"
+    },
+    "comet_browser_agent_opus": {
+      "label": "Claude Opus 4.7",
+      "description": "Browser agent powered by Claude 4.7 Opus",
+      "mode": "browser_agent",
+      "provider": "ANTHROPIC"
+    },
+    "claudecode": {
+      "label": "Claude Code",
+      "description": "Anthropic's coding agent",
+      "mode": "search",
+      "provider": "ANTHROPIC"
+    },
+    "codex": {
+      "label": "Codex",
+      "description": "OpenAI's coding agent",
+      "mode": "search",
+      "provider": "OPENAI"
+    },
+    "gpt53codex": {
+      "label": "GPT-5.3 Codex",
+      "description": "OpenAI's coding model",
+      "mode": "search",
+      "provider": "OPENAI"
+    },
+    "nanobananapro": {
+      "label": "Nano Banana Pro",
+      "description": "Google's advanced image generation model",
+      "mode": "search",
+      "provider": "GOOGLE"
+    },
+    "nanobanana2": {
+      "label": "Nano Banana 2",
+      "description": "Google's image generation model",
+      "mode": "search",
+      "provider": "GOOGLE"
+    },
+    "sora2": {
+      "label": "Sora 2",
+      "description": "OpenAI's video generation model",
+      "mode": "search",
+      "provider": "OPENAI"
+    },
+    "sora2pro": {
+      "label": "Sora 2 Pro",
+      "description": "OpenAI's advanced video generation model",
+      "mode": "search",
+      "provider": "OPENAI"
+    },
+    "veo31": {
+      "label": "Veo 3.1",
+      "description": "Google's video generation model",
+      "mode": "search",
+      "provider": "GOOGLE"
+    },
+    "veo31fast": {
+      "label": "Veo 3.1 Fast",
+      "description": "Google's fast video generation model",
+      "mode": "search",
+      "provider": "GOOGLE"
+    }
+  },
+  "config": [
+    {
+      "label": "Sonar",
+      "description": "Perplexity's latest model",
+      "subheading": null,
+      "has_new_tag": false,
+      "subscription_tier": "pro",
+      "non_reasoning_model": "experimental",
+      "reasoning_model": null,
+      "text_only_model": false,
+      "audience": null,
+      "is_default": false
+    },
+    {
+      "label": "Claude Sonnet 4.6",
+      "description": "Browser agent powered by Claude 4.6 Sonnet",
+      "subheading": null,
+      "has_new_tag": false,
+      "subscription_tier": "pro",
+      "non_reasoning_model": "comet_browser_agent_sonnet",
+      "reasoning_model": null,
+      "text_only_model": false,
+      "audience": null,
+      "is_default": false
+    },
+    {
+      "label": "Claude Opus 4.7",
+      "description": "Browser agent powered by Claude 4.7 Opus",
+      "subheading": null,
+      "has_new_tag": false,
+      "subscription_tier": "max",
+      "non_reasoning_model": "comet_browser_agent_opus",
+      "reasoning_model": null,
+      "text_only_model": false,
+      "audience": null,
+      "is_default": false
+    },
+    {
+      "label": "GPT-5.4",
+      "description": "OpenAI's latest model",
+      "subheading": null,
+      "has_new_tag": false,
+      "subscription_tier": "pro",
+      "non_reasoning_model": "gpt54",
+      "reasoning_model": "gpt54_thinking",
+      "text_only_model": false,
+      "audience": null,
+      "is_default": false
+    },
+    {
+      "label": "Gemini 3.1 Pro",
+      "description": "Google's latest model",
+      "subheading": null,
+      "has_new_tag": false,
+      "subscription_tier": "pro",
+      "non_reasoning_model": null,
+      "reasoning_model": "gemini31pro_high",
+      "text_only_model": false,
+      "audience": null,
+      "is_default": false
+    },
+    {
+      "label": "Claude Sonnet 4.6",
+      "description": "Anthropic's fast model",
+      "subheading": null,
+      "has_new_tag": false,
+      "subscription_tier": "pro",
+      "non_reasoning_model": "claude46sonnet",
+      "reasoning_model": "claude46sonnetthinking",
+      "text_only_model": false,
+      "audience": null,
+      "is_default": false
+    },
+    {
+      "label": "Claude Opus 4.7",
+      "description": "Anthropic's most advanced model",
+      "subheading": null,
+      "has_new_tag": true,
+      "subscription_tier": "max",
+      "non_reasoning_model": "claude47opus",
+      "reasoning_model": "claude47opusthinking",
+      "text_only_model": false,
+      "audience": null,
+      "is_default": false
+    },
+    {
+      "label": "Nemotron 3 Super",
+      "description": "NVIDIA's Nemotron 3 Super 120B model",
+      "subheading": null,
+      "has_new_tag": false,
+      "subscription_tier": "pro",
+      "non_reasoning_model": null,
+      "reasoning_model": "nv_nemotron_3_super",
+      "text_only_model": false,
+      "audience": null,
+      "is_default": false
+    },
+    {
+      "label": "Claude Opus 4.7",
+      "description": "Computer powered by Claude 4.7 Opus",
+      "subheading": "Powerful model for complex tasks.",
+      "has_new_tag": false,
+      "subscription_tier": "pro",
+      "non_reasoning_model": "pplx_asi_opus",
+      "reasoning_model": "pplx_asi_opus_thinking",
+      "text_only_model": false,
+      "audience": null,
+      "is_default": true
+    },
+    {
+      "label": "GPT-5.4",
+      "description": "Computer powered by GPT-5.4",
+      "subheading": "Newest model for complex tasks.",
+      "has_new_tag": true,
+      "subscription_tier": "pro",
+      "non_reasoning_model": "pplx_asi_gpt54",
+      "reasoning_model": null,
+      "text_only_model": false,
+      "audience": null,
+      "is_default": false
+    },
+    {
+      "label": "Claude Sonnet 4.6",
+      "description": "Computer powered by Claude 4.6 Sonnet",
+      "subheading": "Great for most everyday tasks. Uses fewer credits.",
+      "has_new_tag": false,
+      "subscription_tier": "pro",
+      "non_reasoning_model": "pplx_asi_sonnet",
+      "reasoning_model": "pplx_asi_sonnet_thinking",
+      "text_only_model": false,
+      "audience": null,
+      "is_default": false
+    }
+  ],
+  "default_models": {
+    "search": "turbo",
+    "research": "pplx_alpha",
+    "agentic_research": "pplx_agentic_research",
+    "study": "pplx_study",
+    "document_review": "pplx_document_review",
+    "browser_agent": "comet_browser_agent_sonnet",
+    "asi": "pplx_asi"
+  },
+  "agentic_research_compare_models": [
+    "gpt54_thinking",
+    "claude47opusthinking",
+    "gemini31pro_high"
+  ]
+} as ModelsConfigResponse;

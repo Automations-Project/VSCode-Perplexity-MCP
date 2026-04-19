@@ -1,0 +1,69 @@
+# ═══════════════════════════════════════════════════════
+# Whitelist-based .gitignore — private by default
+# New files are HIDDEN unless explicitly whitelisted.
+# Only production-relevant files are public.
+# ═══════════════════════════════════════════════════════
+
+# 1. Ignore everything
+*
+
+# 2. Allow top-level production config
+!.gitignore
+!.npmrc
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.base.json
+!vitest.config.ts
+!README.md
+!CHANGELOG.md
+!LICENSE
+!LICENSE.txt
+!NOTICE
+!SECURITY.md
+
+# 3. Allow GitHub config
+!.github/
+!.github/**
+
+# 4. Allow build scripts
+!scripts/
+!scripts/**
+
+# 5. Allow packages (production source)
+!packages/
+
+!packages/shared/
+!packages/shared/**
+
+!packages/mcp-server/
+!packages/mcp-server/src/
+!packages/mcp-server/src/**
+!packages/mcp-server/test/
+!packages/mcp-server/test/**
+!packages/mcp-server/package.json
+!packages/mcp-server/tsconfig.json
+!packages/mcp-server/tsup.config.ts
+!packages/mcp-server/README.md
+!packages/mcp-server/dev-tools/
+
+!packages/webview/
+!packages/webview/**
+
+!packages/extension/
+!packages/extension/**
+
+# 6. Re-ignore private/generated files inside allowed dirs
+**/node_modules/
+**/dist/
+*.vsix
+*.tsbuildinfo
+*.har
+*.debug.json
+**/PLAN.md
+.env*
+packages/mcp-server/dev-tools/*
+!packages/mcp-server/dev-tools/capture.js
+packages/extension/media/webview/
+packages/extension/dist/node_modules/
+docs

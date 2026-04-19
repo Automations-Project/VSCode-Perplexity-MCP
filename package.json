@@ -1,12 +1,41 @@
 {
-  "name": "perplexity-mcp",
-  "version": "0.1.0",
+  "name": "perplexity-mcp-workspace",
+  "version": "1.0.0",
   "private": true,
-  "type": "module",
+  "description": "Perplexity Internal MCP workspace with a native VS Code extension, embedded MCP server, and React webview UI",
   "workspaces": [
-    "packages/*"
+    "packages/shared",
+    "packages/mcp-server",
+    "packages/webview",
+    "packages/extension"
   ],
+  "scripts": {
+    "build": "npm run build -w @perplexity/shared && npm run build -w perplexity-user-mcp && npm run build -w @perplexity/webview && npm run build -w perplexity-vscode",
+    "typecheck": "npm run typecheck -w @perplexity/shared && npm run typecheck -w perplexity-user-mcp && npm run typecheck -w @perplexity/webview && npm run typecheck -w perplexity-vscode",
+    "test": "npm run build -w @perplexity/shared && vitest run",
+    "clean": "rimraf packages/shared/dist packages/webview/dist packages/extension/dist packages/extension/media/webview",
+    "dev:webview": "npm run build -w @perplexity/shared && npm run dev -w @perplexity/webview",
+    "dev:extension": "npm run build -w @perplexity/shared && npm run watch -w perplexity-vscode",
+    "package:vsix": "npm run package:vsix -w perplexity-vscode",
+    "capture": "node packages/mcp-server/dev-tools/capture.js",
+    "capture:mutations": "node packages/mcp-server/dev-tools/capture.js --mutations-only",
+    "capture:all": "node packages/mcp-server/dev-tools/capture.js --all",
+    "capture:cdp": "node packages/mcp-server/dev-tools/capture.js --cdp",
+    "capture:cdp:mutations": "node packages/mcp-server/dev-tools/capture.js --cdp --mutations-only",
+    "analyze": "node packages/mcp-server/dev-tools/analyze.js",
+    "test:coverage": "npm run build -w @perplexity/shared && vitest run --coverage"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "patchright": "^1.59.4",
+    "zod": "^3.24.0"
+  },
   "devDependencies": {
-    "vitest": "^1.0.0"
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^4.1.4",
+    "rimraf": "^6.0.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.0"
   }
 }

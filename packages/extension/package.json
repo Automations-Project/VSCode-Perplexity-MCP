@@ -1,0 +1,230 @@
+{
+  "name": "perplexity-vscode",
+  "displayName": "Perplexity Internal MCP",
+  "version": "0.1.0",
+  "publisher": "private",
+  "private": true,
+  "description": "Native VS Code extension for the Perplexity Internal MCP server with dashboard, auth, and multi-IDE config generation",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:Perplexity.dashboard",
+    "onCommand:Perplexity.openDashboard",
+    "onCommand:Perplexity.login",
+    "onCommand:Perplexity.generateConfigs",
+    "onCommand:Perplexity.refreshDashboard",
+    "onCommand:Perplexity.refreshModels"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "Perplexity.openDashboard",
+        "title": "Perplexity: Open Dashboard",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.login",
+        "title": "Perplexity: Login",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.generateConfigs",
+        "title": "Perplexity: Generate MCP Configs",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.refreshDashboard",
+        "title": "Perplexity: Refresh Dashboard",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.refreshModels",
+        "title": "Perplexity: Refresh Models (Live Fetch)",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.installSpeedBoost",
+        "title": "Perplexity: Install Speed Boost (impit)",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.uninstallSpeedBoost",
+        "title": "Perplexity: Uninstall Speed Boost (impit)",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.debugStartSession",
+        "title": "Perplexity: Start Debug Session",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.debugStopAndExport",
+        "title": "Perplexity: Stop & Export Debug Session",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.debugExportAll",
+        "title": "Perplexity: Export Full Debug Log",
+        "category": "Perplexity"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "Perplexity",
+          "title": "Perplexity",
+          "icon": "media/perplexity.svg"
+        }
+      ]
+    },
+    "views": {
+      "Perplexity": [
+        {
+          "id": "Perplexity.dashboard",
+          "name": "Dashboard",
+          "type": "webview",
+          "icon": "media/perplexity.svg"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "Perplexity.refreshDashboard",
+          "when": "view == Perplexity.dashboard",
+          "group": "navigation"
+        },
+        {
+          "command": "Perplexity.login",
+          "when": "view == Perplexity.dashboard",
+          "group": "navigation@1"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Perplexity Internal MCP",
+      "properties": {
+        "Perplexity.defaultSearchModel": {
+          "type": "string",
+          "default": "pplx_pro",
+          "description": "Default model used by the embedded MCP server for flexible ask/search tools."
+        },
+        "Perplexity.reasonModel": {
+          "type": "string",
+          "default": "claude46sonnetthinking",
+          "description": "Default model for the perplexity_reason tool (multi-step reasoning)."
+        },
+        "Perplexity.researchModel": {
+          "type": "string",
+          "default": "pplx_alpha",
+          "description": "Default model for the perplexity_research tool (deep research reports)."
+        },
+        "Perplexity.computeModel": {
+          "type": "string",
+          "default": "pplx_asi",
+          "description": "Default model for the perplexity_compute tool (ASI / computer mode)."
+        },
+        "Perplexity.chromePath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional absolute path to Google Chrome. When empty the extension falls back to auto-detection."
+        },
+        "Perplexity.debugMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable verbose debug logging in the Perplexity Internal MCP output channel."
+        },
+        "Perplexity.autoConfigureCursor": {
+          "type": "boolean",
+          "default": false,
+          "description": "Offer and generate Cursor MCP configuration when Cursor is detected."
+        },
+        "Perplexity.autoConfigureWindsurf": {
+          "type": "boolean",
+          "default": false,
+          "description": "Offer and generate Windsurf MCP configuration when Windsurf is detected."
+        },
+        "Perplexity.autoConfigureWindsurfNext": {
+          "type": "boolean",
+          "default": false,
+          "description": "Offer and generate Windsurf Next MCP configuration when Windsurf Next is detected."
+        },
+        "Perplexity.autoConfigureClaudeDesktop": {
+          "type": "boolean",
+          "default": false,
+          "description": "Offer and generate Claude Desktop configuration when Claude Desktop is detected."
+        },
+        "Perplexity.autoConfigureClaudeCode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Offer and generate Claude Code (~/.claude.json) MCP configuration."
+        },
+        "Perplexity.autoConfigureCline": {
+          "type": "boolean",
+          "default": false,
+          "description": "Offer and generate Cline MCP configuration."
+        },
+        "Perplexity.autoConfigureAmp": {
+          "type": "boolean",
+          "default": false,
+          "description": "Offer and generate Amp (Sourcegraph) MCP configuration."
+        },
+        "Perplexity.autoConfigureCodexCli": {
+          "type": "boolean",
+          "default": false,
+          "description": "Offer and generate OpenAI Codex CLI MCP configuration."
+        },
+        "Perplexity.autoRefreshIntervalHours": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 168,
+          "description": "Hours between automatic session health checks. 0 to disable."
+        },
+        "Perplexity.debugBufferSize": {
+          "type": "number",
+          "default": 1000,
+          "description": "Number of debug events to retain in the ring buffer."
+        },
+        "Perplexity.debugVerboseHttp": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include HTTP traffic from the MCP server in debug events."
+        }
+      }
+    },
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "Perplexity.server",
+        "label": "Perplexity Internal MCP"
+      }
+    ]
+  },
+  "scripts": {
+    "clean": "rimraf dist media/webview",
+    "build": "npm run clean && npm run build:extension && npm run build:mcp && node ./scripts/emit-version.mjs && node ./scripts/prepare-webview.mjs",
+    "build:extension": "tsup src/extension.ts --format cjs --platform node --target node20 --outDir dist --external vscode --external patchright --external patchright-core --external got-scraping --external got --external tough-cookie --external header-generator --external got-scraping-v4 --external header-generator-v3 --external fingerprint-generator --external fingerprint-injector",
+    "build:mcp": "tsup ../mcp-server/src/index.ts --format esm --platform node --target node20 --outDir dist/mcp --external patchright --external patchright-core --external got-scraping --external got --external tough-cookie --external header-generator --external fingerprint-generator && node -e \"require('fs').renameSync('dist/mcp/index.mjs','dist/mcp/server.mjs')\"",
+    "watch": "tsup src/extension.ts --format cjs --platform node --target node20 --outDir dist --external vscode --external patchright --external patchright-core --external got-scraping --external got --external tough-cookie --external header-generator --external fingerprint-generator --watch",
+    "prepare:package-deps": "node ./scripts/prepare-package-deps.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "package:vsix": "npm run build && npm run prepare:package-deps && npx @vscode/vsce package --allow-missing-repository --no-dependencies"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "perplexity-user-mcp": "0.1.0",
+    "@perplexity/shared": "0.1.0",
+    "@types/vscode": "^1.100.0",
+    "@vscode/vsce": "^3.7.1",
+    "patchright": "^1.59.4",
+    "tsup": "^8.5.1"
+  }
+}
