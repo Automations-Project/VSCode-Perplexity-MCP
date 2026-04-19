@@ -1,0 +1,12 @@
+{
+  "name": "perplexity-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "devDependencies": {
+    "vitest": "^1.0.0"
+  }
+}

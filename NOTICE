@@ -1,0 +1,17 @@
+perplexity-user-mcp
+Copyright (c) 2026 A.R. and contributors
+
+This product includes software developed as derivative / optional
+dependencies of the following third-party projects:
+
+1. patchright (Apache License 2.0)
+   https://github.com/Kaliiiiiiiiii-Vinyzu/patchright
+   Used for stealth browser automation against Perplexity's web frontend.
+
+2. otpauth (MIT License)
+   https://github.com/hectorm/otpauth
+   Optional — used when a profile needs TOTP-style secondary auth.
+
+3. keytar (MIT License)
+   https://github.com/atom/node-keytar
+   Optional — used for storing the vault master key in the OS keychain.
