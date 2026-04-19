@@ -13,6 +13,7 @@ export default defineConfig({
     "health-check": "src/health-check.js",
     "manual-login-runner": "src/manual-login-runner.js",
     "login-runner": "src/login-runner.js",
+    logout: "src/logout.js",
   },
   format: ["esm"],
   platform: "node",
