@@ -6,12 +6,17 @@
 import { writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { chromium } from "patchright";
 import { Vault } from "./vault.js";
-import { getProfilePaths } from "./profiles.js";
+import { getProfilePaths, getActiveName } from "./profiles.js";
+import { redact } from "./redact.js";
 
 const ORIGIN = process.env.PERPLEXITY_ORIGIN || "https://www.perplexity.ai";
-const PROFILE = process.env.PERPLEXITY_PROFILE || "default";
+
+function resolveProfile() {
+  return process.env.PERPLEXITY_PROFILE || getActiveName() || "default";
+}
 
 async function main() {
+  const PROFILE = resolveProfile();
   const vault = new Vault();
   const cookiesRaw = await vault.get(PROFILE, "cookies").catch(() => null);
   if (!cookiesRaw) {
@@ -19,6 +24,10 @@ async function main() {
     process.exit(2);
   }
   const cookies = JSON.parse(cookiesRaw);
+  if (!Array.isArray(cookies) || cookies.length === 0) {
+    emit({ valid: false, reason: "no_cookies" });
+    process.exit(2);
+  }
 
   const browser = await chromium.launch({ headless: true });
   let result;
@@ -94,6 +103,6 @@ function emit(obj) {
 }
 
 main().catch((err) => {
-  emit({ valid: false, reason: "crash", error: String(err?.message ?? err) });
+  emit({ valid: false, reason: "crash", error: redact(String(err?.message ?? err)) });
   process.exit(5);
 });
