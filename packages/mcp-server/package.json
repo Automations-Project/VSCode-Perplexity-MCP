@@ -19,7 +19,7 @@
     "patchright"
   ],
   "bin": {
-    "perplexity-user-mcp": "./dist/index.mjs"
+    "perplexity-user-mcp": "./dist/cli.mjs"
   },
   "main": "dist/index.mjs",
   "types": "dist/index.d.ts",
