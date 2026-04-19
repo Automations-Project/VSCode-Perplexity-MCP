@@ -15,6 +15,7 @@ export default defineConfig({
     "login-runner": "src/login-runner.js",
     logout: "src/logout.js",
     "reinit-watcher": "src/reinit-watcher.js",
+    "tty-prompt": "src/tty-prompt.js",
   },
   format: ["esm"],
   platform: "node",

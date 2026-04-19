@@ -1,5 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { parseArgs, routeCommand } from "../src/cli.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { __resetKeyCache } from "../src/vault.js";
 
 describe("parseArgs", () => {
   it("parses subcommand + flags", () => {
@@ -25,10 +29,10 @@ describe("parseArgs", () => {
 });
 
 describe("routeCommand (stubs)", () => {
-  it("dispatches known commands", async () => {
-    const res = await routeCommand({ command: "status", flags: { json: true } });
+  it("dispatches known stub commands", async () => {
+    const res = await routeCommand({ command: "doctor", flags: { json: true } });
     expect(res.code).toBe(0);
-    expect(res.stdout).toMatch(/not-yet-implemented|status/i);
+    expect(res.stdout).toMatch(/not-yet-implemented|doctor/i);
   });
   it("unknown command exits 1", async () => {
     const res = await routeCommand({ command: "nope", flags: {} });
@@ -67,37 +71,7 @@ describe("routeCommand — help and version", () => {
   });
 });
 
-describe("routeCommand — phase mapping", () => {
-  it("login maps to Phase 2", async () => {
-    const res = await routeCommand({ command: "login", flags: {} });
-    expect(res.stdout).toMatch(/Phase 2/);
-  });
-
-  it("logout maps to Phase 2", async () => {
-    const res = await routeCommand({ command: "logout", flags: {} });
-    expect(res.stdout).toMatch(/Phase 2/);
-  });
-
-  it("status maps to Phase 2", async () => {
-    const res = await routeCommand({ command: "status", flags: {} });
-    expect(res.stdout).toMatch(/Phase 2/);
-  });
-
-  it("add-account maps to Phase 2", async () => {
-    const res = await routeCommand({ command: "add-account", flags: {} });
-    expect(res.stdout).toMatch(/Phase 2/);
-  });
-
-  it("switch-account maps to Phase 2", async () => {
-    const res = await routeCommand({ command: "switch-account", flags: {} });
-    expect(res.stdout).toMatch(/Phase 2/);
-  });
-
-  it("list-accounts maps to Phase 2", async () => {
-    const res = await routeCommand({ command: "list-accounts", flags: {} });
-    expect(res.stdout).toMatch(/Phase 2/);
-  });
-
+describe("routeCommand — phase mapping (remaining stubs)", () => {
   it("doctor maps to Phase 3", async () => {
     const res = await routeCommand({ command: "doctor", flags: {} });
     expect(res.stdout).toMatch(/Phase 3/);
@@ -126,16 +100,16 @@ describe("routeCommand — phase mapping", () => {
 
 describe("routeCommand — JSON mode for stubs", () => {
   it("returns parseable JSON when --json flag is set", async () => {
-    const res = await routeCommand({ command: "status", flags: { json: true } });
+    const res = await routeCommand({ command: "doctor", flags: { json: true } });
     const lines = res.stdout.trim().split("\n");
     const parsed = JSON.parse(lines[lines.length - 1]);
     expect(parsed.ok).toBe(false);
     expect(parsed.error).toBe("not-yet-implemented");
-    expect(parsed.command).toBe("status");
+    expect(parsed.command).toBe("doctor");
   });
 
   it("returns non-JSON message when --json flag is not set", async () => {
-    const res = await routeCommand({ command: "status", flags: {} });
+    const res = await routeCommand({ command: "doctor", flags: {} });
     expect(res.code).toBe(0);
     expect(res.stdout).toMatch(/not yet implemented/);
     expect(res.stdout).not.toMatch(/^{/);
@@ -158,28 +132,6 @@ describe("parseArgs — edge cases", () => {
   it("flag value can be a number-like string", () => {
     const a = parseArgs(["status", "--count", "42"]);
     expect(a.flags.count).toBe("42");
-  });
-});
-
-describe("routeCommand — all phase-2 commands text mode", () => {
-  it("logout outputs Phase 2 text", async () => {
-    const res = await routeCommand({ command: "logout", flags: {} });
-    expect(res.stdout).toMatch(/Phase 2/);
-  });
-
-  it("add-account outputs Phase 2 text", async () => {
-    const res = await routeCommand({ command: "add-account", flags: {} });
-    expect(res.stdout).toMatch(/Phase 2/);
-  });
-
-  it("switch-account outputs Phase 2 text", async () => {
-    const res = await routeCommand({ command: "switch-account", flags: {} });
-    expect(res.stdout).toMatch(/Phase 2/);
-  });
-
-  it("list-accounts outputs Phase 2 text", async () => {
-    const res = await routeCommand({ command: "list-accounts", flags: {} });
-    expect(res.stdout).toMatch(/Phase 2/);
   });
 });
 
@@ -209,5 +161,165 @@ describe("routeCommand — all phase-4 commands text mode", () => {
   it("rebuild-history-index outputs Phase 4 text", async () => {
     const res = await routeCommand({ command: "rebuild-history-index", flags: {} });
     expect(res.stdout).toMatch(/Phase 4/);
+  });
+});
+
+describe("cli: account commands (stubs replaced)", () => {
+  let configDir;
+  beforeEach(() => {
+    configDir = mkdtempSync(join(tmpdir(), "px-cli-"));
+    process.env.PERPLEXITY_CONFIG_DIR = configDir;
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "cli-pass";
+    __resetKeyCache();
+  });
+
+  it("list-accounts --json on empty config returns []", async () => {
+    const res = await routeCommand(parseArgs(["list-accounts", "--json"]));
+    expect(res.code).toBe(0);
+    expect(JSON.parse(res.stdout.trim())).toEqual({ ok: true, active: null, profiles: [] });
+  });
+
+  it("add-account --name work --mode manual --json creates the profile", async () => {
+    const res = await routeCommand(parseArgs(["add-account", "--name", "work", "--mode", "manual", "--json"]));
+    expect(res.code).toBe(0);
+    const parsed = JSON.parse(res.stdout.trim());
+    expect(parsed.ok).toBe(true);
+    expect(parsed.profile.name).toBe("work");
+  });
+
+  it("switch-account rejects an unknown profile", async () => {
+    const res = await routeCommand(parseArgs(["switch-account", "nope"]));
+    expect(res.code).toBe(1);
+    expect(res.stderr).toMatch(/not found/i);
+  });
+
+  it("status --json with no cookies returns {valid:false, reason:'no_cookies'}", async () => {
+    await routeCommand(parseArgs(["add-account", "--name", "default", "--mode", "manual"]));
+    await routeCommand(parseArgs(["switch-account", "default"]));
+    const res = await routeCommand(parseArgs(["status", "--json"]));
+    const parsed = JSON.parse(res.stdout.trim());
+    expect(parsed.valid).toBe(false);
+    expect(parsed.reason).toBe("no_cookies");
+  });
+
+  it("status (text mode) with no cookies hints to login", async () => {
+    await routeCommand(parseArgs(["add-account", "--name", "default", "--mode", "manual"]));
+    await routeCommand(parseArgs(["switch-account", "default"]));
+    const res = await routeCommand(parseArgs(["status"]));
+    expect(res.code).toBe(0);
+    expect(res.stdout).toMatch(/No session/);
+    expect(res.stdout).toMatch(/login/);
+  });
+
+  it("status --json with stored cookies returns {valid:true}", async () => {
+    await routeCommand(parseArgs(["add-account", "--name", "work", "--mode", "manual"]));
+    await routeCommand(parseArgs(["switch-account", "work"]));
+    const { Vault } = await import("../src/vault.js");
+    await new Vault().set("work", "cookies", JSON.stringify([{ name: "x", value: "y" }]));
+    const res = await routeCommand(parseArgs(["status", "--json"]));
+    const parsed = JSON.parse(res.stdout.trim());
+    expect(parsed.valid).toBe(true);
+    expect(parsed.profile).toBe("work");
+  });
+
+  it("status (text mode) with stored cookies shows meta", async () => {
+    await routeCommand(parseArgs(["add-account", "--name", "w2", "--mode", "manual"]));
+    await routeCommand(parseArgs(["switch-account", "w2"]));
+    const { Vault } = await import("../src/vault.js");
+    await new Vault().set("w2", "cookies", JSON.stringify([{ name: "a", value: "b" }]));
+    const res = await routeCommand(parseArgs(["status"]));
+    expect(res.code).toBe(0);
+    expect(res.stdout).toMatch(/has stored cookies/);
+  });
+
+  it("list-accounts (text mode, empty) hints to add-account", async () => {
+    const res = await routeCommand(parseArgs(["list-accounts"]));
+    expect(res.code).toBe(0);
+    expect(res.stdout).toMatch(/No profiles yet/);
+  });
+
+  it("list-accounts (text mode, populated) shows active marker", async () => {
+    await routeCommand(parseArgs(["add-account", "--name", "a1", "--mode", "manual"]));
+    await routeCommand(parseArgs(["add-account", "--name", "a2", "--mode", "manual"]));
+    await routeCommand(parseArgs(["switch-account", "a2"]));
+    const res = await routeCommand(parseArgs(["list-accounts"]));
+    expect(res.code).toBe(0);
+    expect(res.stdout).toMatch(/\* a2/);
+    expect(res.stdout).toMatch(/  a1/);
+  });
+
+  it("add-account with no --name auto-picks account-1", async () => {
+    const res = await routeCommand(parseArgs(["add-account", "--json"]));
+    expect(res.code).toBe(0);
+    const parsed = JSON.parse(res.stdout.trim());
+    expect(parsed.profile.name).toMatch(/^account-\d+$/);
+  });
+
+  it("add-account (text mode) returns human message", async () => {
+    const res = await routeCommand(parseArgs(["add-account", "--name", "hm", "--mode", "manual"]));
+    expect(res.code).toBe(0);
+    expect(res.stdout).toMatch(/Created profile 'hm'/);
+  });
+
+  it("add-account duplicate name fails with JSON error", async () => {
+    await routeCommand(parseArgs(["add-account", "--name", "dup", "--mode", "manual"]));
+    const res = await routeCommand(parseArgs(["add-account", "--name", "dup", "--mode", "manual", "--json"]));
+    expect(res.code).toBe(1);
+    const parsed = JSON.parse(res.stdout.trim());
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toMatch(/already exists/);
+  });
+
+  it("add-account duplicate name (text mode) writes to stderr", async () => {
+    await routeCommand(parseArgs(["add-account", "--name", "dup2", "--mode", "manual"]));
+    const res = await routeCommand(parseArgs(["add-account", "--name", "dup2", "--mode", "manual"]));
+    expect(res.code).toBe(1);
+    expect(res.stderr).toMatch(/already exists/);
+  });
+
+  it("switch-account with no arg exits 1", async () => {
+    const res = await routeCommand(parseArgs(["switch-account"]));
+    expect(res.code).toBe(1);
+    expect(res.stderr).toMatch(/requires a profile name/);
+  });
+
+  it("switch-account (text mode) confirms switch", async () => {
+    await routeCommand(parseArgs(["add-account", "--name", "sw", "--mode", "manual"]));
+    const res = await routeCommand(parseArgs(["switch-account", "sw"]));
+    expect(res.code).toBe(0);
+    expect(res.stdout).toMatch(/Switched to 'sw'/);
+  });
+
+  it("switch-account --json confirms switch", async () => {
+    await routeCommand(parseArgs(["add-account", "--name", "sw2", "--mode", "manual"]));
+    const res = await routeCommand(parseArgs(["switch-account", "sw2", "--json"]));
+    expect(res.code).toBe(0);
+    expect(JSON.parse(res.stdout.trim())).toEqual({ ok: true, active: "sw2" });
+  });
+
+  it("logout (soft) --json on default profile", async () => {
+    await routeCommand(parseArgs(["add-account", "--name", "default", "--mode", "manual"]));
+    await routeCommand(parseArgs(["switch-account", "default"]));
+    const res = await routeCommand(parseArgs(["logout", "--json"]));
+    expect(res.code).toBe(0);
+    const parsed = JSON.parse(res.stdout.trim());
+    expect(parsed.ok).toBe(true);
+    expect(parsed.purged).toBe(false);
+    expect(parsed.profile).toBe("default");
+  });
+
+  it("logout (text mode) gives human confirmation", async () => {
+    await routeCommand(parseArgs(["add-account", "--name", "lo", "--mode", "manual"]));
+    const res = await routeCommand(parseArgs(["logout", "--profile", "lo"]));
+    expect(res.code).toBe(0);
+    expect(res.stdout).toMatch(/Logged out of 'lo'/);
+  });
+
+  it("logout --purge removes the profile directory", async () => {
+    await routeCommand(parseArgs(["add-account", "--name", "purgeme", "--mode", "manual"]));
+    const res = await routeCommand(parseArgs(["logout", "--profile", "purgeme", "--purge", "--json"]));
+    expect(res.code).toBe(0);
+    const parsed = JSON.parse(res.stdout.trim());
+    expect(parsed.purged).toBe(true);
   });
 });

@@ -260,14 +260,24 @@ describe("getMasterKey — TTY prompt path", () => {
     delete process.env.PERPLEXITY_MCP_STDIO;
   });
 
-  it("throws TTY-not-implemented error when stdin.isTTY=true and not in stdio mode", async () => {
+  it("prompts for passphrase when stdin.isTTY=true and not in stdio mode", async () => {
     // Temporarily mock process.stdin.isTTY to true
     const originalTTY = process.stdin.isTTY;
     Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
 
+    // Mock the tty-prompt module so we don't block on real stdin
+    vi.doMock("../src/tty-prompt.js", () => ({
+      promptSecret: async () => "tty-entered-pass",
+    }));
+
     try {
-      await expect(getMasterKey()).rejects.toThrow(/TTY passphrase prompt not yet implemented/);
+      const { getMasterKey: gmk, __resetKeyCache: reset } = await import("../src/vault.js");
+      reset();
+      const key = await gmk();
+      expect(Buffer.isBuffer(key)).toBe(true);
+      expect(key.length).toBe(32);
     } finally {
+      vi.doUnmock("../src/tty-prompt.js");
       Object.defineProperty(process.stdin, "isTTY", { value: originalTTY, configurable: true });
     }
   });

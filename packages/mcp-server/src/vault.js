@@ -112,12 +112,13 @@ export async function getMasterKey() {
   }
 
   // 3. TTY prompt — ONLY when not in stdio-server mode
-  //    (implementation deferred to Phase 2 CLI integration; stub here throws)
   if (!isStdioServerMode() && process.stdin.isTTY) {
-    throw new Error(
-      "Vault locked: TTY passphrase prompt not yet implemented (arrives in Phase 2). " +
-      "Use PERPLEXITY_VAULT_PASSPHRASE for now."
-    );
+    const { promptSecret } = await import("./tty-prompt.js");
+    const pass = await promptSecret({ prompt: "Perplexity vault passphrase: " });
+    if (pass) {
+      _keyCache = hkdfFromPassphrase(pass);
+      return _keyCache;
+    }
   }
 
   // 4. Fail-fast

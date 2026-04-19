@@ -66,6 +66,105 @@ export async function routeCommand(parsed) {
     return { code: 0, stdout: "", stderr: "" };
   }
   /* v8 ignore stop */
+
+  if (command === "list-accounts") {
+    const { listProfiles, getActiveName } = await import("./profiles.js");
+    const profiles = listProfiles();
+    const active = getActiveName();
+    const body = flags.json
+      ? JSON.stringify({ ok: true, active, profiles })
+      : profiles.length === 0
+        ? "No profiles yet. Run `add-account` to create one."
+        : profiles.map((p) => `${p.name === active ? "* " : "  "}${p.name}  [${p.tier ?? "?"}]  mode=${p.loginMode ?? "?"}  lastLogin=${p.lastLogin ?? "never"}`).join("\n");
+    return { code: 0, stdout: body + "\n", stderr: "" };
+  }
+
+  if (command === "add-account") {
+    const name = flags.name ?? (await import("./profiles.js")).suggestNextDefaultName();
+    const mode = flags.mode ?? "manual";
+    try {
+      const { createProfile } = await import("./profiles.js");
+      const profile = createProfile(name, { loginMode: mode });
+      const body = flags.json ? JSON.stringify({ ok: true, profile }) : `Created profile '${name}'.`;
+      return { code: 0, stdout: body + "\n", stderr: "" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { code: 1, stdout: flags.json ? JSON.stringify({ ok: false, error: msg }) + "\n" : "", stderr: msg + "\n" };
+    }
+  }
+
+  if (command === "switch-account") {
+    const target = parsed.positional?.[0];
+    if (!target) return { code: 1, stdout: "", stderr: "switch-account requires a profile name.\n" };
+    try {
+      const { setActive } = await import("./profiles.js");
+      setActive(target);
+      const body = flags.json ? JSON.stringify({ ok: true, active: target }) : `Switched to '${target}'.`;
+      return { code: 0, stdout: body + "\n", stderr: "" };
+    } catch (err) {
+      return { code: 1, stdout: "", stderr: `${err.message}\n` };
+    }
+  }
+
+  if (command === "logout") {
+    const { softLogout, hardLogout } = await import("./logout.js");
+    const name = flags.profile ?? (await import("./profiles.js")).getActiveName() ?? "default";
+    if (flags.purge) await hardLogout(name); else await softLogout(name);
+    const body = flags.json ? JSON.stringify({ ok: true, purged: !!flags.purge, profile: name }) : `Logged out of '${name}'.`;
+    return { code: 0, stdout: body + "\n", stderr: "" };
+  }
+
+  if (command === "status") {
+    const name = flags.profile ?? (await import("./profiles.js")).getActiveName() ?? "default";
+    const { Vault } = await import("./vault.js");
+    /* v8 ignore next -- defensive catch for unreadable vault (malformed blob, wrong key) */
+    const cookies = await new Vault().get(name, "cookies").catch(() => null);
+    if (!cookies) {
+      const body = flags.json ? JSON.stringify({ valid: false, reason: "no_cookies", profile: name }) : `No session for '${name}'. Run login first.`;
+      return { code: 0, stdout: body + "\n", stderr: "" };
+    }
+    const { getProfile } = await import("./profiles.js");
+    const meta = getProfile(name);
+    const body = flags.json
+      ? JSON.stringify({ valid: true, profile: name, tier: meta?.tier, lastLogin: meta?.lastLogin })
+      : `Profile '${name}' has stored cookies. Tier=${meta?.tier ?? "?"} lastLogin=${meta?.lastLogin ?? "?"}`;
+    return { code: 0, stdout: body + "\n", stderr: "" };
+  }
+
+  /* v8 ignore start -- login spawns a long-lived fork with a real browser; covered by integration suites */
+  if (command === "login") {
+    const { fork } = await import("node:child_process");
+    const mode = flags.mode ?? "manual";
+    const profile = flags.profile ?? (await import("./profiles.js")).getActiveName() ?? "default";
+    const runner = fileURLToPath(new URL(
+      mode === "auto" ? "./login-runner.mjs" : "./manual-login-runner.mjs",
+      import.meta.url
+    ));
+    const env = { ...process.env, PERPLEXITY_PROFILE: profile };
+    if (mode === "auto") {
+      if (!flags.email) return { code: 1, stdout: "", stderr: "`--email` required for --mode auto.\n" };
+      env.PERPLEXITY_EMAIL = String(flags.email);
+    }
+    return new Promise((resolve) => {
+      const child = fork(runner, [], { env, stdio: ["inherit", "pipe", "inherit", "ipc"] });
+      let out = "";
+      child.stdout.on("data", (d) => { out += d.toString(); process.stderr.write(d); });
+      child.on("message", async (m) => {
+        if (m?.phase === "awaiting_otp") {
+          const { promptSecret } = await import("./tty-prompt.js");
+          const otp = await promptSecret({ prompt: "Enter OTP from your email: " });
+          child.send({ otp });
+        }
+      });
+      child.on("close", (code) => {
+        const lines = out.trim().split("\n").filter(Boolean);
+        const last = lines[lines.length - 1];
+        resolve({ code: code ?? 0, stdout: (flags.json ? last : `login finished (${code})`) + "\n", stderr: "" });
+      });
+    });
+  }
+  /* v8 ignore stop */
+
   // Phase-1 stub: all real subcommands are placeholder until their phases land.
   const msg = flags.json
     ? JSON.stringify({ ok: false, error: "not-yet-implemented", command })
@@ -74,7 +173,6 @@ export async function routeCommand(parsed) {
 }
 
 function phaseFor(cmd) {
-  if (["login", "logout", "status", "add-account", "switch-account", "list-accounts"].includes(cmd)) return 2;
   if (cmd === "doctor" || cmd === "install-browser") return 3;
   if (cmd === "export" || cmd === "open" || cmd === "rebuild-history-index") return 4;
   /* v8 ignore next -- fallback for unmapped commands that shouldn't exist */
