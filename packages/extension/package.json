@@ -20,7 +20,10 @@
     "onCommand:Perplexity.login",
     "onCommand:Perplexity.generateConfigs",
     "onCommand:Perplexity.refreshDashboard",
-    "onCommand:Perplexity.refreshModels"
+    "onCommand:Perplexity.refreshModels",
+    "onCommand:Perplexity.logout",
+    "onCommand:Perplexity.switchAccount",
+    "onCommand:Perplexity.addAccount"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -73,6 +76,21 @@
       {
         "command": "Perplexity.debugExportAll",
         "title": "Perplexity: Export Full Debug Log",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.logout",
+        "title": "Perplexity: Logout",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.switchAccount",
+        "title": "Perplexity: Switch Account",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.addAccount",
+        "title": "Perplexity: Add Account",
         "category": "Perplexity"
       }
     ],

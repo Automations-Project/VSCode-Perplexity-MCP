@@ -1,3 +1,4 @@
+import * as crypto from "node:crypto";
 import * as vscode from "vscode";
 import {
   EXTENSION_ID,
@@ -5,6 +6,7 @@ import {
   type ExtensionMessage,
   type WebviewMessage
 } from "@perplexity/shared";
+import type { AuthManager, AuthState } from "../mcp/auth-manager.js";
 import {
   getIdeStatuses,
   removeTarget,
@@ -27,11 +29,28 @@ import { LAUNCHER_PATH } from "../launcher/write-launcher.js";
 export class DashboardProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
   private debugCollector?: DebugCollector;
+  private authManager?: AuthManager;
+  private otpResolvers = new Map<string, (s: string | null) => void>();
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
   setDebugCollector(collector: DebugCollector): void {
     this.debugCollector = collector;
+  }
+
+  setAuthManager(m: AuthManager): void {
+    this.authManager = m;
+  }
+
+  async postAuthState(s: AuthState): Promise<void> {
+    if (!this.view) return;
+    await this.view.webview.postMessage({ type: "auth:state", payload: s });
+  }
+
+  async postProfileList(): Promise<void> {
+    if (!this.view) return;
+    const { listProfiles, getActiveName } = await import("perplexity-user-mcp/profiles" as string) as { listProfiles: () => unknown[]; getActiveName: () => string | null };
+    await this.view.webview.postMessage({ type: "profile:list", payload: { active: getActiveName(), profiles: listProfiles() } });
   }
 
   async resolveWebviewView(webviewView: vscode.WebviewView): Promise<void> {
@@ -159,6 +178,63 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             debug("Handling speed-boost:uninstall");
             await this.handleSpeedBoostUninstall(message.id);
             break;
+          case "auth:login-start": {
+            if (!this.authManager) break;
+            const { profile, mode, email } = message.payload;
+            let pendingId: string | undefined;
+            await this.authManager.login({
+              profile, mode, email,
+              onOtpPrompt: () => new Promise<string | null>((resolve) => {
+                pendingId = crypto.randomUUID();
+                this.view?.webview.postMessage({ type: "auth:otp-prompt", payload: { profile, attempt: 0, email: email ?? "" } });
+                this.otpResolvers.set(pendingId!, resolve);
+              }),
+            });
+            await this.postActionResult(message.id, true);
+            await this.refresh();
+            break;
+          }
+          case "auth:otp-submit": {
+            const first = [...this.otpResolvers.values()][0];
+            if (first) first(message.payload.otp);
+            this.otpResolvers.clear();
+            break;
+          }
+          case "auth:logout": {
+            if (!this.authManager) break;
+            await this.authManager.logout(message.payload);
+            await this.postActionResult(message.id, true);
+            await this.refresh();
+            break;
+          }
+          case "auth:dismiss-expired":
+            break;
+          case "profile:switch": {
+            const { setActive } = await import("perplexity-user-mcp/profiles" as string) as { setActive: (n: string) => void };
+            setActive(message.payload.name);
+            await this.postActionResult(message.id, true);
+            await this.postProfileList();
+            await this.refresh();
+            break;
+          }
+          case "profile:add": {
+            const { createProfile } = await import("perplexity-user-mcp/profiles" as string) as { createProfile: (n: string, o: unknown) => unknown };
+            try {
+              createProfile(message.payload.name, { loginMode: message.payload.loginMode });
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            await this.postProfileList();
+            break;
+          }
+          case "profile:delete": {
+            const { deleteProfile } = await import("perplexity-user-mcp/profiles" as string) as { deleteProfile: (n: string) => void };
+            deleteProfile(message.payload.name);
+            await this.postActionResult(message.id, true);
+            await this.postProfileList();
+            break;
+          }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.stack ?? err.message : String(err);
@@ -199,6 +275,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       type: "dashboard:state",
       payload: this.buildState()
     } satisfies ExtensionMessage);
+    await this.postProfileList();
   }
 
   async refreshModels(): Promise<void> {

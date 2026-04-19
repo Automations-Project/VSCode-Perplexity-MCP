@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { MCP_PROVIDER_ID, MCP_SERVER_LABEL, type IdeTarget } from "@perplexity/shared";
 import { configureTargets, getIdeStatuses } from "./auto-config/index.js";
-import { hasStoredLogin, runInteractiveLogin } from "./auth/session.js";
+import { hasStoredLogin } from "./auth/session.js";
 import { getSettingsSnapshot } from "./settings.js";
 import { DashboardProvider } from "./webview/DashboardProvider.js";
 import { ensureLauncher } from "./launcher/write-launcher.js";
@@ -167,6 +167,11 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
 
   const dashboard = new DashboardProvider(context);
   dashboard.setDebugCollector(debugCollector);
+  const { AuthManager } = await import("./mcp/auth-manager.js");
+  const authManager = new AuthManager();
+  context.subscriptions.push(authManager);
+  dashboard.setAuthManager(authManager);
+  authManager.onDidChange(async (s) => { await dashboard.postAuthState(s); });
   const serverDefinitionsChanged = new vscode.EventEmitter<void>();
   context.subscriptions.push(serverDefinitionsChanged);
 
@@ -217,26 +222,15 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("Perplexity.login", async () => {
-      const settings = getSettingsSnapshot();
+      const { getActiveName } = await import("perplexity-user-mcp/profiles" as string) as { getActiveName: () => string | null };
+      const profile = getActiveName() ?? "default";
       try {
-        await vscode.window.withProgress(
-          {
-            title: "Perplexity login",
-            location: vscode.ProgressLocation.Notification,
-            cancellable: false
-          },
-          async (progress) => {
-            progress.report({ message: "Opening browser. Complete login in the window that opens." });
-            await runInteractiveLogin({
-              chromePath: settings.chromePath,
-              log: (line) => {
-                log(`[login] ${line}`);
-                progress.report({ message: line.length > 80 ? `${line.slice(0, 77)}...` : line });
-              }
-            });
-          }
-        );
-
+        await authManager.login({
+          profile,
+          mode: "manual",
+          onOtpPrompt: async () => (await vscode.window.showInputBox({ prompt: "Perplexity OTP", ignoreFocusOut: true })) ?? null,
+          onProgress: (phase) => log(`[login] ${phase}`),
+        });
         serverDefinitionsChanged.fire();
         await dashboard.refresh();
         await dashboard.postNotice("info", "Perplexity login completed. MCP server definitions refreshed.");
@@ -247,6 +241,41 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
         log(`[login] Failed: ${msg}`);
         await dashboard.postNotice("error", `Login failed: ${msg}`);
       }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("Perplexity.logout", async () => {
+      const purge = (await vscode.window.showQuickPick(["Soft (keep dir)", "Hard (purge dir)"], { placeHolder: "Logout mode" })) === "Hard (purge dir)";
+      const { getActiveName } = await import("perplexity-user-mcp/profiles" as string) as { getActiveName: () => string | null };
+      const profile = getActiveName() ?? "default";
+      await authManager.logout({ profile, purge });
+      serverDefinitionsChanged.fire();
+      await dashboard.refresh();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("Perplexity.switchAccount", async () => {
+      const { listProfiles, setActive } = await import("perplexity-user-mcp/profiles" as string) as { listProfiles: () => { name: string }[]; setActive: (n: string) => void };
+      const pick = await vscode.window.showQuickPick(listProfiles().map((p) => p.name), { placeHolder: "Switch account" });
+      if (pick) {
+        setActive(pick);
+        serverDefinitionsChanged.fire();
+        await dashboard.refresh();
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("Perplexity.addAccount", async () => {
+      const name = await vscode.window.showInputBox({ prompt: "Profile name (a-z, 0-9, _, -; max 32)", validateInput: (v) => /^[a-z0-9_-]{1,32}$/.test(v) ? null : "Invalid name" });
+      if (!name) return;
+      const mode = (await vscode.window.showQuickPick(["auto", "manual"], { placeHolder: "Login mode" })) as "auto" | "manual" | undefined;
+      if (!mode) return;
+      const { createProfile } = await import("perplexity-user-mcp/profiles" as string) as { createProfile: (n: string, o: unknown) => unknown };
+      createProfile(name, { loginMode: mode });
+      await dashboard.refresh();
     })
   );
 

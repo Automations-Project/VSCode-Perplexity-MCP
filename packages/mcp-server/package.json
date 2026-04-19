@@ -47,6 +47,10 @@
     "./logout": {
       "types": "./dist/logout.d.ts",
       "import": "./dist/logout.mjs"
+    },
+    "./profiles": {
+      "types": "./dist/profiles.d.ts",
+      "import": "./dist/profiles.mjs"
     }
   },
   "files": [
