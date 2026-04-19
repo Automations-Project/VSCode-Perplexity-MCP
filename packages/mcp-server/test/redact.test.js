@@ -64,6 +64,9 @@ describe("redact", () => {
     it("redacts IPv6", () => {
       expect(redact("addr 2001:db8::8a2e:370:7334 reachable")).toBe("addr <ip> reachable");
     });
+    it("leaves single-colon hex patterns alone", () => {
+      expect(redact("token ab:cd")).toBe("token ab:cd");
+    });
   });
 
   describe("passthrough", () => {
