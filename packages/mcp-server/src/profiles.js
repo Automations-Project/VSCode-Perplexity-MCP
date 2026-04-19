@@ -98,3 +98,40 @@ export function deleteProfile(name) {
   const dir = getProfilePaths(name).dir;
   if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
 }
+
+function getActivePointerPath() {
+  return join(getConfigDir(), "active");
+}
+
+export function getActiveName() {
+  const p = getActivePointerPath();
+  if (!existsSync(p)) return null;
+  try {
+    const name = readFileSync(p, "utf8").trim();
+    return name || null;
+  } catch {
+    return null;
+  }
+}
+
+export function getActive() {
+  const name = getActiveName();
+  if (!name) return null;
+  return getProfile(name);
+}
+
+export function setActive(name) {
+  if (!getProfile(name)) throw new Error(`Profile '${name}' not found.`);
+  const cfg = getConfigDir();
+  if (!existsSync(cfg)) mkdirSync(cfg, { recursive: true });
+  const p = getActivePointerPath();
+  writeFileSync(p + ".tmp", name + "\n");
+  renameSync(p + ".tmp", p);
+}
+
+export function suggestNextDefaultName() {
+  const names = listProfiles().map((p) => p.name);
+  let n = 1;
+  while (names.includes(`account-${n}`)) n++;
+  return `account-${n}`;
+}

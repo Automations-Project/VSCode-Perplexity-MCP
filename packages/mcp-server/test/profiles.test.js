@@ -157,3 +157,52 @@ describe("deleteProfile", () => {
     expect(() => deleteProfile("nonexistent")).not.toThrow();
   });
 });
+
+import { getActive, setActive, suggestNextDefaultName } from "../src/profiles.js";
+
+describe("active profile pointer", () => {
+  it("returns null when no profiles exist", () => {
+    expect(getActive()).toBeNull();
+  });
+
+  it("returns active profile", () => {
+    createProfile("work");
+    setActive("work");
+    expect(getActive()?.name).toBe("work");
+  });
+
+  it("atomically swaps active on setActive", () => {
+    createProfile("a");
+    createProfile("b");
+    setActive("a");
+    expect(getActive()?.name).toBe("a");
+    setActive("b");
+    expect(getActive()?.name).toBe("b");
+  });
+
+  it("falls back if pointer references a deleted profile", () => {
+    createProfile("a");
+    setActive("a");
+    deleteProfile("a");
+    expect(getActive()).toBeNull();
+  });
+
+  it("setActive rejects unknown profile", () => {
+    expect(() => setActive("nope")).toThrow(/not found/i);
+  });
+});
+
+describe("suggestNextDefaultName", () => {
+  it("returns account-1 when empty", () => {
+    expect(suggestNextDefaultName()).toBe("account-1");
+  });
+  it("skips existing numbered defaults", () => {
+    createProfile("account-1");
+    createProfile("account-2");
+    expect(suggestNextDefaultName()).toBe("account-3");
+  });
+  it("ignores non-matching names", () => {
+    createProfile("work");
+    expect(suggestNextDefaultName()).toBe("account-1");
+  });
+});
