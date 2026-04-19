@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes, hkdfSync } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { getProfilePaths } from "./profiles.js";
@@ -83,16 +83,48 @@ async function keyFromKeychain() {
   }
 }
 
+function hkdfFromPassphrase(passphrase) {
+  const salt = Buffer.from("perplexity-user-mcp:v1:salt");
+  const info = Buffer.from("vault-master-key");
+  const key = Buffer.from(hkdfSync("sha256", Buffer.from(passphrase, "utf8"), salt, info, 32));
+  return key;
+}
+
+function isStdioServerMode() {
+  return process.env.PERPLEXITY_MCP_STDIO === "1" || (process.stdin && process.stdin.isTTY === false);
+}
+
 export async function getMasterKey() {
   if (_keyCache) return _keyCache;
-  const k = await keyFromKeychain();
-  if (k) {
-    _keyCache = k;
-    return k;
+
+  // 1. OS keychain
+  const fromKc = await keyFromKeychain();
+  if (fromKc) {
+    _keyCache = fromKc;
+    return fromKc;
   }
-  // Fallbacks land in Task 12.
+
+  // 2. Env-var passphrase
+  const envPass = process.env.PERPLEXITY_VAULT_PASSPHRASE;
+  if (envPass) {
+    _keyCache = hkdfFromPassphrase(envPass);
+    return _keyCache;
+  }
+
+  // 3. TTY prompt — ONLY when not in stdio-server mode
+  //    (implementation deferred to Phase 2 CLI integration; stub here throws)
+  if (!isStdioServerMode() && process.stdin.isTTY) {
+    throw new Error(
+      "Vault locked: TTY passphrase prompt not yet implemented (arrives in Phase 2). " +
+      "Use PERPLEXITY_VAULT_PASSPHRASE for now."
+    );
+  }
+
+  // 4. Fail-fast
   throw new Error(
-    "Vault locked: keychain unavailable. " +
-    "Install OS keychain (libsecret on Linux) or set PERPLEXITY_VAULT_PASSPHRASE."
+    "Vault locked: no keychain, no env var, no TTY. " +
+    "Install OS keychain (libsecret on Linux) or set " +
+    "PERPLEXITY_VAULT_PASSPHRASE in your IDE's MCP config. " +
+    "See https://github.com/<OWNER>/perplexity-user-mcp/blob/main/docs/vault-unseal.md"
   );
 }

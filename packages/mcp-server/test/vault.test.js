@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { randomBytes } from "node:crypto";
 import { encryptBlob, decryptBlob, getMasterKey, __resetKeyCache } from "../src/vault.js";
 
@@ -79,5 +79,53 @@ describe("getMasterKey — keychain path", () => {
     expect(stored).not.toBeNull();
     expect(stored).toHaveLength(64);  // 32 bytes as hex
     vi.doUnmock("keytar");
+  });
+});
+
+describe("getMasterKey — env var fallback", () => {
+  beforeEach(() => {
+    __resetKeyCache();
+    vi.doMock("keytar", () => { throw new Error("unavailable"); });
+  });
+  afterEach(() => {
+    vi.doUnmock("keytar");
+    delete process.env.PERPLEXITY_VAULT_PASSPHRASE;
+    delete process.env.PERPLEXITY_MCP_STDIO;
+  });
+
+  it("derives key from PERPLEXITY_VAULT_PASSPHRASE via HKDF", async () => {
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "super-secret-passphrase";
+    const key = await getMasterKey();
+    expect(key.length).toBe(32);
+    // Same passphrase ⇒ same key (caching only within one process; reset between)
+    __resetKeyCache();
+    const key2 = await getMasterKey();
+    expect(key.equals(key2)).toBe(true);
+  });
+
+  it("different passphrase ⇒ different key", async () => {
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "one";
+    const k1 = await getMasterKey();
+    __resetKeyCache();
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "two";
+    const k2 = await getMasterKey();
+    expect(k1.equals(k2)).toBe(false);
+  });
+});
+
+describe("getMasterKey — fail-fast in stdio-server mode", () => {
+  beforeEach(() => {
+    __resetKeyCache();
+    vi.doMock("keytar", () => { throw new Error("unavailable"); });
+    delete process.env.PERPLEXITY_VAULT_PASSPHRASE;
+  });
+  afterEach(() => {
+    vi.doUnmock("keytar");
+    delete process.env.PERPLEXITY_MCP_STDIO;
+  });
+
+  it("throws structured error when stdio-server flag set", async () => {
+    process.env.PERPLEXITY_MCP_STDIO = "1";
+    await expect(getMasterKey()).rejects.toThrow(/Vault locked/);
   });
 });
