@@ -42,17 +42,22 @@ export async function routeCommand(parsed) {
     return { code: 1, stdout: "", stderr: `Unknown command: ${command}\nRun --help for usage.` };
   }
   if (command === "version") {
-    const pkg = await import("../package.json", { with: { type: "json" } }).catch(() => ({ default: { version: "0.0.0" } }));
+    /* v8 ignore start -- catch fallback fires only if package.json is missing at runtime */
+    const pkg = await import("../package.json", { with: { type: "json" } })
+      .catch(() => ({ default: { version: "0.0.0" } }));
+    /* v8 ignore stop */
     return { code: 0, stdout: (pkg.default?.version ?? "0.0.0") + "\n", stderr: "" };
   }
   if (command === "help") {
     return { code: 0, stdout: HELP_TEXT, stderr: "" };
   }
+  /* v8 ignore start -- starting the real MCP server is impractical in unit tests */
   if (command === "server") {
     // Start the MCP stdio server. Delegates to index.js's existing main().
     await import("./index.js");
     return { code: 0, stdout: "", stderr: "" };
   }
+  /* v8 ignore stop */
   // Phase-1 stub: all real subcommands are placeholder until their phases land.
   const msg = flags.json
     ? JSON.stringify({ ok: false, error: "not-yet-implemented", command })
@@ -64,6 +69,7 @@ function phaseFor(cmd) {
   if (["login", "logout", "status", "add-account", "switch-account", "list-accounts"].includes(cmd)) return 2;
   if (cmd === "doctor" || cmd === "install-browser") return 3;
   if (cmd === "export" || cmd === "open" || cmd === "rebuild-history-index") return 4;
+  /* v8 ignore next -- fallback for unmapped commands that shouldn't exist */
   return "?";
 }
 
@@ -94,7 +100,7 @@ Environment:
   PERPLEXITY_MCP_STDIO=1        Forces stdio-server mode (no prompts)
 `;
 
-// Entry point when invoked as script
+/* v8 ignore start -- only runs when cli.js is executed as a script */
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const parsed = parseArgs(process.argv.slice(2));
   routeCommand(parsed).then((res) => {
@@ -103,3 +109,4 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     process.exit(res.code);
   });
 }
+/* v8 ignore stop */
