@@ -77,3 +77,83 @@ describe("getConfigDir", () => {
     expect(cd.endsWith(".perplexity-mcp")).toBe(true);
   });
 });
+
+import { readFileSync } from "node:fs";
+import { createProfile, listProfiles, getProfile, deleteProfile } from "../src/profiles.js";
+
+describe("createProfile", () => {
+  it("creates dir + meta.json with required fields", () => {
+    const p = createProfile("work");
+    expect(p.name).toBe("work");
+    expect(p.displayName).toBe("work");
+    expect(p.loginMode).toBe("manual");
+    expect(p.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(existsSync(getProfilePaths("work").dir)).toBe(true);
+    expect(existsSync(getProfilePaths("work").meta)).toBe(true);
+    const meta = JSON.parse(readFileSync(getProfilePaths("work").meta, "utf8"));
+    expect(meta.name).toBe("work");
+    expect(meta.email).toBeUndefined();
+    expect(meta.userId).toBeUndefined();
+  });
+  it("rejects invalid names", () => {
+    expect(() => createProfile("Work")).toThrow(/lowercase/);
+  });
+  it("rejects duplicates", () => {
+    createProfile("work");
+    expect(() => createProfile("work")).toThrow(/already exists/);
+  });
+  it("accepts custom displayName", () => {
+    const p = createProfile("work", { displayName: "My Work Pro", loginMode: "auto" });
+    expect(p.displayName).toBe("My Work Pro");
+    expect(p.loginMode).toBe("auto");
+  });
+});
+
+describe("listProfiles", () => {
+  it("returns empty array when no profiles", () => {
+    expect(listProfiles()).toEqual([]);
+  });
+  it("lists created profiles", () => {
+    createProfile("a");
+    createProfile("b");
+    const names = listProfiles().map((p) => p.name).sort();
+    expect(names).toEqual(["a", "b"]);
+  });
+  it("skips dirs with unparseable meta.json", () => {
+    createProfile("good");
+    // Manually create a malformed profile dir
+    const { mkdirSync, writeFileSync } = require("node:fs");
+    mkdirSync(join(TMP, "profiles", "broken"), { recursive: true });
+    writeFileSync(join(TMP, "profiles", "broken", "meta.json"), "not json");
+    const names = listProfiles().map((p) => p.name);
+    expect(names).toEqual(["good"]); // broken is skipped silently
+  });
+});
+
+describe("getProfile", () => {
+  it("returns null for unknown", () => {
+    expect(getProfile("nope")).toBeNull();
+  });
+  it("returns profile meta for known", () => {
+    createProfile("work");
+    expect(getProfile("work")?.name).toBe("work");
+  });
+  it("returns null for malformed meta", () => {
+    const { mkdirSync, writeFileSync } = require("node:fs");
+    mkdirSync(join(TMP, "profiles", "bad"), { recursive: true });
+    writeFileSync(join(TMP, "profiles", "bad", "meta.json"), "not json");
+    expect(getProfile("bad")).toBeNull();
+  });
+});
+
+describe("deleteProfile", () => {
+  it("removes dir and meta", () => {
+    createProfile("work");
+    expect(existsSync(getProfilePaths("work").dir)).toBe(true);
+    deleteProfile("work");
+    expect(existsSync(getProfilePaths("work").dir)).toBe(false);
+  });
+  it("is idempotent — no throw if profile doesn't exist", () => {
+    expect(() => deleteProfile("nonexistent")).not.toThrow();
+  });
+});

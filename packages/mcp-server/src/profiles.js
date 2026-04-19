@@ -3,6 +3,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 
 const NAME_RE = /^[a-z0-9_-]{1,32}$/;
 
@@ -43,4 +44,57 @@ export function validateName(name) {
     return "Profile name must contain only lowercase letters, digits, hyphens, and underscores. Invalid characters detected.";
   }
   return null;
+}
+
+// Helper: read meta.json safely, return null on missing or parse error
+function readMeta(name) {
+  const p = getProfilePaths(name).meta;
+  if (!existsSync(p)) return null;
+  try {
+    return JSON.parse(readFileSync(p, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+// Helper: write meta.json atomically via .tmp+rename
+function writeMeta(name, meta) {
+  const paths = getProfilePaths(name);
+  if (!existsSync(paths.dir)) mkdirSync(paths.dir, { recursive: true });
+  writeFileSync(paths.meta + ".tmp", JSON.stringify(meta, null, 2) + "\n");
+  renameSync(paths.meta + ".tmp", paths.meta);
+}
+
+export function createProfile(name, opts = {}) {
+  const err = validateName(name);
+  if (err) throw new Error(err);
+  const paths = getProfilePaths(name);
+  if (existsSync(paths.dir)) throw new Error(`Profile '${name}' already exists.`);
+  mkdirSync(paths.dir, { recursive: true });
+  const meta = {
+    name,
+    displayName: opts.displayName ?? name,
+    createdAt: new Date().toISOString(),
+    loginMode: opts.loginMode ?? "manual",
+  };
+  writeMeta(name, meta);
+  return meta;
+}
+
+export function listProfiles() {
+  const dir = getProfilesDir();
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => readMeta(d.name))
+    .filter(Boolean);
+}
+
+export function getProfile(name) {
+  return readMeta(name);
+}
+
+export function deleteProfile(name) {
+  const dir = getProfilePaths(name).dir;
+  if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
 }
