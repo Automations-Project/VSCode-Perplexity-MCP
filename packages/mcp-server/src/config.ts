@@ -270,23 +270,6 @@ export interface SearchResult {
 }
 
 /**
- * Check if we have saved browser state from a previous login.
- */
-export function hasStorageState(): boolean {
-  return existsSync(STORAGE_STATE_FILE);
-}
-
-/**
- * Check if we have saved cookies (legacy or env vars).
- */
-export function hasCookies(): boolean {
-  if (process.env.PERPLEXITY_SESSION_TOKEN && process.env.PERPLEXITY_CSRF_TOKEN) {
-    return true;
-  }
-  return existsSync(COOKIES_FILE);
-}
-
-/**
  * Build cookie string from env vars or saved cookies file for Playwright context.
  */
 export interface PlaywrightCookie {
