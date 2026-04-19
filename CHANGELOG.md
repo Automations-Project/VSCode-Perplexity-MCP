@@ -4,7 +4,7 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
-## [Unreleased] — Phase 1 Scaffolding
+## [0.2.0] — 2026-04-19
 
 ### Added
 - LICENSE (MIT), NOTICE, SECURITY.md, CHANGELOG.md
