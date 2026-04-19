@@ -43,6 +43,10 @@
     "./research-store": {
       "types": "./dist/research-store.d.ts",
       "import": "./dist/research-store.mjs"
+    },
+    "./logout": {
+      "types": "./dist/logout.d.ts",
+      "import": "./dist/logout.mjs"
     }
   },
   "files": [
