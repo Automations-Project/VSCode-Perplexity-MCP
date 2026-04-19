@@ -2,14 +2,74 @@
   "name": "perplexity-user-mcp",
   "version": "0.1.0",
   "type": "module",
-  "private": true,
+  "description": "Perplexity AI MCP server — browser automation for search, reasoning, research, and compute",
+  "author": "A.R.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "perplexity",
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "search",
+    "research",
+    "browser-automation",
+    "patchright"
+  ],
+  "bin": {
+    "perplexity-user-mcp": "./dist/index.mjs"
+  },
+  "main": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.mjs"
+    },
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "import": "./dist/config.mjs"
+    },
+    "./refresh": {
+      "types": "./dist/refresh.d.ts",
+      "import": "./dist/refresh.mjs"
+    },
+    "./research-store": {
+      "types": "./dist/research-store.d.ts",
+      "import": "./dist/research-store.mjs"
+    }
+  },
+  "files": [
+    "dist/**/*.mjs",
+    "dist/**/*.d.ts",
+    "dist/**/*.js",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "cd ../.. && npx vitest run packages/mcp-server/test",
+    "test:coverage": "cd ../.. && npx vitest run --coverage packages/mcp-server/test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "got-scraping": "^4.2.1",
+    "patchright": "^1.59.4",
+    "zod": "^3.24.0"
+  },
+  "optionalDependencies": {
+    "keytar": "^7.9.0"
   },
   "devDependencies": {
-    "vitest": "^1.0.0",
-    "@vitest/coverage-v8": "^1.0.0"
+    "@types/node": "^22.0.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.7.0"
   }
 }
