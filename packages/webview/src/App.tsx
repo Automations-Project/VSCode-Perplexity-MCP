@@ -14,6 +14,9 @@ import {
   prettifyMode,
   tierClass,
 } from "./views";
+import { ProfileSwitcher } from "./components/ProfileSwitcher";
+import { OtpModal } from "./components/OtpModal";
+import { ExpiredBanner } from "./components/ExpiredBanner";
 
 const tabs: Array<{ id: AppTab; label: string; icon: typeof Compass }> = [
   { id: "dashboard", label: "Home", icon: Compass },
@@ -93,6 +96,18 @@ function App() {
       useDashboardStore.getState().markActionDone(msg.id);
       return;
     }
+    if (msg.type === "auth:state") {
+      useDashboardStore.getState().setAuthState(msg.payload);
+      return;
+    }
+    if (msg.type === "profile:list") {
+      useDashboardStore.getState().setProfiles(msg.payload);
+      return;
+    }
+    if (msg.type === "auth:otp-prompt") {
+      useDashboardStore.getState().openOtpPrompt(msg.payload);
+      return;
+    }
     hydrateRef.current(msg);
   }, []);
 
@@ -117,6 +132,9 @@ function App() {
         <div className="orb orb-b" />
       </div>
 
+      <ExpiredBanner send={send} />
+      <OtpModal send={send} />
+
       <header className="glass-panel sidebar-panel">
         <div className="flex items-center gap-2 min-w-0">
           <div className="brand-mark">
@@ -128,13 +146,14 @@ function App() {
               {snapshot?.loggedIn ? "Command Center" : "Login Required"}
             </div>
           </div>
-          <div className="flex-shrink-0">
+          <div className="flex-shrink-0 flex items-center gap-2">
             {snapshot ? (
               <div className={`chip ${tierClass(snapshot.tier)}`} style={{ padding: "4px 8px", fontSize: "0.7rem" }}>
                 <ShieldCheck size={12} />
                 <span>{snapshot.tier}</span>
               </div>
             ) : null}
+            <ProfileSwitcher send={send} />
           </div>
         </div>
 
