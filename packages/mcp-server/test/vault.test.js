@@ -182,3 +182,176 @@ describe("Vault interface", () => {
     expect(await v.get("work", "cookies")).toBeNull();
   });
 });
+
+describe("vault primitive error paths — key validation", () => {
+  it("encryptBlob throws on non-32-byte key", () => {
+    expect(() => encryptBlob(Buffer.from("x"), Buffer.alloc(16))).toThrow(/32 bytes/);
+  });
+
+  it("decryptBlob throws on non-32-byte key", () => {
+    expect(() => decryptBlob(Buffer.alloc(50), Buffer.alloc(16))).toThrow(/32 bytes/);
+  });
+});
+
+describe("vault primitive error paths — blob structure", () => {
+  const KEY = Buffer.alloc(32, 7);
+
+  it("decryptBlob throws on too-short blob", () => {
+    expect(() => decryptBlob(Buffer.alloc(5), KEY)).toThrow(/too short/i);
+  });
+
+  it("decryptBlob throws on missing PXVT magic", () => {
+    const bad = Buffer.alloc(50);
+    bad.write("NOPE", 0);
+    expect(() => decryptBlob(bad, KEY)).toThrow(/magic/i);
+  });
+
+  it("decryptBlob throws on unsupported version", () => {
+    const good = encryptBlob(Buffer.from("x"), KEY);
+    good[4] = 99;  // mangle version byte
+    expect(() => decryptBlob(good, KEY)).toThrow(/version/i);
+  });
+});
+
+describe("getMasterKey — malformed keychain hex fallback", () => {
+  beforeEach(() => {
+    __resetKeyCache();
+    delete process.env.PERPLEXITY_VAULT_PASSPHRASE;
+  });
+
+  it("falls through to env-var when keychain returns wrong-length hex", async () => {
+    vi.doMock("keytar", () => ({
+      default: {
+        getPassword: vi.fn(async () => "too-short"),  // not 64 hex chars
+        setPassword: vi.fn(),
+      },
+    }));
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "fallback-pass";
+    const key = await getMasterKey();
+    expect(key.length).toBe(32);
+    vi.doUnmock("keytar");
+  });
+
+  it("falls through to env-var when keychain throws", async () => {
+    vi.doMock("keytar", () => ({
+      default: {
+        getPassword: vi.fn(async () => {
+          throw new Error("keychain unavailable");
+        }),
+        setPassword: vi.fn(),
+      },
+    }));
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "fallback-pass";
+    const key = await getMasterKey();
+    expect(key.length).toBe(32);
+    vi.doUnmock("keytar");
+  });
+});
+
+describe("getMasterKey — TTY prompt path", () => {
+  beforeEach(() => {
+    __resetKeyCache();
+    vi.doMock("keytar", () => { throw new Error("unavailable"); });
+    delete process.env.PERPLEXITY_VAULT_PASSPHRASE;
+    delete process.env.PERPLEXITY_MCP_STDIO;
+  });
+  afterEach(() => {
+    vi.doUnmock("keytar");
+    delete process.env.PERPLEXITY_MCP_STDIO;
+  });
+
+  it("throws TTY-not-implemented error when stdin.isTTY=true and not in stdio mode", async () => {
+    // Temporarily mock process.stdin.isTTY to true
+    const originalTTY = process.stdin.isTTY;
+    Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+
+    try {
+      await expect(getMasterKey()).rejects.toThrow(/TTY passphrase prompt not yet implemented/);
+    } finally {
+      Object.defineProperty(process.stdin, "isTTY", { value: originalTTY, configurable: true });
+    }
+  });
+});
+
+describe("readVaultObject — malformed plaintext", () => {
+  let TMP3;
+  beforeEach(() => {
+    TMP3 = mkdtempSync(join2(tmp2(), "pplx-vault-bad-"));
+    process.env.PERPLEXITY_CONFIG_DIR = TMP3;
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "xyz";
+    __resetKeyCache();
+  });
+  afterEach(() => {
+    rm2(TMP3, { recursive: true, force: true });
+    delete process.env.PERPLEXITY_CONFIG_DIR;
+    delete process.env.PERPLEXITY_VAULT_PASSPHRASE;
+  });
+
+  it("Vault.get returns null when vault holds non-JSON plaintext", async () => {
+    // Write a vault with valid encryption but non-JSON plaintext
+    const { writeFileSync } = await import("node:fs");
+    cp("work");
+    const key = await getMasterKey();
+    const blob = encryptBlob(Buffer.from("this is not valid json at all"), key);
+    const { getProfilePaths } = await import("../src/profiles.js");
+    writeFileSync(getProfilePaths("work").vault, blob);
+    const v = new Vault();
+    expect(await v.get("work", "anything")).toBeNull();
+  });
+});
+
+describe("Vault profile directory creation", () => {
+  let TMP4;
+  beforeEach(() => {
+    TMP4 = mkdtempSync(join2(tmp2(), "pplx-vault-dir-"));
+    process.env.PERPLEXITY_CONFIG_DIR = TMP4;
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "test";
+    __resetKeyCache();
+  });
+  afterEach(() => {
+    rm2(TMP4, { recursive: true, force: true });
+    delete process.env.PERPLEXITY_CONFIG_DIR;
+    delete process.env.PERPLEXITY_VAULT_PASSPHRASE;
+  });
+
+  it("set creates profile directory if it does not exist", async () => {
+    // Don't create the profile; writeVaultObject should mkdir
+    const v = new Vault();
+    await v.set("newprof", "key", "value");
+    const got = await v.get("newprof", "key");
+    expect(got).toBe("value");
+  });
+
+  it("deleteAll removes vault when it exists", async () => {
+    cp("work");
+    const v = new Vault();
+    await v.set("work", "key", "value");
+    expect(await v.get("work", "key")).toBe("value");
+    await v.deleteAll("work");
+    expect(await v.get("work", "key")).toBeNull();
+  });
+});
+
+describe("Vault edge case: keychain returns null then env var fallback", () => {
+  beforeEach(() => {
+    __resetKeyCache();
+    delete process.env.PERPLEXITY_VAULT_PASSPHRASE;
+  });
+  afterEach(() => {
+    vi.doUnmock("keytar");
+    delete process.env.PERPLEXITY_VAULT_PASSPHRASE;
+  });
+
+  it("falls through when keychain getPassword returns null", async () => {
+    vi.doMock("keytar", () => ({
+      default: {
+        getPassword: vi.fn(async () => null),
+        setPassword: vi.fn(),
+      },
+    }));
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "fallback-phrase";
+    const key = await getMasterKey();
+    expect(key.length).toBe(32);
+    vi.doUnmock("keytar");
+  });
+});
