@@ -206,3 +206,29 @@ describe("suggestNextDefaultName", () => {
     expect(suggestNextDefaultName()).toBe("account-1");
   });
 });
+
+import { renameProfile } from "../src/profiles.js";
+
+describe("renameProfile", () => {
+  it("moves dir + updates meta.name", () => {
+    createProfile("work");
+    renameProfile("work", "work2");
+    expect(getProfile("work")).toBeNull();
+    expect(getProfile("work2")?.name).toBe("work2");
+  });
+  it("updates active pointer if it was pointing at old name", () => {
+    createProfile("work");
+    setActive("work");
+    renameProfile("work", "work2");
+    expect(getActive()?.name).toBe("work2");
+  });
+  it("rejects invalid new name", () => {
+    createProfile("work");
+    expect(() => renameProfile("work", "WORK")).toThrow(/lowercase/);
+  });
+  it("rejects rename to existing name", () => {
+    createProfile("a");
+    createProfile("b");
+    expect(() => renameProfile("a", "b")).toThrow(/already exists/);
+  });
+});

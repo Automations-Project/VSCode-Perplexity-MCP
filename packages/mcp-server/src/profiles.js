@@ -135,3 +135,20 @@ export function suggestNextDefaultName() {
   while (names.includes(`account-${n}`)) n++;
   return `account-${n}`;
 }
+
+export function renameProfile(oldName, newName) {
+  const err = validateName(newName);
+  if (err) throw new Error(err);
+  const oldPaths = getProfilePaths(oldName);
+  const newPaths = getProfilePaths(newName);
+  if (!existsSync(oldPaths.dir)) throw new Error(`Profile '${oldName}' not found.`);
+  if (existsSync(newPaths.dir)) throw new Error(`Profile '${newName}' already exists.`);
+  renameSync(oldPaths.dir, newPaths.dir);
+  const meta = readMeta(newName);
+  if (meta) {
+    meta.name = newName;
+    if (meta.displayName === oldName) meta.displayName = newName;
+    writeMeta(newName, meta);
+  }
+  if (getActiveName() === oldName) setActive(newName);
+}
