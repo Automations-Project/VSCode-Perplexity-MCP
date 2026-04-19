@@ -12,9 +12,8 @@ import express from "express";
  *   GET  /rest/asi-access                                      -> {can_use_computer: true}
  *   GET  /rest/rate-limit                                      -> rate-limit shape
  *   GET  /rest/user/experiments                                -> {server_is_pro:true, ...}
- *   GET  /config/sso-required?email=X                          -> used by runner tests to force SSO path
  *
- * Query param `?force_cf=1` on any GET simulates CF block (returns 503 + cf title).
+ * Query param `?force_cf=1` on `GET /login` simulates CF block (returns 503 + cf title).
  */
 export async function start(opts = {}) {
   const app = express();
