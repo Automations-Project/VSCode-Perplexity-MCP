@@ -54,6 +54,31 @@ export interface DashboardState {
   debug: DebugState;
 }
 
+export type AuthStatus =
+  | "unknown" | "checking" | "valid" | "expired" | "error"
+  | "logging-in" | "awaiting_otp" | "chrome_missing" | "sso_required";
+
+export interface AuthState {
+  profile: string;
+  status: AuthStatus;
+  tier?: "Max" | "Pro" | "Enterprise" | "Authenticated" | "Anonymous";
+  userId?: string;
+  email?: string;
+  lastLogin?: string;
+  lastChecked?: string;
+  error?: string;
+}
+
+export interface Profile {
+  name: string;
+  displayName: string;
+  createdAt: string;
+  lastLogin?: string;
+  lastChecked?: string;
+  loginMode: "auto" | "manual";
+  tier?: "Max" | "Pro" | "Enterprise" | "Authenticated" | "Anonymous";
+}
+
 export type ExtensionMessage =
   | {
       type: "dashboard:state";
@@ -84,7 +109,10 @@ export type ExtensionMessage =
         phase: "installing" | "uninstalling" | "idle";
         line?: string;
       };
-    };
+    }
+  | { type: "auth:state"; payload: AuthState }
+  | { type: "auth:otp-prompt"; payload: { profile: string; attempt: number; email: string } }
+  | { type: "profile:list"; payload: { active: string | null; profiles: Profile[] } };
 
 export type WebviewMessage =
   | {
@@ -140,4 +168,11 @@ export type WebviewMessage =
   | {
       type: "speed-boost:uninstall";
       id: string;
-    };
+    }
+  | { type: "auth:login-start"; id: string; payload: { profile: string; mode: "auto" | "manual"; email?: string } }
+  | { type: "auth:otp-submit"; id: string; payload: { otp: string } }
+  | { type: "auth:logout"; id: string; payload: { profile: string; purge?: boolean } }
+  | { type: "auth:dismiss-expired"; payload: { profile: string; bumpHours: number } }
+  | { type: "profile:switch"; id: string; payload: { name: string } }
+  | { type: "profile:add"; id: string; payload: { name: string; displayName?: string; loginMode: "auto" | "manual" } }
+  | { type: "profile:delete"; id: string; payload: { name: string; purge: boolean } };
