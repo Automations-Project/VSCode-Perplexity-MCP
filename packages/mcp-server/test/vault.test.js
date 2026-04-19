@@ -297,7 +297,7 @@ describe("readVaultObject — malformed plaintext", () => {
     delete process.env.PERPLEXITY_VAULT_PASSPHRASE;
   });
 
-  it("Vault.get returns null when vault holds non-JSON plaintext", async () => {
+  it("Vault.get throws a diagnosable error when vault holds non-JSON plaintext", async () => {
     // Write a vault with valid encryption but non-JSON plaintext
     const { writeFileSync } = await import("node:fs");
     cp("work");
@@ -306,7 +306,24 @@ describe("readVaultObject — malformed plaintext", () => {
     const { getProfilePaths } = await import("../src/profiles.js");
     writeFileSync(getProfilePaths("work").vault, blob);
     const v = new Vault();
-    expect(await v.get("work", "anything")).toBeNull();
+    await expect(v.get("work", "anything")).rejects.toThrow(/corrupt|unreadable/i);
+  });
+});
+
+describe("vault JSON corruption", () => {
+  it("throws a diagnosable error when the decrypted vault JSON is corrupt", async () => {
+    const configDir = mkdtempSync(join2(tmp2(), "px-corrupt-"));
+    process.env.PERPLEXITY_CONFIG_DIR = configDir;
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "c-pass";
+    __resetKeyCache();
+    const { createProfile, getProfilePaths } = await import("../src/profiles.js");
+    createProfile("default");
+    const vault = new Vault();
+    const key = await getMasterKey();
+    const { writeFileSync } = await import("node:fs");
+    const bad = encryptBlob(Buffer.from("definitely-not-json}"), key);
+    writeFileSync(getProfilePaths("default").vault, bad);
+    await expect(vault.get("default", "cookies")).rejects.toThrow(/corrupt|unreadable/i);
   });
 });
 

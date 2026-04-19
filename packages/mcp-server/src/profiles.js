@@ -127,6 +127,10 @@ export function setActive(name) {
   const p = getActivePointerPath();
   writeFileSync(p + ".tmp", name + "\n");
   renameSync(p + ".tmp", p);
+  // Per-profile master keys may arrive in a later phase; for now the master key
+  // is global, so the reset is defensive — but it does let a re-sourced env-var
+  // passphrase take effect within the same process lifetime.
+  import("./vault.js").then((m) => { m.__resetKeyCache(); }).catch(() => {});
 }
 
 export function suggestNextDefaultName() {

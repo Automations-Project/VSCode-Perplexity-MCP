@@ -12,7 +12,7 @@ const extensionNodeModules = join(__dirname, "..", "dist", "node_modules");
  * the esbuild bundler. This list is only for packages that must ship with their
  * own node_modules tree at runtime (native binaries, dynamic requires, etc.).
  */
-const rootPackages = ["patchright", "patchright-core", "got-scraping", "keytar"];
+const rootPackages = ["patchright", "patchright-core", "got-scraping", "keytar", "dot-prop", "is-obj"];
 
 rmSync(extensionNodeModules, { recursive: true, force: true });
 mkdirSync(extensionNodeModules, { recursive: true });

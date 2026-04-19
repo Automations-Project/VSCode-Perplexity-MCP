@@ -44,9 +44,9 @@ async function secureUnix(dirPath: string): Promise<void> {
 }
 
 async function secureWindows(dirPath: string): Promise<void> {
-  const username = process.env.USERNAME;
-  if (!username) {
-    console.warn("[secure-permissions] USERNAME env var not set, skipping Windows ACL");
+  const user = await resolveWindowsUser();
+  if (!user) {
+    console.warn("[secure-permissions] Could not resolve Windows user, skipping Windows ACL");
     return;
   }
 
@@ -54,6 +54,18 @@ async function secureWindows(dirPath: string): Promise<void> {
     dirPath,
     "/inheritance:r",
     "/grant:r",
-    `${username}:(OI)(CI)F`,
+    `${user}:(OI)(CI)F`,
   ]);
+}
+
+async function resolveWindowsUser(): Promise<string | null> {
+  if (process.env.USERNAME) return process.env.USERNAME;
+  if (process.env.USERPROFILE) {
+    const base = process.env.USERPROFILE.split(/[\\/]/).filter(Boolean).pop();
+    if (base) return base;
+  }
+  try {
+    const { stdout } = await execFileAsync("whoami");
+    return stdout.trim().split(/[\\/]/).pop() ?? null;
+  } catch { return null; }
 }

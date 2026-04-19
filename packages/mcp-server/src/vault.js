@@ -138,8 +138,10 @@ async function readVaultObject(profileName) {
   const plain = decryptBlob(blob, key);
   try {
     return JSON.parse(plain.toString("utf8"));
-  } catch {
-    return {};
+  } catch (err) {
+    const { redact } = await import("./redact.js");
+    console.error(`[vault] Corrupt vault JSON for profile ${redact(profileName)}: ${redact(err.message)}`);
+    throw new Error(`Vault for profile '${profileName}' is corrupt or unreadable.`);
   }
 }
 
