@@ -30,5 +30,11 @@ export default defineConfig({
     "fingerprint-generator",
     "keytar",
   ],
+  // Shebang is NOT emitted into source files — it tripped vitest/esbuild
+  // during test imports of cli.js. npm's `bin` linker wraps the entry with
+  // its own node invocation on install, so the shebang isn't required for
+  // `npx perplexity-user-mcp` to work. If direct execution (`./dist/cli.mjs`)
+  // ever needs to work without npm, re-add via a post-build script that
+  // targets cli.mjs specifically.
   outExtension: () => ({ js: ".mjs" }),
 });

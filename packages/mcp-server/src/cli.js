@@ -1,6 +1,9 @@
-#!/usr/bin/env node
+// Shebang is added by tsup banner for the built dist/cli.mjs so the bin entry
+// works as a CLI. Kept out of source so vitest/esbuild can parse this file
+// during tests.
 
-import { pathToFileURL } from "node:url";
+import { readFileSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 export function parseArgs(argv) {
   if (argv.length === 0) return { command: "server", flags: {} };
@@ -43,10 +46,15 @@ export async function routeCommand(parsed) {
   }
   if (command === "version") {
     /* v8 ignore start -- catch fallback fires only if package.json is missing at runtime */
-    const pkg = await import("../package.json", { with: { type: "json" } })
-      .catch(() => ({ default: { version: "0.0.0" } }));
+    let version = "0.0.0";
+    try {
+      const pkgPath = fileURLToPath(new URL("../package.json", import.meta.url));
+      version = JSON.parse(readFileSync(pkgPath, "utf8")).version ?? "0.0.0";
+    } catch {
+      // fall through with default
+    }
     /* v8 ignore stop */
-    return { code: 0, stdout: (pkg.default?.version ?? "0.0.0") + "\n", stderr: "" };
+    return { code: 0, stdout: version + "\n", stderr: "" };
   }
   if (command === "help") {
     return { code: 0, stdout: HELP_TEXT, stderr: "" };
