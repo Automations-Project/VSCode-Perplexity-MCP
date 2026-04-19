@@ -485,7 +485,7 @@ export async function refreshAccountInfo(opts: RefreshOptions = {}): Promise<Ref
   const started = Date.now();
   const timeoutMs = opts.timeoutMs ?? 25000;
 
-  const savedCookies = getSavedCookies();
+  const savedCookies = await getSavedCookies();
   if (savedCookies.length === 0) {
     return {
       ok: false,

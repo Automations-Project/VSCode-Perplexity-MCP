@@ -1,6 +1,8 @@
-import { readFileSync, existsSync } from "fs";
+import { existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import { getActiveName, getProfilePaths } from "./profiles.js";
+import { Vault } from "./vault.js";
 
 export const PERPLEXITY_URL = "https://www.perplexity.ai";
 export const AUTH_SESSION_ENDPOINT = `${PERPLEXITY_URL}/api/auth/session`;
@@ -13,9 +15,38 @@ export const USER_INFO_ENDPOINT = `${PERPLEXITY_URL}/rest/user/info?version=2.18
 export const THREAD_ENDPOINT = (slug: string) => `${PERPLEXITY_URL}/rest/thread/${slug}`;
 
 export const CONFIG_DIR = process.env.PERPLEXITY_CONFIG_DIR || join(homedir(), ".perplexity-mcp");
-export const COOKIES_FILE = join(CONFIG_DIR, "cookies.json");
+
+/**
+ * Resolve the active profile name at call time.
+ *  env PERPLEXITY_PROFILE > active pointer > "default"
+ */
+function activeName(): string {
+  return process.env.PERPLEXITY_PROFILE || getActiveName() || "default";
+}
+
+/**
+ * Cookies file path for the active profile (legacy fallback only — real
+ * storage is the encrypted vault now). Profile-aware, evaluated at call time.
+ */
+export function getCookiesFile(): string {
+  return getProfilePaths(activeName()).dir + "/cookies.json";
+}
+
+/**
+ * Browser persistent-context directory for the active profile.
+ * Profile-aware, evaluated at call time.
+ */
+export function getBrowserDataDir(): string {
+  return getProfilePaths(activeName()).browserData;
+}
+
+// Preserve named exports for back-compat (extension + tests import these).
+// Evaluated at module load — acceptable because both helpers above are pure
+// path derivation. Tests that set PERPLEXITY_CONFIG_DIR at runtime still see
+// fresh values via the getter functions.
+export const COOKIES_FILE = getCookiesFile();
 export const STORAGE_STATE_FILE = join(CONFIG_DIR, "storage-state.json");
-export const BROWSER_DATA_DIR = join(CONFIG_DIR, "chrome-profile");
+export const BROWSER_DATA_DIR = getBrowserDataDir();
 
 export interface BrowserInfo {
   path: string;
@@ -268,8 +299,10 @@ export interface PlaywrightCookie {
   sameSite?: "Strict" | "Lax" | "None";
 }
 
-export function getSavedCookies(): PlaywrightCookie[] {
-  // 1. Env var override
+const _vault = new Vault();
+
+export async function getSavedCookies(): Promise<PlaywrightCookie[]> {
+  // 1. Env var override (unchanged behavior)
   if (process.env.PERPLEXITY_SESSION_TOKEN) {
     const cookies: PlaywrightCookie[] = [{
       name: "__Secure-next-auth.session-token",
@@ -294,41 +327,23 @@ export function getSavedCookies(): PlaywrightCookie[] {
     return cookies;
   }
 
-  // 2. File-based cookies
-  if (!existsSync(COOKIES_FILE)) return [];
-
+  // 2. Vault-backed cookies for the active profile (Phase 2)
+  const raw = await _vault.get(activeName(), "cookies").catch(() => null);
+  if (!raw) return [];
   try {
-    const data = JSON.parse(readFileSync(COOKIES_FILE, "utf-8"));
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
-    // New format: { allCookies: PlaywrightCookie[] }
-    if (Array.isArray(data.allCookies)) {
-      return data.allCookies;
-    }
-
-    // Legacy format: { sessionToken, csrfToken }
-    const cookies: PlaywrightCookie[] = [];
-    if (data.sessionToken) {
-      cookies.push({
-        name: "__Secure-next-auth.session-token",
-        value: data.sessionToken,
-        domain: ".perplexity.ai",
-        path: "/",
-        secure: true,
-        httpOnly: true,
-        sameSite: "Lax",
-      });
-    }
-    if (data.csrfToken) {
-      cookies.push({
-        name: "next-auth.csrf-token",
-        value: data.csrfToken,
-        domain: ".perplexity.ai",
-        path: "/",
-        secure: false,
-        httpOnly: false,
-        sameSite: "Lax",
-      });
-    }
-    return cookies;
-  } catch { return []; }
+/**
+ * Check whether the active profile has stored login cookies in its vault.
+ * Extension has its own filesystem-based `hasStoredLogin` in session.ts that
+ * inspects COOKIES_FILE / BROWSER_DATA_DIR — this one is vault-aware.
+ */
+export async function hasStoredLogin(): Promise<boolean> {
+  const raw = await _vault.get(activeName(), "cookies").catch(() => null);
+  return !!raw;
 }

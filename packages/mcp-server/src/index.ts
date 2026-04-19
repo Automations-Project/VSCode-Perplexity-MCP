@@ -7,19 +7,14 @@ import { registerTools } from "./tools.js";
 import { registerPrompts } from "./prompts.js";
 import { registerResources } from "./resources.js";
 import { loadToolConfig, getEnabledTools } from "./tool-config.js";
+import { watchReinit } from "./reinit-watcher.js";
+import { getActiveName } from "./profiles.js";
 
 let client: PerplexityClient;
-let clientReady = false;
 let clientInitPromise: Promise<void> | null = null;
 
 async function getClient(): Promise<PerplexityClient> {
-  if (clientReady) return client;
-  if (!clientInitPromise) {
-    clientInitPromise = client.init().then(() => {
-      clientReady = true;
-      console.error("[perplexity-mcp] Client initialized (lazy).");
-    });
-  }
+  if (!clientInitPromise) clientInitPromise = client.init();
   await clientInitPromise;
   return client;
 }
@@ -29,7 +24,7 @@ async function main() {
 
   const server = new McpServer({
     name: "perplexity",
-    version: "0.1.0",
+    version: "0.3.0",
   });
 
   const toolConfig = loadToolConfig();
@@ -39,11 +34,26 @@ async function main() {
   registerPrompts(server);
   registerTools(server, getClient, enabledTools);
 
+  const profile = process.env.PERPLEXITY_PROFILE || getActiveName() || "default";
+  console.error(`[perplexity-mcp] Starting with profile: ${profile}`);
+
+  const watcher = watchReinit(profile, async () => {
+    console.error("[perplexity-mcp] .reinit sentinel fired — reloading client.");
+    try {
+      clientInitPromise = client.reinit();
+      await clientInitPromise;
+    } catch (err) {
+      console.error("[perplexity-mcp] reinit failed:", err);
+    }
+  });
+
   process.on("SIGINT", async () => {
+    watcher.dispose();
     await client.shutdown();
     process.exit(0);
   });
   process.on("SIGTERM", async () => {
+    watcher.dispose();
     await client.shutdown();
     process.exit(0);
   });

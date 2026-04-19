@@ -18,7 +18,6 @@ import {
   SUPPORTED_BLOCK_USE_CASES,
   BROWSER_DATA_DIR,
   CONFIG_DIR,
-  COOKIES_FILE,
   findChromeExecutable,
   resolveBrowserExecutable,
   getSavedCookies,
@@ -133,7 +132,7 @@ export class PerplexityClient {
     });
 
     // Inject saved cookies (session + cf_clearance from login)
-    const saved = getSavedCookies();
+    const saved = await getSavedCookies();
     if (saved.length > 0) {
       await this.context.addCookies(saved);
       console.error(`[perplexity-mcp] Injected ${saved.length} saved cookies into browser context.`);
@@ -386,192 +385,32 @@ export class PerplexityClient {
   }
 
   /**
-   * Open a VISIBLE browser (same persistent profile) for the user to log in.
-   * Cloudflare challenge is solved during this headed session, and the cf_clearance
-   * cookie is saved in the shared browser profile for subsequent headless use.
+   * Removed in 0.3.0. Login now runs in a separate child process (login-runner)
+   * driven by AuthManager / the CLI so the long-lived MCP server doesn't hold
+   * the browser profile lock. After a successful login, the runner writes to
+   * the vault and drops a `.reinit` sentinel which the MCP server's watcher
+   * picks up to reload cookies via `reinit()`.
    */
-  async loginViaBrowser(opts: { log?: (line: string) => void } = {}): Promise<{ success: boolean; message: string }> {
-    const log = opts.log ?? ((line: string) => console.error(`[perplexity-mcp] ${line}`));
+  async loginViaBrowser(_opts: { log?: (line: string) => void } = {}): Promise<{ success: boolean; message: string }> {
+    throw new Error(
+      "loginViaBrowser is removed in 0.3.0. Call AuthManager.login() from the extension or `npx perplexity-user-mcp login` from the CLI."
+    );
+  }
 
-    // Close existing headless context first
-    await this.shutdown();
-
-    await resolveBrowserExecutable();
-
-    log("Opening visible browser for login...");
-
-    if (!existsSync(CONFIG_DIR)) {
-      mkdirSync(CONFIG_DIR, { recursive: true });
-    }
-
-    // Use a NON-persistent browser to avoid Chrome profile lock conflicts.
-    // The MCP server process may have a headless Chrome locked on BROWSER_DATA_DIR.
-    const chromePath = findChromeExecutable();
-    const browser = await chromium.launch({
-      headless: false,
-      args: STEALTH_ARGS,
-      ...(chromePath ? { executablePath: chromePath } : {}),
-      ignoreDefaultArgs: ["--enable-automation"],
-    });
-
-    // If the user closes the window, abort the poll loop instead of hanging.
-    let browserClosed = false;
-    browser.on("disconnected", () => {
-      browserClosed = true;
-      log("Login browser was closed.");
-    });
-
-    const loginContext = await browser.newContext({
-      viewport: { width: 1280, height: 900 },
-      userAgent: USER_AGENT,
-    });
-
-    // Inject existing cookies so user doesn't start from scratch
-    const existingCookies = getSavedCookies();
-    if (existingCookies.length > 0) {
-      await loginContext.addCookies(existingCookies);
-      log(`Seeded ${existingCookies.length} existing cookies into login window.`);
-    }
-
-    const loginPage = await loginContext.newPage();
-    try {
-      await loginPage.goto(PERPLEXITY_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
-      log(`Loaded ${PERPLEXITY_URL}.`);
-    } catch (err) {
-      log(`Initial navigation failed: ${(err as Error).message}`);
-    }
-
-    // Poll for login. We consider the user logged in as soon as the
-    // __Secure-next-auth.session-token cookie is present (set by Perplexity on
-    // successful auth). This detects success well before the /api/auth/session
-    // endpoint reflects the user, and it works even when CF is briefly blocking
-    // /rest/* requests.
-    let loggedIn = false;
-    const maxWaitSec = 180;
-    const pollIntervalMs = 2000;
-    const started = Date.now();
-    let pollNum = 0;
-
-    while (!loggedIn) {
-      if (browserClosed) {
-        return { success: false, message: "Login cancelled — browser was closed before authentication completed." };
-      }
-      const elapsed = (Date.now() - started) / 1000;
-      if (elapsed >= maxWaitSec) break;
-
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-      pollNum++;
-
-      try {
-        const cookies = await loginContext.cookies(PERPLEXITY_URL);
-        const hasSession = cookies.some((c) => c.name === "__Secure-next-auth.session-token");
-
-        if (hasSession) {
-          loggedIn = true;
-          log(`Poll #${pollNum} (${elapsed.toFixed(1)}s): session cookie detected — login succeeded.`);
-          // Best-effort: grab user id from the session endpoint
-          try {
-            const data: any = await loginPage.evaluate(async (url: string) => {
-              const r = await fetch(url, { credentials: "include" });
-              if (!r.ok) return null;
-              const ct = r.headers.get("content-type") ?? "";
-              if (!ct.includes("application/json")) return null;
-              return r.json();
-            }, AUTH_SESSION_ENDPOINT);
-            if (data?.user?.id) {
-              this.userId = data.user.id;
-              this.authenticated = true;
-              log(`Authenticated as ${data.user.name || data.user.email || data.user.id}`);
-            }
-          } catch {
-            // We already know they're logged in via the cookie; user id is best-effort.
-          }
-          break;
-        }
-
-        if (pollNum % 5 === 0) {
-          log(`Poll #${pollNum} (${elapsed.toFixed(1)}s): ${cookies.length} cookies so far, no session yet.`);
-        }
-      } catch (err) {
-        log(`Poll #${pollNum} (${elapsed.toFixed(1)}s) error: ${(err as Error).message}`);
-      }
-    }
-
-    if (!loggedIn) {
-      await browser.close().catch(() => undefined);
-      return { success: false, message: `Login timed out after ${maxWaitSec}s — no session cookie detected.` };
-    }
-
-    // Save ALL cookies (including cf_clearance for Cloudflare bypass)
-    if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true });
-    const allCookies = await loginContext.cookies(PERPLEXITY_URL);
-    const cookiesToSave = allCookies.map(c => ({
-      name: c.name,
-      value: c.value,
-      domain: c.domain,
-      path: c.path,
-      secure: c.secure,
-      httpOnly: c.httpOnly,
-      sameSite: c.sameSite,
-    }));
-    writeFileSync(COOKIES_FILE, JSON.stringify({
-      allCookies: cookiesToSave,
-      savedAt: new Date().toISOString(),
-    }, null, 2));
-    log(`Saved ${cookiesToSave.length} cookies to ${COOKIES_FILE}.`);
-
-    // Fetch account info while browser is still open and CF isn't blocking
-    try {
-      const modelsData = await loginPage.evaluate(
-        `fetch("${MODELS_CONFIG_ENDPOINT}", { credentials: "include" }).then(r => r.ok ? r.json() : null).catch(() => null)`
-      );
-      const asiData = await loginPage.evaluate(
-        `fetch("${ASI_ACCESS_ENDPOINT}", { credentials: "include" }).then(r => r.ok ? r.json() : null).catch(() => null)`
-      );
-      const rateLimitData = await loginPage.evaluate(
-        `fetch("${RATE_LIMIT_ENDPOINT}", { credentials: "include" }).then(r => r.ok ? r.json() : null).catch(() => null)`
-      );
-      const experimentsData: any = await loginPage.evaluate(
-        `fetch("${EXPERIMENTS_ENDPOINT}", { credentials: "include" }).then(r => r.ok ? r.json() : null).catch(() => null)`
-      );
-
-      if (modelsData) {
-        this.accountInfo.modelsConfig = modelsData as ModelsConfigResponse;
-        const count = Object.keys(this.accountInfo.modelsConfig.models || {}).length;
-        console.error(`[perplexity-mcp] Loaded ${count} models from account.`);
-      }
-      if (asiData) {
-        const asi = asiData as ASIAccessResponse;
-        this.accountInfo.canUseComputer = asi.can_use_computer;
-      }
-      if (rateLimitData) {
-        this.accountInfo.rateLimits = rateLimitData as RateLimitResponse;
-      }
-      if (experimentsData) {
-        this.accountInfo.isPro = !!experimentsData.server_is_pro;
-        this.accountInfo.isMax = !!experimentsData.server_is_max;
-        this.accountInfo.isEnterprise = !!experimentsData.server_is_enterprise;
-        const tier = this.accountInfo.isMax ? "Max" : this.accountInfo.isPro ? "Pro" : this.accountInfo.isEnterprise ? "Enterprise" : "Free";
-        console.error(`[perplexity-mcp] Account tier: ${tier}`);
-      }
-
-      // Cache to disk
-      if (this.accountInfo.modelsConfig) {
-        try {
-          writeFileSync(MODELS_CACHE_FILE, JSON.stringify(this.accountInfo, null, 2));
-          console.error("[perplexity-mcp] Account info cached to disk.");
-        } catch { /* ignore */ }
-      }
-    } catch (err) {
-      console.error("[perplexity-mcp] Failed to fetch account info during login:", (err as Error).message);
-    }
-
-    await browser.close();
-
-    return {
-      success: true,
-      message: `Login successful! Authenticated as user: ${this.userId}. Cookies saved.`,
-    };
+  /**
+   * Close the current browser context and re-run init() so freshly-written
+   * vault cookies are picked up. Called by the `.reinit` sentinel watcher
+   * after a child login-runner completes.
+   */
+  async reinit(): Promise<void> {
+    console.error("[perplexity-mcp] Reinit requested — closing current context and reloading cookies.");
+    await this.shutdown().catch(() => {});
+    this.browser = null;
+    this.context = null;
+    this.page = null;
+    this.authenticated = false;
+    this.userId = null;
+    await this.init();
   }
 
   async search(opts: {
