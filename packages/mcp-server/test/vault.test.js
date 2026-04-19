@@ -355,3 +355,37 @@ describe("Vault edge case: keychain returns null then env var fallback", () => {
     vi.doUnmock("keytar");
   });
 });
+
+describe("Vault atomicity", () => {
+  let TMP;
+  beforeEach(() => {
+    TMP = mkdtempSync(join2(tmp2(), "pplx-vault-atomic-"));
+    process.env.PERPLEXITY_CONFIG_DIR = TMP;
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "xyz";
+    __resetKeyCache();
+  });
+  afterEach(() => {
+    rm2(TMP, { recursive: true, force: true });
+    delete process.env.PERPLEXITY_CONFIG_DIR;
+    delete process.env.PERPLEXITY_VAULT_PASSPHRASE;
+  });
+
+  it("leaves no .tmp file behind after a successful write", async () => {
+    const { existsSync: exists } = await import("node:fs");
+    cp("work");
+    const { getProfilePaths } = await import("../src/profiles.js");
+    const v = new Vault();
+    await v.set("work", "cookies", "[]");
+    const vaultPath = getProfilePaths("work").vault;
+    expect(exists(vaultPath)).toBe(true);
+    expect(exists(vaultPath + ".tmp")).toBe(false);
+  });
+
+  it("overwrites existing vault on subsequent set", async () => {
+    cp("work");
+    const v = new Vault();
+    await v.set("work", "k", "v1");
+    await v.set("work", "k", "v2");
+    expect(await v.get("work", "k")).toBe("v2");
+  });
+});

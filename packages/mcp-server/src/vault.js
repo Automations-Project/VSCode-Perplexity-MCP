@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes, hkdfSync } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import { getProfilePaths } from "./profiles.js";
 
@@ -148,10 +148,9 @@ async function writeVaultObject(profileName, obj) {
   const key = await getMasterKey();
   const blob = encryptBlob(Buffer.from(JSON.stringify(obj)), key);
   writeFileSync(paths.vault + ".tmp", blob);
-  // rename is atomic on POSIX; on Windows we need to remove first
+  // Write to .tmp, then rename (atomic). On Windows, rmSync first because renameSync fails if target exists.
   if (existsSync(paths.vault)) rmSync(paths.vault, { force: true });
-  writeFileSync(paths.vault, blob);  // safer cross-platform than rename-over
-  rmSync(paths.vault + ".tmp", { force: true });
+  renameSync(paths.vault + ".tmp", paths.vault);
 }
 
 export class Vault {
