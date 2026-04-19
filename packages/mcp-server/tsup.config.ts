@@ -10,6 +10,7 @@ export default defineConfig({
     profiles: "src/profiles.js",
     vault: "src/vault.js",
     redact: "src/redact.js",
+    "health-check": "src/health-check.js",
   },
   format: ["esm"],
   platform: "node",
