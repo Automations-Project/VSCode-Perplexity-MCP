@@ -11,6 +11,7 @@ export default defineConfig({
     vault: "src/vault.js",
     redact: "src/redact.js",
     "health-check": "src/health-check.js",
+    "manual-login-runner": "src/manual-login-runner.js",
   },
   format: ["esm"],
   platform: "node",

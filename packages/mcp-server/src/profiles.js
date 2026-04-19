@@ -152,3 +152,12 @@ export function renameProfile(oldName, newName) {
   }
   if (getActiveName() === oldName) setActive(newName);
 }
+
+export function recordLoginSuccess(name, { tier, loginMode, lastLogin }) {
+  const paths = getProfilePaths(name);
+  if (!existsSync(paths.dir)) mkdirSync(paths.dir, { recursive: true });
+  const current = readMeta(name) ?? { name, displayName: name, createdAt: new Date().toISOString() };
+  const meta = { ...current, loginMode, tier, lastLogin };
+  writeMeta(name, meta);
+  return meta;
+}
