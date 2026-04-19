@@ -170,9 +170,9 @@ export type WebviewMessage =
       id: string;
     }
   | { type: "auth:login-start"; id: string; payload: { profile: string; mode: "auto" | "manual"; email?: string } }
-  | { type: "auth:otp-submit"; id: string; payload: { otp: string } }
+  | { type: "auth:otp-submit"; id: string; payload: { profile: string; otp: string } }
   | { type: "auth:logout"; id: string; payload: { profile: string; purge?: boolean } }
   | { type: "auth:dismiss-expired"; payload: { profile: string; bumpHours: number } }
   | { type: "profile:switch"; id: string; payload: { name: string } }
   | { type: "profile:add"; id: string; payload: { name: string; displayName?: string; loginMode: "auto" | "manual" } }
-  | { type: "profile:delete"; id: string; payload: { name: string; purge: boolean } };
+  | { type: "profile:delete"; id: string; payload: { name: string } };

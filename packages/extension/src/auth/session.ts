@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { AccountSnapshot, ModelsConfigSource, RefreshTier } from "@perplexity/shared";
 import { MODELS_FALLBACK, MODELS_FALLBACK_CAPTURED_AT } from "@perplexity/shared";
 import type { AccountInfo } from "../browser/runtime.js";
-import { BROWSER_DATA_DIR, CONFIG_DIR, COOKIES_FILE, PerplexityClient } from "../browser/runtime.js";
+import { BROWSER_DATA_DIR, CONFIG_DIR, COOKIES_FILE } from "../browser/runtime.js";
 import { getImpitStatus } from "../native-deps.js";
 
 const MODELS_CACHE_FILE = join(BROWSER_DATA_DIR, "..", "models-cache.json");
@@ -106,42 +106,3 @@ export function getAccountSnapshot(): AccountSnapshot {
   };
 }
 
-export async function runInteractiveLogin(options: {
-  chromePath?: string;
-  log?: (line: string) => void;
-}): Promise<AccountSnapshot> {
-  const previousChromePath = process.env.PERPLEXITY_CHROME_PATH;
-  const previousHeadlessOnly = process.env.PERPLEXITY_HEADLESS_ONLY;
-
-  if (options.chromePath) {
-    process.env.PERPLEXITY_CHROME_PATH = options.chromePath;
-  } else {
-    delete process.env.PERPLEXITY_CHROME_PATH;
-  }
-
-  delete process.env.PERPLEXITY_HEADLESS_ONLY;
-
-  const client = new PerplexityClient();
-  try {
-    const result = await client.loginViaBrowser({ log: options.log });
-    if (!result.success) {
-      throw new Error(result.message);
-    }
-
-    return getAccountSnapshot();
-  } finally {
-    await client.shutdown().catch(() => undefined);
-
-    if (previousChromePath) {
-      process.env.PERPLEXITY_CHROME_PATH = previousChromePath;
-    } else {
-      delete process.env.PERPLEXITY_CHROME_PATH;
-    }
-
-    if (previousHeadlessOnly) {
-      process.env.PERPLEXITY_HEADLESS_ONLY = previousHeadlessOnly;
-    } else {
-      delete process.env.PERPLEXITY_HEADLESS_ONLY;
-    }
-  }
-}

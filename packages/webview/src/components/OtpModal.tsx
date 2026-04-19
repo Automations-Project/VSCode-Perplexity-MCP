@@ -20,9 +20,10 @@ export function OtpModal({ send }: { send: SendFn }) {
   }, [prompt?.open]);
 
   if (!prompt?.open) return null;
+  const activePrompt = prompt;
 
   function submit(code: string) {
-    send({ type: "auth:otp-submit", id: crypto.randomUUID(), payload: { otp: code } });
+    send({ type: "auth:otp-submit", id: crypto.randomUUID(), payload: { profile: activePrompt.profile, otp: code } });
     close();
   }
   function setDigit(i: number, v: string) {

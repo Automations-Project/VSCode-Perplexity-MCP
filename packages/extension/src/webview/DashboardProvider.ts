@@ -181,23 +181,34 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
           case "auth:login-start": {
             if (!this.authManager) break;
             const { profile, mode, email } = message.payload;
-            let pendingId: string | undefined;
-            await this.authManager.login({
-              profile, mode, email,
-              onOtpPrompt: () => new Promise<string | null>((resolve) => {
-                pendingId = crypto.randomUUID();
-                this.view?.webview.postMessage({ type: "auth:otp-prompt", payload: { profile, attempt: 0, email: email ?? "" } });
-                this.otpResolvers.set(pendingId!, resolve);
-              }),
-            });
-            await this.postActionResult(message.id, true);
+            // Reject any stale resolver for this profile so a retried login doesn't leak.
+            this.otpResolvers.get(profile)?.(null);
+            this.otpResolvers.delete(profile);
+            try {
+              await this.authManager.login({
+                profile, mode, email,
+                onOtpPrompt: () => new Promise<string | null>((resolve) => {
+                  void this.view?.webview.postMessage({ type: "auth:otp-prompt", payload: { profile, attempt: 0, email: email ?? "" } });
+                  this.otpResolvers.set(profile, resolve);
+                }),
+              });
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            } finally {
+              // Drop any un-resolved resolver for this profile (e.g. user cancelled modal)
+              this.otpResolvers.delete(profile);
+            }
             await this.refresh();
             break;
           }
           case "auth:otp-submit": {
-            const first = [...this.otpResolvers.values()][0];
-            if (first) first(message.payload.otp);
-            this.otpResolvers.clear();
+            const { profile, otp } = message.payload;
+            const resolver = this.otpResolvers.get(profile);
+            if (resolver) {
+              resolver(otp);
+              this.otpResolvers.delete(profile);
+            }
             break;
           }
           case "auth:logout": {
