@@ -13,11 +13,12 @@ vi.mock("vscode", () => {
 
 import { AuthManager } from "../src/mcp/auth-manager";
 
+const fakeExtensionUri = { fsPath: "/tmp/ext" } as unknown as import("vscode").Uri;
 const FAKE = join(__dirname, "fixtures", "fake-runner.mjs"); // existing Phase-1 fixture
 
 describe("AuthManager.checkSession", () => {
   it("reaches a terminal state (valid/unknown/expired/error)", async () => {
-    const mgr = new AuthManager();
+    const mgr = new AuthManager({ extensionUri: fakeExtensionUri });
     (mgr as unknown as { defaultRunnerPath: (m: string) => string }).defaultRunnerPath = () => FAKE;
     process.env.FAKE_ROLE = "ok";
     const res = await mgr.checkSession({ profile: "default" });
@@ -25,7 +26,7 @@ describe("AuthManager.checkSession", () => {
   });
 
   it("re-entrant checkSession returns the same promise", async () => {
-    const mgr = new AuthManager();
+    const mgr = new AuthManager({ extensionUri: fakeExtensionUri });
     (mgr as unknown as { defaultRunnerPath: (m: string) => string }).defaultRunnerPath = () => FAKE;
     const a = mgr.checkSession({ profile: "default" });
     const b = mgr.checkSession({ profile: "default" });

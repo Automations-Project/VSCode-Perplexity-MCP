@@ -13,11 +13,13 @@ vi.mock("vscode", () => {
 
 import { AuthManager } from "../src/mcp/auth-manager";
 
+const fakeExtensionUri = { fsPath: "/tmp/ext" } as unknown as import("vscode").Uri;
+
 const AUTO = join(__dirname, "fixtures", "fake-auto-runner.mjs");
 
 describe("AuthManager.login (auto mode)", () => {
   it("transitions unknown -> logging-in -> awaiting_otp -> valid on correct OTP", async () => {
-    const mgr = new AuthManager();
+    const mgr = new AuthManager({ extensionUri: fakeExtensionUri });
     const transitions: string[] = [];
     mgr.onDidChange((s) => transitions.push(s.status));
     const result = await mgr.login({
@@ -34,7 +36,7 @@ describe("AuthManager.login (auto mode)", () => {
   });
 
   it("sets status=error on wrong OTP", async () => {
-    const mgr = new AuthManager();
+    const mgr = new AuthManager({ extensionUri: fakeExtensionUri });
     const result = await mgr.login({
       profile: "default",
       mode: "auto",
@@ -47,7 +49,7 @@ describe("AuthManager.login (auto mode)", () => {
   });
 
   it("rejects re-entrant login for the same profile", async () => {
-    const mgr = new AuthManager();
+    const mgr = new AuthManager({ extensionUri: fakeExtensionUri });
     const first = mgr.login({
       profile: "default",
       mode: "auto",

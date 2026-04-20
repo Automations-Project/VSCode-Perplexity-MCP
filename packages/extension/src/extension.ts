@@ -168,7 +168,7 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
   const dashboard = new DashboardProvider(context);
   dashboard.setDebugCollector(debugCollector);
   const { AuthManager } = await import("./mcp/auth-manager.js");
-  const authManager = new AuthManager();
+  const authManager = new AuthManager({ extensionUri: context.extensionUri });
   context.subscriptions.push(authManager);
   dashboard.setAuthManager(authManager);
   authManager.onDidChange(async (s) => { await dashboard.postAuthState(s); });

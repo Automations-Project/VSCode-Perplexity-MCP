@@ -18,9 +18,11 @@ vi.mock("perplexity-user-mcp/logout", () => ({
 import { AuthManager } from "../src/mcp/auth-manager";
 import * as logoutMod from "perplexity-user-mcp/logout";
 
+const fakeExtensionUri = { fsPath: "/tmp/ext" } as unknown as import("vscode").Uri;
+
 describe("AuthManager.logout", () => {
   it("calls softLogout by default", async () => {
-    const mgr = new AuthManager();
+    const mgr = new AuthManager({ extensionUri: fakeExtensionUri });
     await mgr.logout({ profile: "default" });
     expect(
       (logoutMod.softLogout as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0]
@@ -28,7 +30,7 @@ describe("AuthManager.logout", () => {
   });
 
   it("calls hardLogout when purge=true", async () => {
-    const mgr = new AuthManager();
+    const mgr = new AuthManager({ extensionUri: fakeExtensionUri });
     await mgr.logout({ profile: "default", purge: true });
     expect(
       (logoutMod.hardLogout as unknown as { mock: { calls: unknown[][] } }).mock.calls.length

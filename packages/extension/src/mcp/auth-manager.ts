@@ -1,4 +1,5 @@
 import { fork, type ChildProcess } from "node:child_process";
+import { join } from "node:path";
 import * as vscode from "vscode";
 
 export type AuthStatus =
@@ -26,6 +27,10 @@ export interface LoginOptions {
 
 export interface LogoutOptions { profile: string; purge?: boolean }
 export interface CheckSessionOptions { profile: string }
+
+export interface AuthManagerOptions {
+  extensionUri: vscode.Uri;
+}
 
 /**
  * Spawn a bundled runner script (login-runner / manual-login-runner /
@@ -88,6 +93,11 @@ export class AuthManager implements vscode.Disposable {
   public readonly onDidChange = this._onDidChange.event;
   private _state: AuthState = { profile: "default", status: "unknown" };
   private inflight = new Map<string, Promise<unknown>>();
+  private readonly extensionUri: vscode.Uri;
+
+  constructor(opts: AuthManagerOptions) {
+    this.extensionUri = opts.extensionUri;
+  }
 
   get state(): AuthState { return this._state; }
 
@@ -223,10 +233,6 @@ export class AuthManager implements vscode.Disposable {
       manual: "manual-login-runner.mjs",
       health: "health-check.mjs",
     } as const;
-    const req = (globalThis as { require?: { resolve: (s: string) => string } }).require;
-    if (!req) {
-      throw new Error("require not available in this runtime — pass runnerPath explicitly");
-    }
-    return req.resolve(`perplexity-user-mcp/dist/${map[mode]}`);
+    return join(this.extensionUri.fsPath, "dist", "mcp", map[mode]);
   }
 }
