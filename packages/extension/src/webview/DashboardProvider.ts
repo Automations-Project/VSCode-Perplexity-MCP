@@ -272,9 +272,11 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
               const settings = getSettingsSnapshot();
               const bundledServerPath = vscode.Uri.joinPath(this.context.extensionUri, "dist", "mcp", "server.mjs").fsPath;
               const ideStatuses = getIdeStatuses(bundledServerPath, settings.chromePath);
+              const baseDir = vscode.Uri.joinPath(this.context.extensionUri, "dist").fsPath;
               const report = await (runDoctor as Function)({
                 probe: message.type === "doctor:probe",
                 ideStatuses,
+                baseDir,
               });
               await this.view?.webview.postMessage({ type: "doctor:report", payload: report });
               await this.postActionResult(message.id, true);
@@ -291,7 +293,8 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
               });
               if (uri) {
                 const { runDoctor } = await import("perplexity-user-mcp");
-                const report = await (runDoctor as Function)({});
+                const baseDir = vscode.Uri.joinPath(this.context.extensionUri, "dist").fsPath;
+                const report = await (runDoctor as Function)({ baseDir });
                 await vscode.workspace.fs.writeFile(uri, Buffer.from(JSON.stringify(report, null, 2)));
                 await this.postNotice("info", `Doctor report written to ${uri.fsPath}.`);
               }
@@ -304,7 +307,8 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
           case "doctor:report-issue": {
             try {
               const { runDoctor } = await import("perplexity-user-mcp");
-              const report = await (runDoctor as Function)({});
+              const baseDir = vscode.Uri.joinPath(this.context.extensionUri, "dist").fsPath;
+              const report = await (runDoctor as Function)({ baseDir });
               const { collectDiagnostics, renderPreview, openIssue, buildIssueUrl } = await import("./doctor-report-handler.js");
               const diag = collectDiagnostics({
                 report,
