@@ -17,6 +17,14 @@ This repository now ships a **native VS Code extension workspace** around the ex
 - The extension can generate additive MCP config files for Cursor, Windsurf, and Claude Desktop
 - Query history and cached account/model state are exposed both in the webview dashboard and as MCP resources
 
+## Doctor
+
+Run `npx perplexity-user-mcp doctor` for a 10-category install audit. Pass `--probe` for a live search probe. Pass `--json` for machine-readable output. Exit code `10` signals any `fail` status.
+
+VS Code extension users: open the Perplexity dashboard → **Doctor** tab. Click **Run** for quick checks, **Deep check** for a live probe, **Export** to save JSON.
+
+See [docs/doctor.md](docs/doctor.md) for full category reference, redaction guarantees, and the opt-out flag.
+
 ## Workspace Commands
 
 ```bash

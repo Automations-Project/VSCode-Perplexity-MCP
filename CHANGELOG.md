@@ -4,6 +4,24 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [0.4.0] — 2026-04-20 — Phase 3: Doctor
+
+### Added
+- `perplexity-user-mcp doctor` CLI subcommand with 10 check categories (runtime, config, profiles, vault, browser, native-deps, network, ide, mcp, probe).
+- `--probe` opt-in live search check, `--json` machine-readable output, `--all` multi-profile mode, `--profile` single-profile targeting.
+- `perplexity_doctor({probe?, profile?})` MCP tool — same checks, Markdown-rendered output for LLMs.
+- VS Code extension **Doctor** dashboard tab with collapsible category cards, inline action buttons, and Run / Deep check / Export / Report-issue toolbar.
+- Guided GitHub issue flow with client-side redaction (emails, userIds, cookies, home paths, IPs, long tokens) and opt-out via `reporting.githubIssueButton: false` in `~/.perplexity-mcp/config.json`.
+- `.github/ISSUE_TEMPLATE/doctor-report.yml` structured form with consent checkboxes.
+- **Regression guard for Phase 2 carry-over #5:** the `native-deps/got-scraping-chain` check walks `header-generator → dot-prop → is-obj` via `createRequire` and warns if the VSIX packaging chain breaks.
+- New extension commands `Perplexity.doctor` and `Perplexity.doctorReportIssue`.
+- Integration tests covering doctor end-to-end + probe timeout + packaging-chain regression.
+
+### Changed
+- `tools-config.json` `read-only` profile now includes `perplexity_doctor`.
+- `McpServer` version string advertised as `0.4.0`.
+- `packages/extension/scripts/prepare-package-deps.mjs` now has a JSDoc header documenting why `dot-prop` and `is-obj` are in `rootPackages`.
+
 ## [0.3.0] — 2026-04-20
 
 ### Added

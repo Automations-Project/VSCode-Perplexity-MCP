@@ -21,3 +21,14 @@ tagging 0.3.0.
 12. [ ] On headless Linux (no libsecret), set `PERPLEXITY_VAULT_PASSPHRASE`, run `status` -> succeeds. Unset the env var -> `status` prints the "Vault locked" remediation message and exits non-zero.
 
 Referenced by release gate in [docs/superpowers/plans/2026-04-20-phase-2-auth.md](docs/superpowers/plans/2026-04-20-phase-2-auth.md) Task 14.
+
+## Phase 3 — Doctor (0.4.0)
+
+Run these manually before tagging v0.4.0. Each item should pass on Windows 11, macOS 14+, and Ubuntu 22+.
+
+- [ ] **Clean install passes.** On a fresh `pnpm install && pnpm build`, `npx perplexity-user-mcp doctor` exits 0 with overall `pass` or `warn` (no `fail`).
+- [ ] **Broken VSIX packaging is detected.** Temporarily delete `dist/node_modules/is-obj/` in the built VSIX, then load the extension from `code --install-extension <vsix>`. Open the Doctor tab and click Run — the `native-deps/got-scraping-chain` check should emit a `warn` with a hint pointing at `prepare-package-deps.mjs`.
+- [ ] **`--probe` runs a live search.** Log in via the extension first, then `npx perplexity-user-mcp doctor --probe`. The `probe/probe-search` check should emit `pass` with `latencyMs < 10000` and `sourceCount ≥ 1`.
+- [ ] **`--json` output is valid JSON.** `npx perplexity-user-mcp doctor --json | jq .overall` prints one of `"pass"`, `"warn"`, `"fail"`.
+- [ ] **Doctor tab renders.** Open the extension's `Doctor` tab. All 10 category cards render. Clicking a category toggles the expanded check list. Status dots reflect the category rollup.
+- [ ] **Report-issue preview shows no PII.** Artificially induce a fail (e.g., rename your Chrome binary so `browser/chrome-family` fails). Click **Report issue**. Verify the preview modal contains no emails, no userIds, no cookie values, no home paths, and no IPs.
