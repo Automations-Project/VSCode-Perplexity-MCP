@@ -129,3 +129,25 @@ describe("redact", () => {
     });
   });
 });
+
+describe("redact — ISO timestamp preservation (regression for Phase 3.1)", () => {
+  it("preserves ISO-8601 timestamps verbatim", () => {
+    const input = "Generated: 2026-04-20T10:27:42.278Z";
+    expect(redact(input)).toBe(input);
+  });
+
+  it("still redacts real IPv6 addresses", () => {
+    expect(redact("addr 2001:db8::1")).toMatch(/<ip>/);
+    expect(redact("local fe80::1")).toMatch(/<ip>/);
+    expect(redact("abbr ::1")).toMatch(/<ip>/);
+  });
+
+  it("still redacts IPv4", () => {
+    expect(redact("addr 192.168.0.1 is private")).toMatch(/<ip>/);
+  });
+
+  it("does not redact HH:MM or HH:MM:SS wall-clock strings", () => {
+    expect(redact("at 09:15 today")).toContain("09:15");
+    expect(redact("run at 23:59:59 tonight")).toContain("23:59:59");
+  });
+});

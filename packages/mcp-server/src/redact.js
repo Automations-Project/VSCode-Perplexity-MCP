@@ -46,14 +46,17 @@ const PATTERNS = [
     re: /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g,
     replace: "<ip>",
   },
-  // IPv6 (simplified — must have at least 3 colon-separated groups)
+  // IPv6. Three alternations cover: (1) full 8-group addresses, (2) :: compressed
+  // forms with at least one prefix group (e.g. 2001:db8::1, fe80::1), (3) leading-::
+  // forms like ::1 and ::. A function filter then requires hex letters (a-f/A-F) OR
+  // a double-colon so that pure-digit colon-separated strings like "23:59:59"
+  // (HH:MM:SS wall-clock) and ISO timestamps are left untouched.
   {
-    re: /\b[0-9a-fA-F:]{2,}:[0-9a-fA-F:]{2,}\b/g,
+    re: /\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b|\b(?:[0-9a-fA-F]{1,4}:){1,7}:(?:[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){0,6})?\b|(?<!\w)::(?:[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){0,6})?(?!\w)/g,
     replace: (match) => {
-      const colonCount = (match.match(/:/g) || []).length;
-      // Only redact if 2+ colons (indicates multi-group like IPv6)
-      // Single colon patterns are likely MAC addresses or other identifiers we shouldn't redact
-      return colonCount >= 2 ? "<ip>" : match;
+      const hasHex = /[a-fA-F]/.test(match);
+      const hasDoubleColon = /::/.test(match);
+      return (hasHex || hasDoubleColon) ? "<ip>" : match;
     },
   },
   // Long opaque tokens (base64 / hex, >=20 chars). Applied last so more
