@@ -33,6 +33,7 @@ describe("end-to-end re-auth cycle", () => {
           PERPLEXITY_VAULT_PASSPHRASE: "e2e-pass",
           PERPLEXITY_PROFILE: "default",
           PERPLEXITY_ORIGIN: mock.url,
+      PERPLEXITY_LOGIN_PATH: "/login",
           PERPLEXITY_TEST_AUTO_LOGIN_EMAIL: "e2e@mock.test",
           PERPLEXITY_POLL_MS: "200",
         },

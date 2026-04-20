@@ -47,6 +47,7 @@ describe("manual-login-runner (integration)", () => {
       PERPLEXITY_VAULT_PASSPHRASE: "test-pass-2",
       PERPLEXITY_PROFILE: "default",
       PERPLEXITY_ORIGIN: mock.url,
+      PERPLEXITY_LOGIN_PATH: "/login",
       PERPLEXITY_TEST_AUTO_LOGIN_EMAIL: "user@mock.test",
       PERPLEXITY_POLL_MS: "200",
     });
@@ -71,6 +72,7 @@ describe("manual-login-runner (integration)", () => {
       PERPLEXITY_VAULT_PASSPHRASE: "test-pass-2",
       PERPLEXITY_PROFILE: "default",
       PERPLEXITY_ORIGIN: mock.url,
+      PERPLEXITY_LOGIN_PATH: "/login",
       PERPLEXITY_TEST_BROWSER_CLOSE_AFTER_MS: "500",
     });
     expect(code).toBe(2);

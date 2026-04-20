@@ -53,6 +53,7 @@ describe("health-check runner (integration)", () => {
       PERPLEXITY_VAULT_PASSPHRASE: "test-pass-1",
       PERPLEXITY_PROFILE: "default",
       PERPLEXITY_ORIGIN: mock.url,
+      PERPLEXITY_LOGIN_PATH: "/login",
     });
 
     expect(code).toBe(0);
@@ -68,6 +69,7 @@ describe("health-check runner (integration)", () => {
       PERPLEXITY_VAULT_PASSPHRASE: "test-pass-1",
       PERPLEXITY_PROFILE: "default",
       PERPLEXITY_ORIGIN: mock.url,
+      PERPLEXITY_LOGIN_PATH: "/login",
     });
     expect(code).toBe(2);
     expect(result.valid).toBe(false);
@@ -84,6 +86,7 @@ describe("health-check runner (integration)", () => {
       PERPLEXITY_VAULT_PASSPHRASE: "test-pass-1",
       PERPLEXITY_PROFILE: "default",
       PERPLEXITY_ORIGIN: mock.url,
+      PERPLEXITY_LOGIN_PATH: "/login",
     });
     expect(code).toBe(2);
     expect(result.valid).toBe(false);

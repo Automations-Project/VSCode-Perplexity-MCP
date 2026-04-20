@@ -49,6 +49,7 @@ describe("login-runner (integration)", () => {
       PERPLEXITY_PROFILE: "default",
       PERPLEXITY_EMAIL: "auto@mock.test",
       PERPLEXITY_ORIGIN: mock.url,
+      PERPLEXITY_LOGIN_PATH: "/login",
     }, ["123456"]);
     expect(msgs.some((m) => m?.phase === "awaiting_otp")).toBe(true);
     expect(code).toBe(0);
@@ -64,6 +65,7 @@ describe("login-runner (integration)", () => {
       PERPLEXITY_PROFILE: "default",
       PERPLEXITY_EMAIL: "auto@mock.test",
       PERPLEXITY_ORIGIN: mock.url,
+      PERPLEXITY_LOGIN_PATH: "/login",
     }, ["000000", "000000", "000000"]);
     const otpPrompts = msgs.filter((m) => m?.phase === "awaiting_otp").length;
     expect(otpPrompts).toBeGreaterThanOrEqual(2);
@@ -78,6 +80,7 @@ describe("login-runner (integration)", () => {
       PERPLEXITY_PROFILE: "default",
       PERPLEXITY_EMAIL: "someone@sso.test",
       PERPLEXITY_ORIGIN: mock.url,
+      PERPLEXITY_LOGIN_PATH: "/login",
     });
     expect(code).toBe(2);
     expect(result.reason).toBe("sso_required");
@@ -90,6 +93,7 @@ describe("login-runner (integration)", () => {
       PERPLEXITY_PROFILE: "default",
       PERPLEXITY_EMAIL: "auto@mock.test",
       PERPLEXITY_ORIGIN: mock.url,
+      PERPLEXITY_LOGIN_PATH: "/login",
       PERPLEXITY_OTP_TIMEOUT_MS: "500",
     });
     expect(code).toBe(2);
