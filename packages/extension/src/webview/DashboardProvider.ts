@@ -212,14 +212,27 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             this.otpResolvers.get(profile)?.(null);
             this.otpResolvers.delete(profile);
             try {
-              await this.authManager.login({
+              const result = await this.authManager.login({
                 profile, mode, email,
                 onOtpPrompt: () => new Promise<string | null>((resolve) => {
                   void this.view?.webview.postMessage({ type: "auth:otp-prompt", payload: { profile, attempt: 0, email: email ?? "" } });
                   this.otpResolvers.set(profile, resolve);
                 }),
               });
-              await this.postActionResult(message.id, true);
+
+              if (!result.ok && result.reason === "auto_unsupported" && mode === "auto") {
+                await this.postNotice("info", "Auto mode isn't supported on the real Perplexity site yet — opening manual login instead.");
+                const fallback = await this.authManager.login({ profile, mode: "manual" });
+                if (!fallback.ok) {
+                  await this.postActionResult(message.id, false, fallback.reason ?? "manual-fallback-failed");
+                } else {
+                  await this.postActionResult(message.id, true);
+                }
+              } else if (!result.ok) {
+                await this.postActionResult(message.id, false, result.reason ?? "login_failed");
+              } else {
+                await this.postActionResult(message.id, true);
+              }
             } catch (err) {
               await this.postActionResult(message.id, false, (err as Error).message);
             } finally {

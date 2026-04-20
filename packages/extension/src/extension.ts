@@ -245,13 +245,33 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
       }
 
       try {
-        await authManager.login({
+        const result = await authManager.login({
           profile,
           mode: modePick.value,
           email,
           onOtpPrompt: async () => (await vscode.window.showInputBox({ prompt: "Perplexity OTP", ignoreFocusOut: true })) ?? null,
           onProgress: (phase) => log(`[login] ${phase}`),
         });
+
+        if (!result.ok && result.reason === "auto_unsupported" && modePick.value === "auto") {
+          log(`[login] auto_unsupported — falling back to manual`);
+          await dashboard.postNotice("info", "Auto mode isn't supported on the real Perplexity site yet — opening manual login instead.");
+          const fallback = await authManager.login({
+            profile,
+            mode: "manual",
+            onProgress: (phase) => log(`[login] ${phase}`),
+          });
+          if (!fallback.ok) {
+            log(`[login] Manual fallback failed: ${fallback.reason ?? "unknown"}`);
+            await dashboard.postNotice("error", `Manual fallback login failed: ${fallback.reason ?? "unknown"}`);
+            return;
+          }
+        } else if (!result.ok) {
+          log(`[login] Failed: ${result.reason ?? "unknown"}`);
+          await dashboard.postNotice("error", `Login failed: ${result.reason ?? "unknown"}`);
+          return;
+        }
+
         serverDefinitionsChanged.fire();
         await dashboard.refresh();
         await dashboard.postNotice("info", "Perplexity login completed. MCP server definitions refreshed.");

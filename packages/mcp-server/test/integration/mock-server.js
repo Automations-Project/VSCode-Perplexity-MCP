@@ -39,6 +39,13 @@ export async function start(opts = {}) {
   });
 
   app.post("/login/email", (req, res) => {
+    // `forceUnsupported: true` (startup option) simulates a non-mock origin
+    // (e.g. real perplexity.ai) that doesn't expose this endpoint. Returns an
+    // HTML 404 so the runner should classify it as `auto_unsupported` instead
+    // of `email_rejected`.
+    if (opts.forceUnsupported) {
+      return res.status(404).type("html").send("<html><body>Not Found</body></html>");
+    }
     const email = req.body?.email;
     if (!email) return res.status(400).json({ error: "email required" });
     if (email.includes("@sso.test")) return res.status(302).set("Location", "/sso").send();

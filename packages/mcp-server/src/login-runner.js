@@ -61,7 +61,7 @@ async function main() {
   // so we follow the redirect and inspect the final URL instead.
   const emailResp = await page.evaluate(async ({ origin, email }) => {
     const r = await fetch(`${origin}/login/email`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email }) });
-    return { status: r.status, url: r.url, redirected: r.redirected };
+    return { status: r.status, url: r.url, redirected: r.redirected, contentType: r.headers.get("content-type") ?? "" };
   }, { origin: ORIGIN, email: EMAIL });
 
   if (emailResp.redirected && (emailResp.url || "").includes("/sso")) {
@@ -69,6 +69,24 @@ async function main() {
     emit({ ok: false, reason: "sso_required" });
     process.exit(2);
   }
+
+  // The mock returns exactly 200 application/json. Any 404/405, 5xx, or
+  // non-JSON response means we're talking to a site that doesn't expose
+  // `/login/email` — i.e., the real Perplexity (which uses NextAuth). Signal
+  // that auto mode isn't supported here so the caller can transparently retry
+  // with manual mode.
+  const looksUnsupported =
+    emailResp.status === 404 ||
+    emailResp.status === 405 ||
+    emailResp.status >= 500 ||
+    !emailResp.contentType.includes("json");
+
+  if (looksUnsupported) {
+    await browser.close().catch(() => {});
+    emit({ ok: false, reason: "auto_unsupported", detail: { status: emailResp.status, contentType: emailResp.contentType } });
+    process.exit(2);
+  }
+
   if (emailResp.status >= 400) {
     await browser.close().catch(() => {});
     emit({ ok: false, reason: "email_rejected", detail: emailResp.status });

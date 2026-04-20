@@ -99,4 +99,24 @@ describe("login-runner (integration)", () => {
     expect(code).toBe(2);
     expect(result.reason).toBe("otp_timeout");
   }, 30_000);
+
+  it("exits 2 {reason:'auto_unsupported'} when /login/email returns 404 HTML (real-site shape)", async () => {
+    const unsupportedMock = await startMock({ port: 0, forceUnsupported: true });
+    try {
+      const { code, result } = await runWithOtp({
+        PERPLEXITY_CONFIG_DIR: configDir,
+        PERPLEXITY_VAULT_PASSPHRASE: "test-pass-3",
+        PERPLEXITY_PROFILE: "default",
+        PERPLEXITY_EMAIL: "auto@mock.test",
+        PERPLEXITY_ORIGIN: unsupportedMock.url,
+        PERPLEXITY_LOGIN_PATH: "/login",
+      });
+      expect(code).toBe(2);
+      expect(result.reason).toBe("auto_unsupported");
+      expect(result.detail).toBeDefined();
+      expect(result.detail.status).toBe(404);
+    } finally {
+      await unsupportedMock.close();
+    }
+  }, 30_000);
 });
