@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
-import type { DoctorCheck, DoctorStatus } from "@perplexity/shared";
+import type { DoctorCheck, DoctorStatus } from "@perplexity-user-mcp/shared";
 import { type DotVariant, StatusDot } from "./StatusDot";
 
 const STATUS_LABEL: Record<DoctorStatus, string> = {

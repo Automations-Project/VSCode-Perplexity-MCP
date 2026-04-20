@@ -5,7 +5,7 @@ import {
   type DashboardState,
   type ExtensionMessage,
   type WebviewMessage
-} from "@perplexity/shared";
+} from "@perplexity-user-mcp/shared";
 import type { AuthManager, AuthState } from "../mcp/auth-manager.js";
 import {
   getIdeStatuses,
@@ -15,7 +15,7 @@ import {
   removeRulesForIde,
   getRulesStatuses
 } from "../auto-config/index.js";
-import type { IdeTarget } from "@perplexity/shared";
+import type { IdeTarget } from "@perplexity-user-mcp/shared";
 import { getAccountSnapshot, setLastRefreshTier } from "../auth/session.js";
 import { log, debug } from "../extension.js";
 import type { DebugCollector } from "../debug/collector.js";
@@ -151,7 +151,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
                 break;
               }
               if (message.payload.target === "all") {
-                const { IDE_METADATA } = await import("@perplexity/shared");
+                const { IDE_METADATA } = await import("@perplexity-user-mcp/shared");
                 for (const key of Object.keys(IDE_METADATA)) {
                   syncRulesForIde(key as IdeTarget, wsRoot);
                 }
@@ -319,7 +319,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
               }
               const { collectDiagnostics, renderPreview, openIssue, buildIssueUrl } = await import("./doctor-report-handler.js");
               const diag = collectDiagnostics({
-                report: report as import("@perplexity/shared").DoctorReport,
+                report: report as import("@perplexity-user-mcp/shared").DoctorReport,
                 stderrTail: "(extension output channel tail not yet wired)",
                 extVersion: this.context.extension.packageJSON.version as string,
                 nodeVersion: process.version,

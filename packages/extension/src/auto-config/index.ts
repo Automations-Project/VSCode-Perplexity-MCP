@@ -17,7 +17,7 @@ import {
   type IdeStatus,
   type IdeTarget,
   type RulesStatus
-} from "@perplexity/shared";
+} from "@perplexity-user-mcp/shared";
 import { checkLauncherHealth } from "../launcher/write-launcher.js";
 
 interface McpConfigFile {

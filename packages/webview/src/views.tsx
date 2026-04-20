@@ -34,7 +34,7 @@ import {
   type RateLimitResponse,
   type RulesStatus,
   type WebviewMessage,
-} from "@perplexity/shared";
+} from "@perplexity-user-mcp/shared";
 
 /** Loose send signature — action IDs are injected automatically by App.tsx. */
 export type SendFn = (message: WebviewMessage | Omit<Extract<WebviewMessage, { id: string }>, "id">) => void;

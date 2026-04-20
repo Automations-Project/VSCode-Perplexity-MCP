@@ -1,4 +1,4 @@
-import type { DoctorReport } from "@perplexity/shared";
+import type { DoctorReport } from "@perplexity-user-mcp/shared";
 import { buildIssueBody, redactIssueBody, buildIssueUrl, decideTransport } from "perplexity-user-mcp";
 
 export interface Diagnostics {

@@ -1,5 +1,5 @@
 import { Stethoscope, RefreshCcw, Download, Zap, AlertOctagon } from "lucide-react";
-import type { DoctorCategory, DoctorReport, WebviewMessage } from "@perplexity/shared";
+import type { DoctorCategory, DoctorReport, WebviewMessage } from "@perplexity-user-mcp/shared";
 import { DoctorCategoryCard } from "./DoctorCategoryCard";
 
 const CATEGORY_ORDER: DoctorCategory[] = [

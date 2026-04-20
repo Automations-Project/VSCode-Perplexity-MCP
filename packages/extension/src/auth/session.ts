@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { AccountSnapshot, ModelsConfigSource, RefreshTier } from "@perplexity/shared";
-import { MODELS_FALLBACK, MODELS_FALLBACK_CAPTURED_AT } from "@perplexity/shared";
+import type { AccountSnapshot, ModelsConfigSource, RefreshTier } from "@perplexity-user-mcp/shared";
+import { MODELS_FALLBACK, MODELS_FALLBACK_CAPTURED_AT } from "@perplexity-user-mcp/shared";
 import type { AccountInfo } from "../browser/runtime.js";
 import { BROWSER_DATA_DIR, CONFIG_DIR, COOKIES_FILE } from "../browser/runtime.js";
 import { getImpitStatus } from "../native-deps.js";

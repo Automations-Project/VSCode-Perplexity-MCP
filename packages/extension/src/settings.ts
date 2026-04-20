@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import type { ExtensionSettingsSnapshot } from "@perplexity/shared";
+import type { ExtensionSettingsSnapshot } from "@perplexity-user-mcp/shared";
 
 const SECTION = "Perplexity";
 

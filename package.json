@@ -10,12 +10,12 @@
     "packages/extension"
   ],
   "scripts": {
-    "build": "npm run build -w @perplexity/shared && npm run build -w perplexity-user-mcp && npm run build -w @perplexity/webview && npm run build -w perplexity-vscode",
-    "typecheck": "npm run typecheck -w @perplexity/shared && npm run typecheck -w perplexity-user-mcp && npm run typecheck -w @perplexity/webview && npm run typecheck -w perplexity-vscode",
-    "test": "npm run build -w @perplexity/shared && vitest run",
+    "build": "npm run build -w @perplexity-user-mcp/shared && npm run build -w perplexity-user-mcp && npm run build -w @perplexity-user-mcp/webview && npm run build -w perplexity-vscode",
+    "typecheck": "npm run typecheck -w @perplexity-user-mcp/shared && npm run typecheck -w perplexity-user-mcp && npm run typecheck -w @perplexity-user-mcp/webview && npm run typecheck -w perplexity-vscode",
+    "test": "npm run build -w @perplexity-user-mcp/shared && vitest run",
     "clean": "rimraf packages/shared/dist packages/webview/dist packages/extension/dist packages/extension/media/webview",
-    "dev:webview": "npm run build -w @perplexity/shared && npm run dev -w @perplexity/webview",
-    "dev:extension": "npm run build -w @perplexity/shared && npm run watch -w perplexity-vscode",
+    "dev:webview": "npm run build -w @perplexity-user-mcp/shared && npm run dev -w @perplexity-user-mcp/webview",
+    "dev:extension": "npm run build -w @perplexity-user-mcp/shared && npm run watch -w perplexity-vscode",
     "package:vsix": "npm run package:vsix -w perplexity-vscode",
     "capture": "node packages/mcp-server/dev-tools/capture.js",
     "capture:mutations": "node packages/mcp-server/dev-tools/capture.js --mutations-only",
@@ -23,7 +23,7 @@
     "capture:cdp": "node packages/mcp-server/dev-tools/capture.js --cdp",
     "capture:cdp:mutations": "node packages/mcp-server/dev-tools/capture.js --cdp --mutations-only",
     "analyze": "node packages/mcp-server/dev-tools/analyze.js",
-    "test:coverage": "npm run build -w @perplexity/shared && vitest run --coverage"
+    "test:coverage": "npm run build -w @perplexity-user-mcp/shared && vitest run --coverage"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",

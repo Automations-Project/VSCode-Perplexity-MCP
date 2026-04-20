@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { MCP_PROVIDER_ID, MCP_SERVER_LABEL, type IdeTarget } from "@perplexity/shared";
+import { MCP_PROVIDER_ID, MCP_SERVER_LABEL, type IdeTarget } from "@perplexity-user-mcp/shared";
 import { configureTargets, getIdeStatuses } from "./auto-config/index.js";
 import { hasStoredLogin } from "./auth/session.js";
 import { getSettingsSnapshot } from "./settings.js";

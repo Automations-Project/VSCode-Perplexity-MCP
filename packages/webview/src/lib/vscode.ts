@@ -1,4 +1,4 @@
-import type { DashboardState, WebviewMessage } from "@perplexity/shared";
+import type { DashboardState, WebviewMessage } from "@perplexity-user-mcp/shared";
 
 declare global {
   interface Window {

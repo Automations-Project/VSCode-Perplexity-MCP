@@ -1,4 +1,4 @@
-import type { DebugEvent } from "@perplexity/shared";
+import type { DebugEvent } from "@perplexity-user-mcp/shared";
 
 export class DebugCollector {
   private buffer: (DebugEvent | undefined)[];

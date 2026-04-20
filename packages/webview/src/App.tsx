@@ -1,7 +1,7 @@
 import { BookOpen, Bot, Clock3, Compass, Layers3, RefreshCcw, Settings2, ShieldCheck, Sparkles, Stethoscope } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { startTransition, useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
-import type { ExtensionMessage, HistoryItem, WebviewMessage } from "@perplexity/shared";
+import type { ExtensionMessage, HistoryItem, WebviewMessage } from "@perplexity-user-mcp/shared";
 import { postMessage } from "./lib/vscode";
 import { type AppTab, useDashboardStore } from "./store";
 import {

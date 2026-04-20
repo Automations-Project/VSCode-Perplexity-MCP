@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import type { DebugCollector } from "./collector.js";
-import type { DebugEvent } from "@perplexity/shared";
+import type { DebugEvent } from "@perplexity-user-mcp/shared";
 
 const REDACT_KEYS = ["cookie", "csrf", "token", "password", "secret", "otp", "session", "email", "authorization"];
 

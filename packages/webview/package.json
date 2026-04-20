@@ -1,5 +1,5 @@
 {
-  "name": "@perplexity/webview",
+  "name": "@perplexity-user-mcp/webview",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@perplexity/shared": "0.1.0",
+    "@perplexity-user-mcp/shared": "0.1.0",
     "lucide-react": "^0.577.0",
     "motion": "^12.36.0",
     "react": "^19.2.4",

@@ -250,7 +250,7 @@
   "dependencies": {},
   "devDependencies": {
     "perplexity-user-mcp": "0.2.0",
-    "@perplexity/shared": "0.1.0",
+    "@perplexity-user-mcp/shared": "0.1.0",
     "@types/vscode": "^1.100.0",
     "@vscode/vsce": "^3.7.1",
     "patchright": "^1.59.4",

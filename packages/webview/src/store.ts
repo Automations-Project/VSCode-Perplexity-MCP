@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { AuthState, DashboardState, DoctorReport, ExtensionMessage, Profile } from "@perplexity/shared";
+import type { AuthState, DashboardState, DoctorReport, ExtensionMessage, Profile } from "@perplexity-user-mcp/shared";
 
 export type AppTab = "dashboard" | "models" | "history" | "settings" | "rules" | "doctor";
 
