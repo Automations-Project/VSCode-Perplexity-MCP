@@ -224,10 +224,31 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
     vscode.commands.registerCommand("Perplexity.login", async () => {
       const { getActiveName } = await import("perplexity-user-mcp/profiles" as string) as { getActiveName: () => string | null };
       const profile = getActiveName() ?? "default";
+
+      const modePick = await vscode.window.showQuickPick(
+        [
+          { label: "Manual (opens a browser, you sign in)", detail: "Works with email + password, Google, Apple, or any other Perplexity login method.", value: "manual" as const },
+          { label: "Auto (email + OTP)", detail: "Enter your email, we drive the browser and prompt you for the OTP emailed to you. Email/OTP accounts only — not SSO.", value: "auto" as const },
+        ],
+        { placeHolder: "Login mode", ignoreFocusOut: true },
+      );
+      if (!modePick) return; // user cancelled
+
+      let email: string | undefined;
+      if (modePick.value === "auto") {
+        email = await vscode.window.showInputBox({
+          prompt: "Email for auto login",
+          placeHolder: "you@example.com",
+          ignoreFocusOut: true,
+        });
+        if (!email) return;
+      }
+
       try {
         await authManager.login({
           profile,
-          mode: "manual",
+          mode: modePick.value,
+          email,
           onOtpPrompt: async () => (await vscode.window.showInputBox({ prompt: "Perplexity OTP", ignoreFocusOut: true })) ?? null,
           onProgress: (phase) => log(`[login] ${phase}`),
         });
