@@ -79,6 +79,33 @@ export interface Profile {
   tier?: "Max" | "Pro" | "Enterprise" | "Authenticated" | "Anonymous";
 }
 
+export type DoctorStatus = "pass" | "warn" | "fail" | "skip";
+
+export type DoctorCategory =
+  | "runtime" | "config" | "profiles" | "vault" | "browser"
+  | "native-deps" | "network" | "ide" | "mcp" | "probe";
+
+export interface DoctorCheck {
+  category: DoctorCategory;
+  name: string;
+  status: DoctorStatus;
+  message: string;
+  detail?: Record<string, unknown>;
+  hint?: string;
+}
+
+export interface DoctorReport {
+  overall: DoctorStatus;
+  generatedAt: string;
+  durationMs: number;
+  activeProfile: string | null;
+  probeRan: boolean;
+  byCategory: Record<DoctorCategory, {
+    status: DoctorStatus;
+    checks: DoctorCheck[];
+  }>;
+}
+
 export type ExtensionMessage =
   | {
       type: "dashboard:state";
@@ -112,7 +139,9 @@ export type ExtensionMessage =
     }
   | { type: "auth:state"; payload: AuthState }
   | { type: "auth:otp-prompt"; payload: { profile: string; attempt: number; email: string } }
-  | { type: "profile:list"; payload: { active: string | null; profiles: Profile[] } };
+  | { type: "profile:list"; payload: { active: string | null; profiles: Profile[] } }
+  | { type: "doctor:running"; payload: { probeRan: boolean } }
+  | { type: "doctor:report"; payload: DoctorReport };
 
 export type WebviewMessage =
   | {
@@ -175,4 +204,8 @@ export type WebviewMessage =
   | { type: "auth:dismiss-expired"; payload: { profile: string; bumpHours: number } }
   | { type: "profile:switch"; id: string; payload: { name: string } }
   | { type: "profile:add"; id: string; payload: { name: string; displayName?: string; loginMode: "auto" | "manual" } }
-  | { type: "profile:delete"; id: string; payload: { name: string } };
+  | { type: "profile:delete"; id: string; payload: { name: string } }
+  | { type: "doctor:run"; id: string; payload: { profile?: string; allProfiles?: boolean } }
+  | { type: "doctor:probe"; id: string; payload: { profile?: string } }
+  | { type: "doctor:export"; id: string; payload: { targetPath?: string } }
+  | { type: "doctor:report-issue"; id: string; payload: { category: DoctorCategory; check: string } };
