@@ -246,6 +246,79 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             await this.postProfileList();
             break;
           }
+          case "doctor:run":
+          case "doctor:probe": {
+            await this.view?.webview.postMessage({ type: "doctor:running", payload: { probeRan: message.type === "doctor:probe" } });
+            try {
+              const { runDoctor } = await import("perplexity-user-mcp");
+              const settings = getSettingsSnapshot();
+              const bundledServerPath = vscode.Uri.joinPath(this.context.extensionUri, "dist", "mcp", "server.mjs").fsPath;
+              const ideStatuses = getIdeStatuses(bundledServerPath, settings.chromePath);
+              const report = await (runDoctor as Function)({
+                probe: message.type === "doctor:probe",
+                ideStatuses,
+              });
+              await this.view?.webview.postMessage({ type: "doctor:report", payload: report });
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "doctor:export": {
+            try {
+              const uri = await vscode.window.showSaveDialog({
+                defaultUri: vscode.Uri.file(`doctor-report-${Date.now()}.json`),
+                filters: { JSON: ["json"] },
+              });
+              if (uri) {
+                const { runDoctor } = await import("perplexity-user-mcp");
+                const report = await (runDoctor as Function)({});
+                await vscode.workspace.fs.writeFile(uri, Buffer.from(JSON.stringify(report, null, 2)));
+                await this.postNotice("info", `Doctor report written to ${uri.fsPath}.`);
+              }
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "doctor:report-issue": {
+            try {
+              const { runDoctor } = await import("perplexity-user-mcp");
+              const report = await (runDoctor as Function)({});
+              const { collectDiagnostics, renderPreview, openIssue, buildIssueUrl } = await import("./doctor-report-handler.js");
+              const diag = collectDiagnostics({
+                report,
+                stderrTail: "(extension output channel tail not yet wired)",
+                extVersion: this.context.extension.packageJSON.version as string,
+                nodeVersion: process.version,
+                os: `${process.platform} ${process.arch}`,
+                activeTier: null,
+              });
+              const choice = await renderPreview({
+                markdown: diag.markdown,
+                showInformationMessage: vscode.window.showInformationMessage,
+              });
+              if (choice === "Copy to clipboard") {
+                await vscode.env.clipboard.writeText(diag.markdown);
+                await this.postNotice("info", "Redacted report copied to clipboard.");
+              } else if (choice === "Open GitHub issue") {
+                const url = (buildIssueUrl as Function)({
+                  owner: "nskha",
+                  repo: "perplexity-user-mcp",
+                  category: message.payload.category,
+                  check: message.payload.check,
+                  body: diag.markdown,
+                });
+                await openIssue({ url, optOut: false, openExternal: (u: unknown) => vscode.env.openExternal(vscode.Uri.parse(String(u))) });
+              }
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.stack ?? err.message : String(err);

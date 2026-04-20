@@ -83,3 +83,9 @@ export { findBrowser } from "./config.js";
 export type { BrowserInfo } from "./config.js";
 export { refreshAccountInfo, getModelsCacheInfo, isImpitAvailable, getImpitRuntimeDir } from "./refresh.js";
 export type { RefreshResult, RefreshTier, RefreshOptions } from "./refresh.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore – doctor.js is a plain JS module; types inferred at call-site
+export { runAll as runDoctor, formatReportMarkdown, CATEGORIES as DOCTOR_CATEGORIES } from "./doctor.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore – doctor-report.js is a plain JS module; types inferred at call-site
+export { buildIssueBody, redactIssueBody, buildIssueUrl, decideTransport } from "./doctor-report.js";
