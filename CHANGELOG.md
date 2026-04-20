@@ -4,6 +4,17 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [0.4.1] — 2026-04-20 — Phase 3.1 hotfix
+
+### Fixed
+- **Login:** `AuthManager` now derives runner paths from `vscode.ExtensionContext.extensionUri` instead of `globalThis.require.resolve(...)`. The latter doesn't exist in the tsup-bundled CJS extension, so 0.4.0's Login button always threw `"require not available in this runtime"`. Phase 2 regression — not caught because 0.3.0 shipped without a manual VSIX smoke.
+- **Doctor false-positive on `native-deps`:** the `patchright` and `got-scraping-chain` checks now accept a `baseDir` opt. `DashboardProvider` passes `<extensionUri>/dist` so the chain resolves against the VSIX's `dist/node_modules/` tree. Previously `createRequire(import.meta.url)` failed because tsup polyfills `import_meta = {}` in CJS bundles.
+- **Redactor no longer eats ISO timestamps:** the IPv6 regex used to match any colon-separated hex-chars-and-digits, which included wall-clock `HH:MM:SS` strings. Now requires IPv6-shape (hex groups AND either a double-colon or a group with hex-only chars). Doctor reports now show `Generated: 2026-04-20T10:27:42.278Z` verbatim.
+- **Doctor tab moved from position 2 to position 5** — it's not a daily-driver tab.
+
+### Release discipline
+- Added Phase 3.1 manual smoke checklist in `docs/smoke-tests.md`. Every future phase's release gate now requires a successful VSIX install + smoke run before tagging.
+
 ## [0.4.0] — 2026-04-20 — Phase 3: Doctor
 
 ### Added

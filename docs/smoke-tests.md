@@ -32,3 +32,12 @@ Run these manually before tagging v0.4.0. Each item should pass on Windows 11, m
 - [ ] **`--json` output is valid JSON.** `npx perplexity-user-mcp doctor --json | jq .overall` prints one of `"pass"`, `"warn"`, `"fail"`.
 - [ ] **Doctor tab renders.** Open the extension's `Doctor` tab. All 10 category cards render. Clicking a category toggles the expanded check list. Status dots reflect the category rollup.
 - [ ] **Report-issue preview shows no PII.** Artificially induce a fail (e.g., rename your Chrome binary so `browser/chrome-family` fails). Click **Report issue**. Verify the preview modal contains no emails, no userIds, no cookie values, no home paths, and no IPs.
+
+## Phase 3.1 — Doctor-exposed hotfix (0.4.1)
+
+Run these on Windows 11 after `npm run package:vsix` in `packages/extension/` produces `perplexity-vscode-0.4.1.vsix` AND the VSIX is installed via `code --install-extension perplexity-vscode-0.4.1.vsix`. All four items must be green before tagging v0.4.1.
+
+- [ ] **Login succeeds end-to-end.** Open the extension -> click **Login** in the header -> the manual-login browser opens (or OTP flow starts). You must get past the Phase-2 `"require not available"` error. A successful login writes cookies to `~/.perplexity-mcp/profiles/default/vault.enc`.
+- [ ] **Doctor: patchright + got-scraping-chain both pass.** Open the Doctor tab -> click **Run**. The `native-deps` category's `patchright` check should be `pass` (no "not resolvable" error) and `got-scraping-chain` should be `pass` (no warn). The carry-over #5 detector remains, but the false positive is gone.
+- [ ] **Doctor report timestamp is readable.** In the Doctor tab, click **Report issue** on any failing check -> the preview modal shows `Generated: <real ISO timestamp>` -- NOT `Generated: <ip>.278Z`.
+- [ ] **Tab order.** The tab strip reads: Home -> IDEs -> Rules -> Models -> Doctor -> History. Doctor is second-to-last, not second.

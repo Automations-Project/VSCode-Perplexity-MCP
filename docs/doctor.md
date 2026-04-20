@@ -87,3 +87,11 @@ The Report-issue button is hidden in the Doctor tab and the CLI doctor never com
 Phase 2 shipped a VSIX where the `header-generator → dot-prop → is-obj` transitive dep chain wasn't hoisted into the extension's `dist/node_modules/`. When the chain broke at runtime, `got-scraping` silently fell back from its fast HTTP tier to a slower browser tier — users got working but slower installs with no indication why.
 
 The Phase 2 packaging patch added `dot-prop` and `is-obj` to `rootPackages` in [packages/extension/scripts/prepare-package-deps.mjs](../packages/extension/scripts/prepare-package-deps.mjs). The Phase 3 Doctor's `native-deps/got-scraping-chain` check walks the chain via `createRequire` and emits a `warn` with an actionable hint pointing back at that script if any link regresses. It's the permanent regression guard.
+
+## Running from a bundled extension host (Phase 3.1)
+
+When the doctor runs inside the VS Code extension's bundled CJS (as opposed to plain Node ESM from `npx`), `import.meta.url` is polyfilled to `{}` by the bundler. Without a sibling `node_modules/` resolvable from the bundle's location, the `native-deps` check cannot resolve patchright / the got-scraping chain.
+
+The extension host passes a `baseDir` opt (`<extensionUri>/dist`) to `runDoctor` so the check can resolve relative to the VSIX's `dist/node_modules/` tree. CLI and MCP-subprocess invocations don't need this opt — `import.meta.url` works natively there.
+
+If you embed `runDoctor` in a custom host and see spurious `native-deps` failures, pass a `baseDir` pointing at a directory whose parent chain reaches a valid `node_modules`.
