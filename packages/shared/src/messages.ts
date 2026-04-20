@@ -203,6 +203,7 @@ export type WebviewMessage =
   | { type: "auth:logout"; id: string; payload: { profile: string; purge?: boolean } }
   | { type: "auth:dismiss-expired"; payload: { profile: string; bumpHours: number } }
   | { type: "profile:switch"; id: string; payload: { name: string } }
+  | { type: "profile:add-prompt" }
   | { type: "profile:add"; id: string; payload: { name: string; displayName?: string; loginMode: "auto" | "manual" } }
   | { type: "profile:delete"; id: string; payload: { name: string } }
   | { type: "doctor:run"; id: string; payload: { profile?: string; allProfiles?: boolean } }

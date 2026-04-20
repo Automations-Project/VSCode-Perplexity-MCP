@@ -249,6 +249,32 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             await this.refresh();
             break;
           }
+          case "profile:add-prompt": {
+            const name = await vscode.window.showInputBox({
+              prompt: "New profile name",
+              placeHolder: "e.g. work, personal",
+              ignoreFocusOut: true,
+              validateInput: (v) => /^[a-z0-9_-]{1,32}$/.test(v) ? null : "Lowercase letters, digits, _ or -; 1–32 chars.",
+            });
+            if (!name) break;
+            const modePick = await vscode.window.showQuickPick(
+              [
+                { label: "Manual (recommended)", value: "manual" as const },
+                { label: "Auto (email + OTP) — experimental", value: "auto" as const },
+              ],
+              { placeHolder: "Login mode for this profile", ignoreFocusOut: true },
+            );
+            if (!modePick) break;
+            try {
+              const { createProfile } = await import("perplexity-user-mcp/profiles" as string) as { createProfile: (n: string, o: unknown) => unknown };
+              createProfile(name, { loginMode: modePick.value });
+              await this.postNotice("info", `Created profile '${name}'.`);
+            } catch (err) {
+              await this.postNotice("error", `Could not create profile: ${(err as Error).message}`);
+            }
+            await this.postProfileList();
+            break;
+          }
           case "profile:add": {
             const { createProfile } = await import("perplexity-user-mcp/profiles" as string) as { createProfile: (n: string, o: unknown) => unknown };
             try {

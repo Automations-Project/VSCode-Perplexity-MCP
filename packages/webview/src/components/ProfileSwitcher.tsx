@@ -21,9 +21,7 @@ export function ProfileSwitcher({ send }: { send: SendFn }) {
     setOpen(false);
   }
   function addProfile() {
-    const name = prompt("New profile name (a-z 0-9 _ -, max 32 chars):");
-    if (!name) return;
-    send({ type: "profile:add", id: crypto.randomUUID(), payload: { name, loginMode: "manual" } });
+    send({ type: "profile:add-prompt" });
     setOpen(false);
   }
   function logout() {
