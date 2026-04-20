@@ -1,6 +1,7 @@
 import { fork, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 import * as vscode from "vscode";
+import { softLogout, hardLogout } from "perplexity-user-mcp/logout";
 
 export type AuthStatus =
   | "unknown" | "checking" | "valid" | "expired" | "error"
@@ -167,10 +168,6 @@ export class AuthManager implements vscode.Disposable {
     const key = `logout:${opts.profile}`;
     if (this.inflight.has(key)) return;
     const promise = (async () => {
-      const { softLogout, hardLogout } = (await import("perplexity-user-mcp/logout" as string)) as {
-        softLogout: (n: string) => Promise<void>;
-        hardLogout: (n: string) => Promise<void>;
-      };
       if (opts.purge) await hardLogout(opts.profile);
       else await softLogout(opts.profile);
       this.setState({
