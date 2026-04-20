@@ -52,6 +52,7 @@ export function DoctorTab({
               category={cat}
               status={report.byCategory[cat]?.status ?? "skip"}
               checks={report.byCategory[cat]?.checks ?? []}
+              send={send}
             />
           ))}
           {report.overall === "fail" && !reportingOptOut && (

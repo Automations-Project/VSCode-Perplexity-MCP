@@ -1,7 +1,9 @@
 import { useState } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
-import type { DoctorCheck, DoctorStatus } from "@perplexity-user-mcp/shared";
+import { ChevronDown, ChevronUp, Wrench } from "lucide-react";
+import type { DoctorCheck, DoctorStatus, WebviewMessage } from "@perplexity-user-mcp/shared";
 import { type DotVariant, StatusDot } from "./StatusDot";
+
+type SendFn = (m: WebviewMessage | Omit<Extract<WebviewMessage, { id: string }>, "id">) => void;
 
 const STATUS_LABEL: Record<DoctorStatus, string> = {
   pass: "healthy",
@@ -21,10 +23,12 @@ export function DoctorCategoryCard({
   category,
   status,
   checks,
+  send,
 }: {
   category: string;
   status: DoctorStatus;
   checks: DoctorCheck[];
+  send?: SendFn;
 }) {
   const [open, setOpen] = useState(status === "fail" || status === "warn");
   return (
@@ -52,6 +56,17 @@ export function DoctorCategoryCard({
                 <p style={{ margin: "2px 0 0 18px", fontSize: "0.7rem", color: "var(--text-muted)" }}>
                   Hint: {c.hint}
                 </p>
+              )}
+              {c.action && send && (
+                <button
+                  className="ghost-button"
+                  style={{ marginLeft: 18, marginTop: 4, alignSelf: "flex-start", padding: "4px 10px", fontSize: "0.72rem" }}
+                  onClick={() =>
+                    send({ type: "doctor:action", payload: { commandId: c.action!.commandId, args: c.action!.args } })
+                  }
+                >
+                  <Wrench size={12} /> {c.action.label}
+                </button>
               )}
             </li>
           ))}

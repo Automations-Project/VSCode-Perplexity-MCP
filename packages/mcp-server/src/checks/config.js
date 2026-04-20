@@ -43,7 +43,14 @@ export async function run(opts = {}) {
 
   const activePath = join(dir, "active");
   if (!existsSync(activePath)) {
-    results.push({ category: CATEGORY, name: "active-pointer", status: "warn", message: "No active profile set." });
+    results.push({
+      category: CATEGORY,
+      name: "active-pointer",
+      status: "warn",
+      message: "No active profile set.",
+      hint: "Add an account to create and activate your first profile.",
+      action: { label: "Add account", commandId: "Perplexity.addAccount" },
+    });
   } else {
     const name = readFileSync(activePath, "utf8").trim();
     const metaPath = join(dir, "profiles", name, "meta.json");

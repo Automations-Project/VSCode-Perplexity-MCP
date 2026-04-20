@@ -43,6 +43,7 @@ const ACTION_TYPES = new Set<string>([
   "doctor:probe",
   "doctor:export",
   "doctor:report-issue",
+  "doctor:action",
 ]);
 
 let actionSeq = 0;

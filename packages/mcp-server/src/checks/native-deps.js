@@ -121,6 +121,7 @@ export async function run(opts = {}) {
       status: "skip",
       message: "not installed (optional — gives HTTP tier speed boost)",
       hint: "Install via the dashboard's 'Install Speed Boost' button.",
+      action: { label: "Install Speed Boost", commandId: "Perplexity.installSpeedBoost" },
     });
   }
 

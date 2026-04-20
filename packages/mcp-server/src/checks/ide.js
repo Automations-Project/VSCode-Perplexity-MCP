@@ -26,6 +26,7 @@ export async function run(opts = {}) {
         status: "warn",
         message: `${s.displayName} installed but Perplexity MCP is not configured.`,
         hint: "Open the IDEs dashboard tab and click Configure.",
+        action: { label: "Configure", commandId: "Perplexity.generateConfigs", args: [id] },
       });
       continue;
     }
@@ -36,6 +37,7 @@ export async function run(opts = {}) {
         status: "warn",
         message: `${s.displayName} config is stale.`,
         hint: "Click Configure to refresh.",
+        action: { label: "Refresh config", commandId: "Perplexity.generateConfigs", args: [id] },
       });
       continue;
     }

@@ -4,6 +4,18 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [0.4.7] — 2026-04-20 — doctor polish: inline fix actions + export parity
+
+### Fixed
+- **Doctor `ide-audit` was always `skip` in exported reports.** The `doctor:export` and `doctor:report-issue` handlers called `runDoctor({ baseDir })` without passing `ideStatuses`, so the IDE check always fell through to its "requires the VS Code extension" skip branch. Both handlers now pass the same `ideStatuses` the Run/Deep-check path uses.
+
+### Added
+- **One-click fix actions for known-remediable doctor findings.** `DoctorCheck` now carries an optional `action: { label, commandId, args? }` that the webview renders as a button next to the hint. Extension host whitelists the allowed `commandId`s and clears the cached report after running so the next Run shows the now-fixed state.
+- Action producers wired for three findings:
+  - `config/active-pointer: warn` (no active profile) → **Add account** (`Perplexity.addAccount`).
+  - `native-deps/impit: skip` → **Install Speed Boost** (`Perplexity.installSpeedBoost`).
+  - `ide/<name>: warn` (detected but not configured or stale) → **Configure** (`Perplexity.generateConfigs`, `args: [id]`).
+
 ## [0.4.6] — 2026-04-20 — profile-flow UX and active-profile login fixes
 
 ### Fixed

@@ -85,6 +85,17 @@ export type DoctorCategory =
   | "runtime" | "config" | "profiles" | "vault" | "browser"
   | "native-deps" | "network" | "ide" | "mcp" | "probe";
 
+/**
+ * Optional one-click remediation for a failing/warning check. The webview
+ * renders a button labelled `action.label` next to the hint; clicking it
+ * dispatches `doctor:action` → the extension host runs the VS Code command.
+ */
+export interface DoctorAction {
+  label: string;
+  commandId: string;
+  args?: unknown[];
+}
+
 export interface DoctorCheck {
   category: DoctorCategory;
   name: string;
@@ -92,6 +103,7 @@ export interface DoctorCheck {
   message: string;
   detail?: Record<string, unknown>;
   hint?: string;
+  action?: DoctorAction;
 }
 
 export interface DoctorReport {
@@ -209,4 +221,5 @@ export type WebviewMessage =
   | { type: "doctor:run"; id: string; payload: { profile?: string; allProfiles?: boolean } }
   | { type: "doctor:probe"; id: string; payload: { profile?: string } }
   | { type: "doctor:export"; id: string; payload: { targetPath?: string } }
-  | { type: "doctor:report-issue"; id: string; payload: { category: DoctorCategory; check: string } };
+  | { type: "doctor:report-issue"; id: string; payload: { category: DoctorCategory; check: string } }
+  | { type: "doctor:action"; id: string; payload: { commandId: string; args?: unknown[] } };

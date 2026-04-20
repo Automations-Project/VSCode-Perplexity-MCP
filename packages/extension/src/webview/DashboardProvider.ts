@@ -357,8 +357,11 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
                 filters: { JSON: ["json"] },
               });
               if (uri) {
+                const settings = getSettingsSnapshot();
+                const bundledServerPath = vscode.Uri.joinPath(this.context.extensionUri, "dist", "mcp", "server.mjs").fsPath;
+                const ideStatuses = getIdeStatuses(bundledServerPath, settings.chromePath);
                 const baseDir = vscode.Uri.joinPath(this.context.extensionUri, "dist").fsPath;
-                const report = await runDoctor({ baseDir });
+                const report = await runDoctor({ baseDir, ideStatuses });
                 await vscode.workspace.fs.writeFile(uri, Buffer.from(JSON.stringify(report, null, 2)));
                 await this.postNotice("info", `Doctor report written to ${uri.fsPath}.`);
               }
@@ -372,8 +375,11 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             try {
               let report = this.lastDoctorReport;
               if (!report) {
+                const settings = getSettingsSnapshot();
+                const bundledServerPath = vscode.Uri.joinPath(this.context.extensionUri, "dist", "mcp", "server.mjs").fsPath;
+                const ideStatuses = getIdeStatuses(bundledServerPath, settings.chromePath);
                 const baseDir = vscode.Uri.joinPath(this.context.extensionUri, "dist").fsPath;
-                report = await runDoctor({ baseDir });
+                report = await runDoctor({ baseDir, ideStatuses });
                 this.lastDoctorReport = report;
               }
               const { collectDiagnostics, renderPreview, openIssue, buildIssueUrl } = await import("./doctor-report-handler.js");
@@ -402,6 +408,32 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
                 });
                 await openIssue({ url, optOut: false, openExternal: (u: unknown) => vscode.env.openExternal(vscode.Uri.parse(String(u))) });
               }
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "doctor:action": {
+            try {
+              const { commandId, args } = message.payload;
+              // Whitelist of commands the webview may trigger through doctor actions.
+              // Keeps the `doctor:action` channel safe from arbitrary command execution
+              // if the webview is ever compromised.
+              const allowed = new Set([
+                "Perplexity.installSpeedBoost",
+                "Perplexity.uninstallSpeedBoost",
+                "Perplexity.generateConfigs",
+                "Perplexity.addAccount",
+                "Perplexity.switchAccount",
+                "Perplexity.refreshDashboard",
+              ]);
+              if (!allowed.has(commandId)) {
+                throw new Error(`Command '${commandId}' is not allowed from a doctor action.`);
+              }
+              await vscode.commands.executeCommand(commandId, ...(args ?? []));
+              // Invalidate cached report so the next Run picks up the now-fixed state.
+              this.lastDoctorReport = null;
               await this.postActionResult(message.id, true);
             } catch (err) {
               await this.postActionResult(message.id, false, (err as Error).message);
