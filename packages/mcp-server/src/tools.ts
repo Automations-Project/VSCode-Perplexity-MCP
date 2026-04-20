@@ -627,4 +627,26 @@ export function registerTools(
       },
     );
   }
+
+  if (!enabledTools || enabledTools.has("perplexity_doctor")) {
+    server.registerTool(
+      "perplexity_doctor",
+      {
+        title: "Perplexity Doctor",
+        description: "Run diagnostic checks against your Perplexity MCP install. Returns a Markdown report across ten categories; pass probe:true for a live search probe.",
+        inputSchema: {
+          probe: z.boolean().optional(),
+          profile: z.string().optional(),
+        },
+        annotations: {
+          readOnlyHint: true,
+        },
+      },
+      async ({ probe, profile }) => {
+        const { runAll, formatReportMarkdown } = await import("./doctor.js");
+        const report = await runAll({ probe: !!probe, profile });
+        return success(formatReportMarkdown(report));
+      },
+    );
+  }
 }

@@ -17,6 +17,7 @@ const CATEGORIES: Record<string, string[]> = {
     "perplexity_search", "perplexity_reason", "perplexity_research",
     "perplexity_ask", "perplexity_models", "perplexity_retrieve",
     "perplexity_list_researches", "perplexity_get_research",
+    "perplexity_doctor",
   ],
   write: ["perplexity_compute", "perplexity_login"],
 };
