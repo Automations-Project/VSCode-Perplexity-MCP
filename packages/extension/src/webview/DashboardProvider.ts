@@ -19,7 +19,14 @@ import type { IdeTarget } from "@perplexity-user-mcp/shared";
 import { getAccountSnapshot, setLastRefreshTier } from "../auth/session.js";
 import { log, debug } from "../extension.js";
 import type { DebugCollector } from "../debug/collector.js";
-import { readHistory } from "perplexity-user-mcp";
+import { readHistory, runDoctor } from "perplexity-user-mcp";
+import {
+  listProfiles,
+  getActiveName,
+  setActive,
+  createProfile,
+  deleteProfile,
+} from "perplexity-user-mcp/profiles";
 import { refreshAccountInfo } from "../browser/runtime.js";
 import { installImpit, uninstallImpit } from "../native-deps.js";
 import { getSettingsSnapshot, updateSettings } from "../settings.js";
@@ -52,7 +59,6 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
 
   async postProfileList(): Promise<void> {
     if (!this.view) return;
-    const { listProfiles, getActiveName } = await import("perplexity-user-mcp/profiles" as string) as { listProfiles: () => unknown[]; getActiveName: () => string | null };
     await this.view.webview.postMessage({ type: "profile:list", payload: { active: getActiveName(), profiles: listProfiles() } });
   }
 
@@ -242,7 +248,6 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
           case "auth:dismiss-expired":
             break;
           case "profile:switch": {
-            const { setActive } = await import("perplexity-user-mcp/profiles" as string) as { setActive: (n: string) => void };
             setActive(message.payload.name);
             await this.postActionResult(message.id, true);
             await this.postProfileList();
@@ -266,7 +271,6 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             );
             if (!modePick) break;
             try {
-              const { createProfile } = await import("perplexity-user-mcp/profiles" as string) as { createProfile: (n: string, o: unknown) => unknown };
               createProfile(name, { loginMode: modePick.value });
               await this.postNotice("info", `Created profile '${name}'.`);
             } catch (err) {
@@ -276,7 +280,6 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             break;
           }
           case "profile:add": {
-            const { createProfile } = await import("perplexity-user-mcp/profiles" as string) as { createProfile: (n: string, o: unknown) => unknown };
             try {
               createProfile(message.payload.name, { loginMode: message.payload.loginMode });
               await this.postActionResult(message.id, true);
@@ -287,7 +290,6 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             break;
           }
           case "profile:delete": {
-            const { deleteProfile } = await import("perplexity-user-mcp/profiles" as string) as { deleteProfile: (n: string) => void };
             deleteProfile(message.payload.name);
             await this.postActionResult(message.id, true);
             await this.postProfileList();
@@ -297,12 +299,11 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
           case "doctor:probe": {
             await this.view?.webview.postMessage({ type: "doctor:running", payload: { probeRan: message.type === "doctor:probe" } });
             try {
-              const { runDoctor } = await import("perplexity-user-mcp");
               const settings = getSettingsSnapshot();
               const bundledServerPath = vscode.Uri.joinPath(this.context.extensionUri, "dist", "mcp", "server.mjs").fsPath;
               const ideStatuses = getIdeStatuses(bundledServerPath, settings.chromePath);
               const baseDir = vscode.Uri.joinPath(this.context.extensionUri, "dist").fsPath;
-              const report = await (runDoctor as Function)({
+              const report = await runDoctor({
                 probe: message.type === "doctor:probe",
                 ideStatuses,
                 baseDir,
@@ -322,9 +323,8 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
                 filters: { JSON: ["json"] },
               });
               if (uri) {
-                const { runDoctor } = await import("perplexity-user-mcp");
                 const baseDir = vscode.Uri.joinPath(this.context.extensionUri, "dist").fsPath;
-                const report = await (runDoctor as Function)({ baseDir });
+                const report = await runDoctor({ baseDir });
                 await vscode.workspace.fs.writeFile(uri, Buffer.from(JSON.stringify(report, null, 2)));
                 await this.postNotice("info", `Doctor report written to ${uri.fsPath}.`);
               }
@@ -338,9 +338,8 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             try {
               let report = this.lastDoctorReport;
               if (!report) {
-                const { runDoctor } = await import("perplexity-user-mcp");
                 const baseDir = vscode.Uri.joinPath(this.context.extensionUri, "dist").fsPath;
-                report = await (runDoctor as Function)({ baseDir });
+                report = await runDoctor({ baseDir });
                 this.lastDoctorReport = report;
               }
               const { collectDiagnostics, renderPreview, openIssue, buildIssueUrl } = await import("./doctor-report-handler.js");

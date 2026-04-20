@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { MCP_PROVIDER_ID, MCP_SERVER_LABEL, type IdeTarget } from "@perplexity-user-mcp/shared";
+import { getActiveName, listProfiles, setActive, createProfile } from "perplexity-user-mcp/profiles";
 import { configureTargets, getIdeStatuses } from "./auto-config/index.js";
 import { hasStoredLogin } from "./auth/session.js";
 import { getSettingsSnapshot } from "./settings.js";
@@ -222,7 +223,6 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("Perplexity.login", async () => {
-      const { getActiveName } = await import("perplexity-user-mcp/profiles" as string) as { getActiveName: () => string | null };
       const profile = getActiveName() ?? "default";
 
       const modePick = await vscode.window.showQuickPick(
@@ -268,7 +268,6 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
   context.subscriptions.push(
     vscode.commands.registerCommand("Perplexity.logout", async () => {
       const purge = (await vscode.window.showQuickPick(["Soft (keep dir)", "Hard (purge dir)"], { placeHolder: "Logout mode" })) === "Hard (purge dir)";
-      const { getActiveName } = await import("perplexity-user-mcp/profiles" as string) as { getActiveName: () => string | null };
       const profile = getActiveName() ?? "default";
       await authManager.logout({ profile, purge });
       serverDefinitionsChanged.fire();
@@ -278,7 +277,6 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("Perplexity.switchAccount", async () => {
-      const { listProfiles, setActive } = await import("perplexity-user-mcp/profiles" as string) as { listProfiles: () => { name: string }[]; setActive: (n: string) => void };
       const pick = await vscode.window.showQuickPick(listProfiles().map((p) => p.name), { placeHolder: "Switch account" });
       if (pick) {
         setActive(pick);
@@ -294,7 +292,6 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
       if (!name) return;
       const mode = (await vscode.window.showQuickPick(["auto", "manual"], { placeHolder: "Login mode" })) as "auto" | "manual" | undefined;
       if (!mode) return;
-      const { createProfile } = await import("perplexity-user-mcp/profiles" as string) as { createProfile: (n: string, o: unknown) => unknown };
       createProfile(name, { loginMode: mode });
       await dashboard.refresh();
     })
