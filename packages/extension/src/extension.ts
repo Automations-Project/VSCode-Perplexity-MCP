@@ -280,6 +280,20 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand("Perplexity.doctor", async () => {
+      await dashboard.reveal();
+      await dashboard.postDoctorRun(false);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("Perplexity.doctorReportIssue", async () => {
+      await dashboard.reveal();
+      await dashboard.postDoctorReportIssue();
+    })
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand(
       "Perplexity.generateConfigs",
       async (target: string = "all") => {

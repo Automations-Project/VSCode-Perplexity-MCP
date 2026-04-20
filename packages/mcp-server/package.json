@@ -1,6 +1,6 @@
 {
   "name": "perplexity-user-mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "description": "Perplexity AI MCP server — browser automation for search, reasoning, research, and compute",
   "author": "A.R.",
@@ -51,6 +51,10 @@
     "./profiles": {
       "types": "./dist/profiles.d.ts",
       "import": "./dist/profiles.mjs"
+    },
+    "./doctor": {
+      "types": "./dist/doctor.d.ts",
+      "import": "./dist/doctor.mjs"
     }
   },
   "files": [

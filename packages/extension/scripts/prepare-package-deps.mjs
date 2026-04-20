@@ -12,6 +12,18 @@ const extensionNodeModules = join(__dirname, "..", "dist", "node_modules");
  * the esbuild bundler. This list is only for packages that must ship with their
  * own node_modules tree at runtime (native binaries, dynamic requires, etc.).
  */
+/**
+ * IMPORTANT: The `dot-prop` and `is-obj` entries below are NOT there by accident.
+ * Phase 2 carry-over #5 tracked a VSIX packaging gap where
+ * `header-generator → dot-prop → is-obj` wasn't hoisted, causing got-scraping's
+ * HTTP tier to silently fall back to the browser tier.
+ *
+ * The Phase 3 doctor check `native-deps/got-scraping-chain` audits this chain
+ * at runtime. If you remove dot-prop or is-obj here, doctor will warn users
+ * and their installs will work — but slower.
+ *
+ * See packages/mcp-server/src/checks/native-deps.js and docs/doctor.md.
+ */
 const rootPackages = ["patchright", "patchright-core", "got-scraping", "keytar", "dot-prop", "is-obj"];
 
 rmSync(extensionNodeModules, { recursive: true, force: true });

@@ -53,6 +53,24 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
     await this.view.webview.postMessage({ type: "profile:list", payload: { active: getActiveName(), profiles: listProfiles() } });
   }
 
+  async postDoctorRun(probe: boolean): Promise<void> {
+    if (!this.view) return;
+    await this.view.webview.postMessage({
+      type: probe ? "doctor:probe" : "doctor:run",
+      id: crypto.randomBytes(6).toString("hex"),
+      payload: {},
+    });
+  }
+
+  async postDoctorReportIssue(): Promise<void> {
+    if (!this.view) return;
+    await this.view.webview.postMessage({
+      type: "doctor:report-issue",
+      id: crypto.randomBytes(6).toString("hex"),
+      payload: { category: "runtime", check: "run" },
+    });
+  }
+
   async resolveWebviewView(webviewView: vscode.WebviewView): Promise<void> {
     log("resolveWebviewView called");
     this.view = webviewView;
