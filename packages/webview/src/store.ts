@@ -1,7 +1,7 @@
 import { create } from "zustand";
-import type { AuthState, DashboardState, ExtensionMessage, Profile } from "@perplexity/shared";
+import type { AuthState, DashboardState, DoctorReport, ExtensionMessage, Profile } from "@perplexity/shared";
 
-export type AppTab = "dashboard" | "models" | "history" | "settings" | "rules";
+export type AppTab = "dashboard" | "models" | "history" | "settings" | "rules" | "doctor";
 
 interface NoticeState {
   level: "info" | "warning" | "error";
@@ -27,6 +27,14 @@ interface DashboardStore {
   activeProfile: string | null;
   otpPrompt: { open: boolean; profile: string; attempt: number; email: string } | null;
   expiredDismissedUntil: number | null;
+  doctor: {
+    phase: "idle" | "running" | "done" | "error";
+    report: DoctorReport | null;
+    reportingOptOut: boolean;
+  };
+  setDoctorRunning: () => void;
+  setDoctorReport: (r: DoctorReport) => void;
+  setDoctorReportingOptOut: (v: boolean) => void;
   hydrate: (message: ExtensionMessage) => void;
   setActiveTab: (tab: AppTab) => void;
   clearNotice: () => void;
@@ -51,6 +59,10 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
   activeProfile: null,
   otpPrompt: null,
   expiredDismissedUntil: null,
+  doctor: { phase: "idle", report: null, reportingOptOut: false },
+  setDoctorRunning: () => set((s) => ({ doctor: { ...s.doctor, phase: "running" } })),
+  setDoctorReport: (report) => set((s) => ({ doctor: { ...s.doctor, phase: "done", report } })),
+  setDoctorReportingOptOut: (v) => set((s) => ({ doctor: { ...s.doctor, reportingOptOut: v } })),
   hydrate: (message) => {
     if (message.type === "dashboard:state") {
       set({ state: message.payload });
@@ -73,6 +85,14 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
           at: Date.now(),
         },
       });
+    }
+
+    if (message.type === "doctor:running") {
+      set((s) => ({ doctor: { ...s.doctor, phase: "running" } }));
+    }
+
+    if (message.type === "doctor:report") {
+      set((s) => ({ doctor: { ...s.doctor, phase: "done", report: message.payload } }));
     }
   },
   setActiveTab: (tab) => set({ activeTab: tab }),

@@ -1,4 +1,4 @@
-import { BookOpen, Bot, Clock3, Compass, Layers3, RefreshCcw, Settings2, ShieldCheck, Sparkles } from "lucide-react";
+import { BookOpen, Bot, Clock3, Compass, Layers3, RefreshCcw, Settings2, ShieldCheck, Sparkles, Stethoscope } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { startTransition, useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
 import type { ExtensionMessage, HistoryItem, WebviewMessage } from "@perplexity/shared";
@@ -17,9 +17,11 @@ import {
 import { ProfileSwitcher } from "./components/ProfileSwitcher";
 import { OtpModal } from "./components/OtpModal";
 import { ExpiredBanner } from "./components/ExpiredBanner";
+import { DoctorTab } from "./components/DoctorTab";
 
 const tabs: Array<{ id: AppTab; label: string; icon: typeof Compass }> = [
   { id: "dashboard", label: "Home", icon: Compass },
+  { id: "doctor", label: "Doctor", icon: Stethoscope },
   { id: "settings", label: "IDEs", icon: Settings2 },
   { id: "rules", label: "Rules", icon: BookOpen },
   { id: "models", label: "Models", icon: Layers3 },
@@ -37,6 +39,10 @@ const ACTION_TYPES = new Set<string>([
   "models:refresh",
   "speed-boost:install",
   "speed-boost:uninstall",
+  "doctor:run",
+  "doctor:probe",
+  "doctor:export",
+  "doctor:report-issue",
 ]);
 
 let actionSeq = 0;
@@ -71,6 +77,13 @@ function filterHistory(items: HistoryItem[], filter: string): HistoryItem[] {
       item.tool.toLowerCase().includes(needle) ||
       item.answerPreview.toLowerCase().includes(needle),
   );
+}
+
+function DoctorTabWrapper({ send }: { send: (m: WebviewMessage | Omit<Extract<WebviewMessage, { id: string }>, "id">) => void }) {
+  const report = useDashboardStore((s) => s.doctor.report);
+  const phase = useDashboardStore((s) => s.doctor.phase);
+  const reportingOptOut = useDashboardStore((s) => s.doctor.reportingOptOut);
+  return <DoctorTab report={report} phase={phase} reportingOptOut={reportingOptOut} send={send} />;
 }
 
 function App() {
@@ -228,6 +241,9 @@ function App() {
             ) : null}
             {state && activeTab === "settings" ? <SettingsView state={state} send={send} /> : null}
             {state && activeTab === "rules" ? <RulesView state={state} send={send} /> : null}
+            {activeTab === "doctor" ? (
+              <DoctorTabWrapper send={send} />
+            ) : null}
           </motion.section>
         </AnimatePresence>
       </main>
