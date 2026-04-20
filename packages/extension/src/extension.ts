@@ -227,8 +227,8 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
 
       const modePick = await vscode.window.showQuickPick(
         [
-          { label: "Manual (opens a browser, you sign in)", detail: "Works with email + password, Google, Apple, or any other Perplexity login method.", value: "manual" as const },
-          { label: "Auto (email + OTP)", detail: "Enter your email, we drive the browser and prompt you for the OTP emailed to you. Email/OTP accounts only — not SSO.", value: "auto" as const },
+          { label: "Manual (recommended)", detail: "Opens a browser pointed at perplexity.ai/account — you sign in however you want (email+password, Google, Apple, etc.). Works with SSO.", value: "manual" as const },
+          { label: "Auto (email + OTP) — experimental", detail: "Enter your email; we drive a headless browser and prompt for the OTP. Only email+OTP accounts (no SSO). Real-Perplexity support is incomplete — fall back to Manual if it fails.", value: "auto" as const },
         ],
         { placeHolder: "Login mode", ignoreFocusOut: true },
       );

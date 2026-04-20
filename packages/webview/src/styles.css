@@ -1340,3 +1340,109 @@ a {
   animation: refresh-spin-kf 0.9s linear infinite;
   transform-origin: 50% 50%;
 }
+
+/* ── Profile switcher (header pill + dropdown menu) ─────────────── */
+.profile-switcher {
+  position: relative;
+  display: inline-block;
+}
+
+.profile-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.profile-pill:hover,
+.profile-pill[aria-expanded="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--surface-elevated) 85%, var(--accent) 15%);
+}
+
+.profile-pill-name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.profile-pill-tier {
+  font-size: 0.68rem;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--bg-info);
+  color: var(--fg-info);
+  border: 1px solid color-mix(in srgb, var(--fg-info) 40%, transparent);
+  white-space: nowrap;
+}
+
+.profile-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  min-width: 220px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
+.profile-menu-group {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding: 6px 10px 4px;
+}
+
+.profile-menu hr {
+  border: none;
+  border-top: 1px solid var(--border-color);
+  margin: 6px 2px;
+}
+
+.profile-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.profile-menu-item:hover {
+  background: color-mix(in srgb, var(--surface-elevated) 70%, var(--accent) 30%);
+}
+
+.profile-menu-item.is-active {
+  background: var(--bg-info);
+  color: var(--fg-info);
+}
+
+.profile-menu-item-tier {
+  margin-left: auto;
+  font-size: 0.66rem;
+  color: var(--text-muted);
+}
+
+.profile-menu-item-danger {
+  color: var(--fg-err);
+}
+
+.profile-menu-item-danger:hover {
+  background: var(--bg-err);
+}

@@ -31,6 +31,9 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
   private debugCollector?: DebugCollector;
   private authManager?: AuthManager;
   private otpResolvers = new Map<string, (s: string | null) => void>();
+  // Cache the most-recent doctor report so "Report issue" can reuse it instead
+  // of re-running all 10 checks. Cleared when the user clicks Run again.
+  private lastDoctorReport: unknown = null;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -278,6 +281,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
                 ideStatuses,
                 baseDir,
               });
+              this.lastDoctorReport = report;
               await this.view?.webview.postMessage({ type: "doctor:report", payload: report });
               await this.postActionResult(message.id, true);
             } catch (err) {
@@ -306,12 +310,16 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
           }
           case "doctor:report-issue": {
             try {
-              const { runDoctor } = await import("perplexity-user-mcp");
-              const baseDir = vscode.Uri.joinPath(this.context.extensionUri, "dist").fsPath;
-              const report = await (runDoctor as Function)({ baseDir });
+              let report = this.lastDoctorReport;
+              if (!report) {
+                const { runDoctor } = await import("perplexity-user-mcp");
+                const baseDir = vscode.Uri.joinPath(this.context.extensionUri, "dist").fsPath;
+                report = await (runDoctor as Function)({ baseDir });
+                this.lastDoctorReport = report;
+              }
               const { collectDiagnostics, renderPreview, openIssue, buildIssueUrl } = await import("./doctor-report-handler.js");
               const diag = collectDiagnostics({
-                report,
+                report: report as import("@perplexity/shared").DoctorReport,
                 stderrTail: "(extension output channel tail not yet wired)",
                 extVersion: this.context.extension.packageJSON.version as string,
                 nodeVersion: process.version,
