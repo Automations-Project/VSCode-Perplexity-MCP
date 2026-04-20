@@ -9,6 +9,10 @@ import { getProfilePaths, getActiveName, recordLoginSuccess } from "./profiles.j
 import { redact } from "./redact.js";
 
 const ORIGIN = process.env.PERPLEXITY_ORIGIN || "https://www.perplexity.ai";
+// Perplexity's login flow lives at /account (the `/login` path doesn't exist
+// on www.perplexity.ai). Integration tests override via env var to point at
+// the mock server's /login route.
+const LOGIN_PATH = process.env.PERPLEXITY_LOGIN_PATH || "/account";
 const POLL_MS = Number(process.env.PERPLEXITY_POLL_MS ?? 2000);
 const MAX_WAIT_MS = 180_000;
 const CF_TIMEOUT_MS = Number(process.env.PERPLEXITY_CF_TIMEOUT_MS ?? 20_000);
@@ -32,11 +36,11 @@ async function main() {
   let cfClosed = false;
   browser.on("disconnected", () => { cfClosed = true; });
 
-  // Navigate to /login so the page has a same-origin context for subsequent
-  // credentialed fetch() calls. Going to ORIGIN's root path can land on a 404
-  // (mock server) or a marketing page (production) that may not set a usable
-  // document origin for in-page fetch.
-  try { await page.goto(`${ORIGIN}/login`, { waitUntil: "domcontentloaded", timeout: 30_000 }); }
+  // Navigate to the login page so the page has a same-origin context for
+  // subsequent credentialed fetch() calls. Going to ORIGIN's root path can
+  // land on a marketing page that may not set a usable document origin for
+  // in-page fetch. Path is env-var-configurable for the mock server tests.
+  try { await page.goto(`${ORIGIN}${LOGIN_PATH}`, { waitUntil: "domcontentloaded", timeout: 30_000 }); }
   catch { /* continue; next phase checks CF */ }
 
   // CF resolve check

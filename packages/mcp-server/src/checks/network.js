@@ -39,7 +39,7 @@ export async function run(opts = {}) {
 
   let headRes;
   try {
-    headRes = await head(`https://${host}/login`);
+    headRes = await head(`https://${host}${process.env.PERPLEXITY_LOGIN_PATH || "/account"}`);
     results.push({ category: CATEGORY, name: "https", status: "pass", message: `HEAD / status ${headRes.statusCode}` });
   } catch (err) {
     results.push({

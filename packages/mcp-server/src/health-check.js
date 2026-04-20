@@ -10,6 +10,7 @@ import { getProfilePaths, getActiveName } from "./profiles.js";
 import { redact } from "./redact.js";
 
 const ORIGIN = process.env.PERPLEXITY_ORIGIN || "https://www.perplexity.ai";
+const LOGIN_PATH = process.env.PERPLEXITY_LOGIN_PATH || "/account";
 
 function resolveProfile() {
   return process.env.PERPLEXITY_PROFILE || getActiveName() || "default";
@@ -48,10 +49,10 @@ async function main() {
     const page = await ctx.newPage();
     // Navigate to an origin URL so page-context fetches are same-origin
     // (required for `credentials: "include"` to attach the cookies we just
-    // injected). `/login` is used because the mock server and production
-    // both return HTML there; the mock's `/` returns 404 which leaves the
-    // page in a state where fetch() throws TypeError.
-    await page.goto(`${ORIGIN}/login`, { waitUntil: "domcontentloaded" }).catch(() => {});
+    // injected). The default path `/account` exists on production; mock
+    // integration tests override via PERPLEXITY_LOGIN_PATH to point at the
+    // mock's `/login` route.
+    await page.goto(`${ORIGIN}${LOGIN_PATH}`, { waitUntil: "domcontentloaded" }).catch(() => {});
 
     const sessionData = await page.evaluate(async (u) => {
       const r = await fetch(u, { credentials: "include" });

@@ -10,6 +10,7 @@ import { getProfilePaths, getActiveName, recordLoginSuccess } from "./profiles.j
 import { redact } from "./redact.js";
 
 const ORIGIN = process.env.PERPLEXITY_ORIGIN || "https://www.perplexity.ai";
+const LOGIN_PATH = process.env.PERPLEXITY_LOGIN_PATH || "/account";
 const EMAIL = process.env.PERPLEXITY_EMAIL;
 const OTP_TIMEOUT_MS = Number(process.env.PERPLEXITY_OTP_TIMEOUT_MS ?? 300_000);
 const MAX_RETRIES = 2;
@@ -51,7 +52,7 @@ async function main() {
   const page = await ctx.newPage();
 
   try {
-    await page.goto(`${ORIGIN}/login`, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.goto(`${ORIGIN}${LOGIN_PATH}`, { waitUntil: "domcontentloaded", timeout: 30_000 });
   } catch {}
 
   // Submit email. Mock returns 302 -> /sso for @sso.test emails.
