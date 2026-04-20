@@ -21,10 +21,10 @@ import { DoctorTab } from "./components/DoctorTab";
 
 const tabs: Array<{ id: AppTab; label: string; icon: typeof Compass }> = [
   { id: "dashboard", label: "Home", icon: Compass },
-  { id: "doctor", label: "Doctor", icon: Stethoscope },
   { id: "settings", label: "IDEs", icon: Settings2 },
   { id: "rules", label: "Rules", icon: BookOpen },
   { id: "models", label: "Models", icon: Layers3 },
+  { id: "doctor", label: "Doctor", icon: Stethoscope },
   { id: "history", label: "History", icon: Clock3 },
 ];
 
