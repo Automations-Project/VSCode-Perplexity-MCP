@@ -32,3 +32,22 @@ describe("checks/native-deps", () => {
     expect(checks.find((c) => c.name === "impit").status).toBe("skip");
   });
 });
+
+describe("checks/native-deps — baseDir resolution (Phase 3.1 fix)", () => {
+  it("uses baseDir for patchright + chain resolution when provided", async () => {
+    // Point baseDir at the repo root — it has all deps hoisted in node_modules.
+    const repoRoot = process.cwd();
+    const checks = await runNativeDepsCheck({ baseDir: repoRoot });
+    expect(checks.find((c) => c.name === "patchright").status).toBe("pass");
+    expect(checks.find((c) => c.name === "got-scraping-chain").status).toBe("pass");
+  });
+
+  it("fails patchright when baseDir has no node_modules/patchright", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const empty = mkdtempSync(join(tmpdir(), "px-empty-"));
+    const checks = await runNativeDepsCheck({ baseDir: empty });
+    expect(checks.find((c) => c.name === "patchright").status).toBe("fail");
+  });
+});

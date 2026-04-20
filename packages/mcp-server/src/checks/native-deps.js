@@ -5,17 +5,29 @@ import { join } from "node:path";
 const CATEGORY = "native-deps";
 
 /**
- * Walks header-generator → dot-prop → is-obj by creating a per-package
- * `createRequire` at each step so a missing link surfaces the same way
- * it would at runtime. Throws if any link fails.
- *
- * Carry-over #5 from Phase 2: the VSIX previously shipped header-generator
- * without its dot-prop → is-obj transitive chain, forcing got-scraping to
- * fall back to the browser tier silently. prepare-package-deps.mjs now
- * includes both packages in rootPackages; this check is the regression guard.
+ * Build a `require` that resolves as if invoked from `baseDir`. Falls back
+ * to this module's own file when no baseDir is supplied. The fallback works
+ * in plain Node ESM (CLI mode). In tsup-bundled CJS, `import.meta.url` is
+ * polyfilled to undefined, so the extension MUST pass a baseDir derived
+ * from `vscode.ExtensionContext.extensionUri` (e.g. `<extensionUri>/dist`).
  */
-function resolveGotScrapingChain() {
-  const req = createRequire(import.meta.url);
+function makeRequire(baseDir) {
+  if (baseDir) {
+    return createRequire(join(baseDir, "_resolver.js"));
+  }
+  const self = import.meta.url ?? null;
+  if (!self) return null;
+  try {
+    // Resolve against this module's own file, which works in native Node ESM.
+    return createRequire(self);
+  } catch {
+    return null;
+  }
+}
+
+function resolveGotScrapingChain(baseDir) {
+  const req = makeRequire(baseDir);
+  if (!req) throw new Error("no resolver context (pass baseDir)");
   const hg = req.resolve("header-generator");
   const hgReq = createRequire(hg);
   const dp = hgReq.resolve("dot-prop");
@@ -26,10 +38,12 @@ function resolveGotScrapingChain() {
 
 export async function run(opts = {}) {
   const results = [];
+  const baseDir = opts.baseDir;
 
   // patchright — required
   try {
-    const req = createRequire(import.meta.url);
+    const req = makeRequire(baseDir);
+    if (!req) throw new Error("no resolver context");
     const pkgPath = req.resolve("patchright/package.json");
     const { version } = JSON.parse(readFileSync(pkgPath, "utf8"));
     results.push({ category: CATEGORY, name: "patchright", status: "pass", message: `patchright ${version}` });
@@ -44,14 +58,14 @@ export async function run(opts = {}) {
   }
 
   // got-scraping packaging chain — carry-over #5 detector
-  const resolveChain = opts.resolveChainOverride ?? resolveGotScrapingChain;
+  const resolveChain = opts.resolveChainOverride ?? (() => resolveGotScrapingChain(baseDir));
   try {
     const chain = resolveChain();
     results.push({
       category: CATEGORY,
       name: "got-scraping-chain",
       status: "pass",
-      message: "header-generator → dot-prop → is-obj resolves",
+      message: "header-generator -> dot-prop -> is-obj resolves",
       detail: chain,
     });
   } catch (err) {

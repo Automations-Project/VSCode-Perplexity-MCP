@@ -45,6 +45,7 @@ export async function runAll(opts = {}) {
         allProfiles,
         probe,
         ideStatuses: opts.ideStatuses,
+        baseDir: opts.baseDir,
       });
       return [cat, results];
     } catch (err) {

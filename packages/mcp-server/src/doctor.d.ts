@@ -31,6 +31,7 @@ export interface RunAllOpts {
   probe?: boolean;
   allProfiles?: boolean;
   ideStatuses?: Record<string, unknown>;
+  baseDir?: string;
   injected?: Partial<Record<DoctorCategory, DoctorCheck[]>>;
 }
 
