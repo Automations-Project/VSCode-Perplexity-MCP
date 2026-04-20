@@ -4,17 +4,24 @@ async function defaultSearch({ timeoutMs }) {
   const { PerplexityClient } = await import("../client.js");
   const client = new PerplexityClient();
   await client.init();
+  const authenticated = client.authenticated;
   const t0 = Date.now();
   try {
     const result = await client.search({
-      query: "hello",
+      query: "What is the capital of France? Cite at least one web source.",
       modelPreference: "turbo",
       mode: "concise",
       sources: ["web"],
       language: "en-US",
     });
     const elapsedMs = Date.now() - t0;
-    return { sources: result.sources ?? [], elapsedMs };
+    return {
+      answer: result.answer ?? "",
+      sources: result.sources ?? [],
+      elapsedMs,
+      authenticated,
+      threadUrl: result.threadUrl ?? null,
+    };
   } finally {
     await client.shutdown().catch(() => {});
   }
@@ -29,12 +36,23 @@ export async function run(opts = {}) {
   try {
     const result = await search({ timeoutMs });
     if (!result.sources || result.sources.length === 0) {
+      if (result.authenticated && (result.answer?.trim() || result.threadUrl)) {
+        return [{
+          category: CATEGORY,
+          name: "probe-search",
+          status: "warn",
+          message: `probe search completed without citations (latency ${result.elapsedMs}ms)`,
+          hint: "Session appears authenticated, but Perplexity returned no sources for the probe query. Retry once before treating this as an auth failure.",
+        }];
+      }
       return [{
         category: CATEGORY,
         name: "probe-search",
         status: "fail",
         message: `probe returned no sources (latency ${result.elapsedMs}ms)`,
-        hint: "Session may be anonymous — run login, then --probe again.",
+        hint: result.authenticated
+          ? "Perplexity returned no citations for the probe query. Retry once; if it persists, inspect the extension logs."
+          : "Session may be anonymous — run login, then --probe again.",
       }];
     }
     return [{

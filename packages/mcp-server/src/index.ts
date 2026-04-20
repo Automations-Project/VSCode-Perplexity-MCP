@@ -24,7 +24,7 @@ async function main() {
 
   const server = new McpServer({
     name: "perplexity",
-    version: "0.4.1",
+    version: "0.4.6",
   });
 
   const toolConfig = loadToolConfig();

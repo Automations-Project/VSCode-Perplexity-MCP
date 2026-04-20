@@ -31,6 +31,26 @@ describe("checks/native-deps", () => {
     });
     expect(checks.find((c) => c.name === "impit").status).toBe("skip");
   });
+
+  it("detects impit from the runtime package even when only the package exists", async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+    const dir = mkdtempSync(join(tmpdir(), "px-impit-"));
+    process.env.PERPLEXITY_CONFIG_DIR = dir;
+    try {
+      const pkgDir = join(dir, "native-deps", "node_modules", "impit");
+      mkdirSync(pkgDir, { recursive: true });
+      writeFileSync(join(pkgDir, "package.json"), JSON.stringify({ name: "impit", version: "0.13.0" }));
+      const checks = await runNativeDepsCheck({});
+      const impit = checks.find((c) => c.name === "impit");
+      expect(impit.status).toBe("pass");
+      expect(impit.message).toMatch(/0.13.0/);
+    } finally {
+      delete process.env.PERPLEXITY_CONFIG_DIR;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("checks/native-deps — baseDir resolution (Phase 3.1 fix)", () => {

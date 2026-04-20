@@ -16,6 +16,7 @@ import { AuthManager } from "../src/mcp/auth-manager";
 const fakeExtensionUri = { fsPath: "/tmp/ext" } as unknown as import("vscode").Uri;
 
 const AUTO = join(__dirname, "fixtures", "fake-auto-runner.mjs");
+const MANUAL = join(__dirname, "fixtures", "fake-runner.mjs");
 
 describe("AuthManager.login (auto mode)", () => {
   it("transitions unknown -> logging-in -> awaiting_otp -> valid on correct OTP", async () => {
@@ -67,5 +68,26 @@ describe("AuthManager.login (auto mode)", () => {
       })
     ).rejects.toThrow(/already/i);
     (first as Promise<unknown>).catch(() => {});
+  });
+
+  it("reports awaiting_user progress for manual login", async () => {
+    const mgr = new AuthManager({ extensionUri: fakeExtensionUri });
+    const previousRole = process.env.FAKE_ROLE;
+    process.env.FAKE_ROLE = "awaiting_user_ok";
+    try {
+      const phases: string[] = [];
+      const result = await mgr.login({
+        profile: "default",
+        mode: "manual",
+        runnerPath: MANUAL,
+        onProgress: (phase) => phases.push(phase),
+      });
+      expect(result.ok).toBe(true);
+      expect(phases).toContain("awaiting_user");
+      expect(mgr.state.status).toBe("valid");
+    } finally {
+      if (previousRole === undefined) delete process.env.FAKE_ROLE;
+      else process.env.FAKE_ROLE = previousRole;
+    }
   });
 });

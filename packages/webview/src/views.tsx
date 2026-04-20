@@ -35,6 +35,7 @@ import {
   type RulesStatus,
   type WebviewMessage,
 } from "@perplexity-user-mcp/shared";
+import { useDashboardStore } from "./store";
 
 /** Loose send signature — action IDs are injected automatically by App.tsx. */
 export type SendFn = (message: WebviewMessage | Omit<Extract<WebviewMessage, { id: string }>, "id">) => void;
@@ -169,6 +170,8 @@ export function DashboardView({
   send: SendFn;
 }) {
   const snapshot = state.snapshot;
+  const activeProfile = useDashboardStore((store) => store.activeProfile);
+  const authAction = activeProfile ? { type: "auth:login" as const, label: "Login", title: "Use the active profile's saved login mode." } : { type: "profile:add-prompt" as const, label: "Add account", title: "Create a profile and start sign-in." };
   const recentQueries = state.history.slice(0, 3);
   const rateLimitEntries = Object.entries(snapshot.rateLimits?.modes ?? {}) as Array<
     [string, RateLimitResponse["modes"][string]]
@@ -192,9 +195,9 @@ export function DashboardView({
         </div>
         <div className="flex flex-wrap gap-2 mt-2">
           {!snapshot.loggedIn && (
-            <button className="primary-button" onClick={() => send({ type: "auth:login" })}>
+            <button className="primary-button" onClick={() => send(authAction)} title={authAction.title}>
               <Sparkles size={13} />
-              Login
+              {authAction.label}
             </button>
           )}
           <button
@@ -236,9 +239,9 @@ export function DashboardView({
           />
           <ActionCard
             icon={Sparkles}
-            title="Login flow"
-            description="Browser bootstrap for Cloudflare session."
-            onClick={() => send({ type: "auth:login" })}
+            title={activeProfile ? "Login flow" : "Add account"}
+            description={activeProfile ? "Run the active profile's saved login mode." : "Create a profile, choose a mode once, and start sign-in."}
+            onClick={() => send(activeProfile ? { type: "auth:login" } : { type: "profile:add-prompt" })}
           />
         </div>
       </div>

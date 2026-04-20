@@ -95,8 +95,19 @@ export function getProfile(name) {
 }
 
 export function deleteProfile(name) {
+  const wasActive = getActiveName() === name;
   const dir = getProfilePaths(name).dir;
   if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+  if (wasActive) {
+    const remaining = listProfiles();
+    if (remaining.length > 0) {
+      setActive(remaining[0].name);
+    } else {
+      const activePath = getActivePointerPath();
+      if (existsSync(activePath)) rmSync(activePath, { force: true });
+    }
+  }
+  import("./vault.js").then((m) => { m.__resetKeyCache(); }).catch(() => {});
 }
 
 function getActivePointerPath() {

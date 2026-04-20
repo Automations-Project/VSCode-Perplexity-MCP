@@ -1,7 +1,7 @@
 {
   "name": "perplexity-vscode",
   "displayName": "Perplexity Internal MCP",
-  "version": "0.4.1",
+  "version": "0.4.6",
   "publisher": "private",
   "private": true,
   "description": "Native VS Code extension for the Perplexity Internal MCP server with dashboard, auth, and multi-IDE config generation",
@@ -238,7 +238,7 @@
   },
   "scripts": {
     "clean": "rimraf dist media/webview",
-    "build": "npm run clean && npm run build:extension && npm run build:mcp && npm run build:webview && node ./scripts/emit-version.mjs && node ./scripts/prepare-webview.mjs",
+    "build": "npm run clean && npm run build -w @perplexity-user-mcp/shared && npm run build -w perplexity-user-mcp && npm run build:extension && npm run build:mcp && npm run build:webview && node ./scripts/emit-version.mjs && node ./scripts/prepare-webview.mjs",
     "build:webview": "cd ../webview && npx vite build",
     "build:extension": "tsup src/extension.ts --format cjs --platform node --target node20 --outDir dist --external vscode --external patchright --external patchright-core --external got-scraping --external got --external tough-cookie --external header-generator --external got-scraping-v4 --external header-generator-v3 --external fingerprint-generator --external fingerprint-injector",
     "build:mcp": "tsup ../mcp-server/src/index.ts ../mcp-server/src/manual-login-runner.js ../mcp-server/src/login-runner.js ../mcp-server/src/health-check.js --format esm --platform node --target node20 --outDir dist/mcp --external patchright --external patchright-core --external got-scraping --external got --external tough-cookie --external header-generator --external fingerprint-generator --external keytar && node -e \"require('fs').renameSync('dist/mcp/index.mjs','dist/mcp/server.mjs')\" && node -e \"require('fs').copyFileSync('../mcp-server/package.json','dist/mcp/package.json')\"",

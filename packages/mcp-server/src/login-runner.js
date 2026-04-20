@@ -1,22 +1,34 @@
 // Auto-OTP login runner. Parent provides email via PERPLEXITY_EMAIL; we
-// POST it, parent is prompted via IPC for the OTP code, we submit, and on
-// success we complete the same vault + meta + models-cache + .reinit +
-// exit-0 sequence as the manual runner.
+// drive the real Perplexity email+OTP flow (NextAuth on the live site,
+// legacy /login/* on the local mock), prompt for the six-digit code via
+// IPC, and persist the resulting session into the profile vault.
 
 import { writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { chromium } from "patchright";
 import { Vault } from "./vault.js";
+import { resolveBrowserExecutable } from "./config.js";
 import { getProfilePaths, getActiveName, recordLoginSuccess } from "./profiles.js";
 import { redact } from "./redact.js";
+import { minimizePageWindow } from "./browser-window.js";
+import {
+  buildRuntimeEndpoints,
+  collectSessionMetadata,
+  pageRequest,
+} from "./session-metadata.js";
 
 const ORIGIN = process.env.PERPLEXITY_ORIGIN || "https://www.perplexity.ai";
 const LOGIN_PATH = process.env.PERPLEXITY_LOGIN_PATH || "/account";
 const EMAIL = process.env.PERPLEXITY_EMAIL;
 const OTP_TIMEOUT_MS = Number(process.env.PERPLEXITY_OTP_TIMEOUT_MS ?? 300_000);
+const CF_TIMEOUT_MS = Number(process.env.PERPLEXITY_CF_TIMEOUT_MS ?? 20_000);
 const MAX_RETRIES = 2;
 
 function resolveProfile() {
   return process.env.PERPLEXITY_PROFILE || getActiveName() || "default";
+}
+
+function isLocalOrigin(origin) {
+  return /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?(?:\/|$)/i.test(origin);
 }
 
 function ipc(msg) { if (process.send) process.send(msg); }
@@ -46,50 +58,60 @@ async function main() {
   }
 
   const PROFILE = resolveProfile();
+  const localOrigin = isLocalOrigin(ORIGIN);
+  let executablePath;
+  if (!localOrigin) {
+    try {
+      ({ path: executablePath } = await resolveBrowserExecutable());
+    } catch (err) {
+      emit({ ok: false, reason: "chrome_missing", error: redact(String(err?.message ?? err)) });
+      process.exit(4);
+    }
+  }
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: localOrigin,
+    ...(executablePath ? { executablePath } : {}),
+    args: localOrigin ? [] : ["--start-minimized"],
+  });
   const ctx = await browser.newContext({ ignoreHTTPSErrors: true });
   const page = await ctx.newPage();
 
   try {
     await page.goto(`${ORIGIN}${LOGIN_PATH}`, { waitUntil: "domcontentloaded", timeout: 30_000 });
   } catch {}
+  if (!localOrigin) await minimizePageWindow(page);
 
-  // Submit email. Mock returns 302 -> /sso for @sso.test emails.
-  // Browser fetch() with redirect:"manual" yields an opaqueredirect response
-  // (type === "opaqueredirect", status === 0) and hides the Location header,
-  // so we follow the redirect and inspect the final URL instead.
-  const emailResp = await page.evaluate(async ({ origin, email }) => {
-    const r = await fetch(`${origin}/login/email`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email }) });
-    return { status: r.status, url: r.url, redirected: r.redirected, contentType: r.headers.get("content-type") ?? "" };
-  }, { origin: ORIGIN, email: EMAIL });
+  const ready = await waitForLoginReady(page);
+  if (!ready) {
+    const title = await page.title().catch(() => "");
+    await browser.close().catch(() => {});
+    emit({ ok: false, reason: /just a moment/i.test(title) ? "cf_blocked" : "auto_unsupported" });
+    process.exit(/just a moment/i.test(title) ? 3 : 2);
+  }
 
-  if (emailResp.redirected && (emailResp.url || "").includes("/sso")) {
+  const liveAttempt = await startLiveEmailFlow(page);
+  let authFlow = liveAttempt;
+  if (liveAttempt.kind === "unsupported") {
+    authFlow = await startLegacyMockFlow(page);
+  }
+  if (!localOrigin) await minimizePageWindow(page);
+
+  if (authFlow.kind === "sso_required") {
     await browser.close().catch(() => {});
     emit({ ok: false, reason: "sso_required" });
     process.exit(2);
   }
 
-  // The mock returns exactly 200 application/json. Any 404/405, 5xx, or
-  // non-JSON response means we're talking to a site that doesn't expose
-  // `/login/email` — i.e., the real Perplexity (which uses NextAuth). Signal
-  // that auto mode isn't supported here so the caller can transparently retry
-  // with manual mode.
-  const looksUnsupported =
-    emailResp.status === 404 ||
-    emailResp.status === 405 ||
-    emailResp.status >= 500 ||
-    !emailResp.contentType.includes("json");
-
-  if (looksUnsupported) {
+  if (authFlow.kind === "unsupported") {
     await browser.close().catch(() => {});
-    emit({ ok: false, reason: "auto_unsupported", detail: { status: emailResp.status, contentType: emailResp.contentType } });
+    emit({ ok: false, reason: "auto_unsupported", detail: authFlow.detail });
     process.exit(2);
   }
 
-  if (emailResp.status >= 400) {
+  if (authFlow.kind === "email_rejected") {
     await browser.close().catch(() => {});
-    emit({ ok: false, reason: "email_rejected", detail: emailResp.status });
+    emit({ ok: false, reason: "email_rejected", detail: authFlow.detail });
     process.exit(2);
   }
 
@@ -104,41 +126,33 @@ async function main() {
       process.exit(2);
     }
 
-    const submitResp = await page.evaluate(async ({ origin, email, otp }) => {
-      const r = await fetch(`${origin}/login/otp`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, otp }) });
-      return r.status;
-    }, { origin: ORIGIN, email: EMAIL, otp });
-
-    if (submitResp === 200) {
+    const submitResp = await submitOtp(page, authFlow, otp);
+    if (submitResp.ok) {
       const allCookies = await ctx.cookies();
-      const sessionData = await page.evaluate(async (u) => {
-        const r = await fetch(u, { credentials: "include" });
-        return r.ok ? r.json() : null;
-      }, `${ORIGIN}/api/auth/session`);
+      const metadata = await collectSessionMetadata(page, ORIGIN, {
+        sessionData: submitResp.sessionData,
+        sessionTimeoutMs: 10_000,
+      });
 
       const vault = new Vault();
       await vault.set(PROFILE, "cookies", JSON.stringify(allCookies));
-      if (sessionData?.user?.email) await vault.set(PROFILE, "email", sessionData.user.email);
-      if (sessionData?.user?.id) await vault.set(PROFILE, "userId", sessionData.user.id);
-
-      const [models, asi, rate, exp] = await Promise.all([
-        pageFetch(page, `${ORIGIN}/rest/models-config`),
-        pageFetch(page, `${ORIGIN}/rest/asi-access`),
-        pageFetch(page, `${ORIGIN}/rest/rate-limit`),
-        pageFetch(page, `${ORIGIN}/rest/user/experiments`),
-      ]);
-      const tier = exp?.server_is_max ? "Max" : exp?.server_is_pro ? "Pro"
-                 : exp?.server_is_enterprise ? "Enterprise" : "Authenticated";
+      if (metadata.sessionData?.user?.email) await vault.set(PROFILE, "email", metadata.sessionData.user.email);
+      if (metadata.sessionData?.user?.id) await vault.set(PROFILE, "userId", metadata.sessionData.user.id);
 
       const paths = getProfilePaths(PROFILE);
       if (!existsSync(paths.dir)) mkdirSync(paths.dir, { recursive: true });
-      writeFileSync(paths.modelsCache, JSON.stringify({ modelsConfig: models, rateLimits: rate, isPro: !!exp?.server_is_pro, isMax: !!exp?.server_is_max, isEnterprise: !!exp?.server_is_enterprise, canUseComputer: !!asi?.can_use_computer }, null, 2));
-      recordLoginSuccess(PROFILE, { tier, loginMode: "auto", lastLogin: new Date().toISOString() });
+      writeFileSync(paths.modelsCache, JSON.stringify(metadata.cache, null, 2));
+      recordLoginSuccess(PROFILE, { tier: metadata.tier, loginMode: "auto", lastLogin: new Date().toISOString() });
       writeFileSync(paths.reinit, String(Date.now()));
 
       await browser.close().catch(() => {});
-      emit({ ok: true, tier, modelCount: Object.keys(models?.models ?? {}).length });
+      emit({ ok: true, tier: metadata.tier, modelCount: Object.keys(metadata.models?.models ?? {}).length });
       process.exit(0);
+    }
+
+    if (authFlow.kind === "live") {
+      await page.goto(authFlow.verifyUrl, { waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => {});
+      if (!localOrigin) await minimizePageWindow(page);
     }
 
     if (attempt === MAX_RETRIES) {
@@ -149,11 +163,141 @@ async function main() {
   }
 }
 
-async function pageFetch(page, url) {
-  return page.evaluate(async (u) => {
-    const r = await fetch(u, { credentials: "include" });
-    return r.ok ? r.json() : null;
-  }, url);
+async function waitForLoginReady(page) {
+  const started = Date.now();
+  while (Date.now() - started < CF_TIMEOUT_MS) {
+    if (await page.locator('input[type="email"]').count().catch(() => 0)) {
+      return true;
+    }
+    const title = await page.title().catch(() => "");
+    if (title && !/just a moment/i.test(title)) {
+      const body = await page.locator("body").innerText().catch(() => "");
+      if (/continue with email/i.test(body) || /single sign-on/i.test(body) || /continue/i.test(body)) {
+        return true;
+      }
+    }
+    await page.waitForTimeout(500);
+  }
+  return false;
+}
+
+async function startLiveEmailFlow(page) {
+  const endpoints = buildRuntimeEndpoints(ORIGIN);
+  const csrf = await pageRequest(page, endpoints.csrf);
+  if (!(csrf.ok && csrf.contentType.includes("json") && csrf.json?.csrfToken)) {
+    return {
+      kind: "unsupported",
+      detail: { step: "csrf", status: csrf.status, contentType: csrf.contentType, error: csrf.error ?? undefined },
+    };
+  }
+
+  const sso = await pageRequest(page, endpoints.ssoDetails, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: EMAIL }),
+  });
+  if (sso.ok && sso.json?.organization) {
+    return { kind: "sso_required" };
+  }
+
+  const redirectUrl = `${ORIGIN}/account?login-source=settings`;
+  const signIn = await pageRequest(page, endpoints.signInEmail, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      email: EMAIL,
+      useNumericOtp: "true",
+      csrfToken: csrf.json.csrfToken,
+      callbackUrl: `${redirectUrl}#locale=en-US`,
+      json: "true",
+    }),
+  });
+
+  if (!(signIn.ok && signIn.contentType.includes("json") && signIn.json?.url)) {
+    return {
+      kind: signIn.status >= 400 && signIn.status < 500 ? "email_rejected" : "unsupported",
+      detail: { step: "signin_email", status: signIn.status, contentType: signIn.contentType, error: signIn.error ?? undefined },
+    };
+  }
+
+  const verifyUrl = new URL(signIn.json.url, ORIGIN);
+  verifyUrl.searchParams.set("email", EMAIL);
+  verifyUrl.searchParams.set("redirectUrl", redirectUrl);
+  await page.goto(verifyUrl.toString(), { waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => {});
+
+  return {
+    kind: "live",
+    redirectUrl,
+    verifyUrl: verifyUrl.toString(),
+  };
+}
+
+async function startLegacyMockFlow(page) {
+  const emailResp = await pageRequest(page, `${ORIGIN}/login/email`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: EMAIL }),
+  });
+
+  if (emailResp.redirected && (emailResp.url || "").includes("/sso")) {
+    return { kind: "sso_required" };
+  }
+
+  const looksUnsupported =
+    emailResp.status === 404 ||
+    emailResp.status === 405 ||
+    emailResp.status >= 500 ||
+    !emailResp.contentType.includes("json");
+
+  if (looksUnsupported) {
+    return {
+      kind: "unsupported",
+      detail: { step: "legacy_email", status: emailResp.status, contentType: emailResp.contentType, error: emailResp.error ?? undefined },
+    };
+  }
+
+  if (!emailResp.ok) {
+    return { kind: "email_rejected", detail: emailResp.status };
+  }
+
+  return { kind: "legacy" };
+}
+
+async function submitOtp(page, flow, otp) {
+  if (flow.kind === "legacy") {
+    const submitResp = await pageRequest(page, `${ORIGIN}/login/otp`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: EMAIL, otp }),
+    });
+    if (submitResp.status !== 200) {
+      return { ok: false };
+    }
+    const metadata = await collectSessionMetadata(page, ORIGIN, { sessionTimeoutMs: 2_000 });
+    return { ok: !!metadata.sessionData?.user?.id, sessionData: metadata.sessionData };
+  }
+
+  const endpoints = buildRuntimeEndpoints(ORIGIN);
+  const redirectResp = await pageRequest(page, endpoints.otpRedirectLink, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      email: EMAIL,
+      otp,
+      redirectUrl: flow.redirectUrl,
+      emailLoginMethod: "web-otp",
+      loginSource: null,
+    }),
+  });
+
+  if (!(redirectResp.ok && redirectResp.contentType.includes("json") && redirectResp.json?.redirect)) {
+    return { ok: false };
+  }
+
+  const callbackUrl = new URL(redirectResp.json.redirect, ORIGIN).toString();
+  await page.goto(callbackUrl, { waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => {});
+  const metadata = await collectSessionMetadata(page, ORIGIN, { sessionTimeoutMs: 5_000 });
+  return { ok: !!metadata.sessionData?.user?.id, sessionData: metadata.sessionData };
 }
 
 main().catch((err) => {

@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { MCP_PROVIDER_ID, MCP_SERVER_LABEL, type IdeTarget } from "@perplexity-user-mcp/shared";
-import { getActiveName, listProfiles, setActive, createProfile } from "perplexity-user-mcp/profiles";
+import { getActiveName, getProfile, listProfiles, setActive, createProfile } from "perplexity-user-mcp/profiles";
 import { configureTargets, getIdeStatuses } from "./auto-config/index.js";
 import { hasStoredLogin } from "./auth/session.js";
 import { getSettingsSnapshot } from "./settings.js";
@@ -158,6 +158,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 async function activateInner(context: vscode.ExtensionContext): Promise<void> {
   const settings = getSettingsSnapshot();
   const debugCollector = new DebugCollector(settings.debugBufferSize);
+  const MANUAL_LOGIN_NOTICE = "Manual login opened in Chrome. Finish sign-in there; if it is behind other windows, bring Chrome to the front.";
 
   // Wire collector events to a dedicated debug output channel
   const debugChannel = vscode.window.createOutputChannel("Perplexity Debug Trace");
@@ -175,10 +176,100 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
   authManager.onDidChange(async (s) => { await dashboard.postAuthState(s); });
   const serverDefinitionsChanged = new vscode.EventEmitter<void>();
   context.subscriptions.push(serverDefinitionsChanged);
+  dashboard.setOnMcpServerDefinitionsChanged(() => { serverDefinitionsChanged.fire(); });
 
   const bundledServerPath = getBundledServerPath(context);
   const { launcherPath } = ensureLauncher(bundledServerPath);
   log("Stable launcher: " + launcherPath);
+
+  async function promptEmailForAutoLogin(profile: string): Promise<string | undefined> {
+    const email = await vscode.window.showInputBox({
+      prompt: `Email for '${profile}' auto login`,
+      placeHolder: "you@example.com",
+      ignoreFocusOut: true,
+    });
+    return email?.trim() ? email.trim() : undefined;
+  }
+
+  function normalizeLoginMode(value: string | undefined): "auto" | "manual" {
+    return value === "auto" ? "auto" : "manual";
+  }
+
+  async function runLoginForProfile(profile: string, mode: "auto" | "manual", email?: string): Promise<boolean> {
+    if (mode === "auto" && !email) {
+      await dashboard.postNotice("warning", `Auto login for '${profile}' needs an email address.`);
+      return false;
+    }
+
+    let manualNoticeShown = false;
+    const onProgress = (phase: string) => {
+      log(`[login:${profile}] ${phase}`);
+      if (phase !== "awaiting_user" || mode !== "manual" || manualNoticeShown) return;
+      manualNoticeShown = true;
+      void vscode.window.showInformationMessage(MANUAL_LOGIN_NOTICE);
+      void dashboard.postNotice("info", MANUAL_LOGIN_NOTICE);
+    };
+
+    try {
+      const result = await authManager.login({
+        profile,
+        mode,
+        ...(mode === "auto" && email ? { email } : {}),
+        onOtpPrompt: async () => (await vscode.window.showInputBox({ prompt: "Perplexity OTP", ignoreFocusOut: true })) ?? null,
+        onProgress,
+      });
+
+      if (!result.ok && result.reason === "auto_unsupported" && mode === "auto") {
+        log(`[login:${profile}] auto_unsupported — falling back to manual`);
+        await dashboard.postNotice("info", "Auto login could not continue with the current site response — opening manual login instead.");
+        return runLoginForProfile(profile, "manual");
+      }
+
+      if (!result.ok) {
+        log(`[login:${profile}] Failed: ${result.reason ?? "unknown"}`);
+        await dashboard.postNotice("error", `Login failed for '${profile}': ${result.reason ?? "unknown"}`);
+        return false;
+      }
+
+      serverDefinitionsChanged.fire();
+      await dashboard.refresh();
+      await dashboard.postNotice("info", `Perplexity login completed for '${profile}'. MCP server definitions refreshed.`);
+      void dashboard.refreshModels();
+      return true;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`[login:${profile}] Failed: ${msg}`);
+      await dashboard.postNotice("error", `Login failed for '${profile}': ${msg}`);
+      return false;
+    }
+  }
+
+  async function promptNewProfileConfig(): Promise<{ name: string; mode: "auto" | "manual"; email?: string } | null> {
+    const name = await vscode.window.showInputBox({
+      prompt: "Profile name (a-z, 0-9, _, -; max 32)",
+      placeHolder: "e.g. work, personal",
+      ignoreFocusOut: true,
+      validateInput: (value) => /^[a-z0-9_-]{1,32}$/.test(value) ? null : "Lowercase letters, digits, _ or -; 1–32 chars.",
+    });
+    if (!name) return null;
+
+    const modePick = await vscode.window.showQuickPick(
+      [
+        { label: "Manual (recommended)", detail: "Opens Chrome so you can sign in directly on perplexity.ai.", value: "manual" as const },
+        { label: "Auto (email + OTP) — experimental", detail: "Prompts for your email and OTP, then falls back to manual if the site refuses auto mode.", value: "auto" as const },
+      ],
+      { placeHolder: "Login mode for this profile", ignoreFocusOut: true },
+    );
+    if (!modePick) return null;
+
+    let email: string | undefined;
+    if (modePick.value === "auto") {
+      email = await promptEmailForAutoLogin(name);
+      if (!email) return null;
+    }
+
+    return { name, mode: modePick.value, ...(email ? { email } : {}) };
+  }
 
   log("Registering webview provider...");
 
@@ -223,65 +314,20 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("Perplexity.login", async () => {
-      const profile = getActiveName() ?? "default";
+      const profile = getActiveName();
+      const meta = profile ? getProfile(profile) : null;
+      if (!profile || !meta) {
+        return (await vscode.commands.executeCommand("Perplexity.addAccount")) === true;
+      }
 
-      const modePick = await vscode.window.showQuickPick(
-        [
-          { label: "Manual (recommended)", detail: "Opens a browser pointed at perplexity.ai/account — you sign in however you want (email+password, Google, Apple, etc.). Works with SSO.", value: "manual" as const },
-          { label: "Auto (email + OTP) — experimental", detail: "Enter your email; we drive a headless browser and prompt for the OTP. Only email+OTP accounts (no SSO). Real-Perplexity support is incomplete — fall back to Manual if it fails.", value: "auto" as const },
-        ],
-        { placeHolder: "Login mode", ignoreFocusOut: true },
-      );
-      if (!modePick) return; // user cancelled
-
+      const loginMode = normalizeLoginMode(meta.loginMode);
       let email: string | undefined;
-      if (modePick.value === "auto") {
-        email = await vscode.window.showInputBox({
-          prompt: "Email for auto login",
-          placeHolder: "you@example.com",
-          ignoreFocusOut: true,
-        });
-        if (!email) return;
+      if (loginMode === "auto") {
+        email = await promptEmailForAutoLogin(profile);
+        if (!email) return false;
       }
 
-      try {
-        const result = await authManager.login({
-          profile,
-          mode: modePick.value,
-          email,
-          onOtpPrompt: async () => (await vscode.window.showInputBox({ prompt: "Perplexity OTP", ignoreFocusOut: true })) ?? null,
-          onProgress: (phase) => log(`[login] ${phase}`),
-        });
-
-        if (!result.ok && result.reason === "auto_unsupported" && modePick.value === "auto") {
-          log(`[login] auto_unsupported — falling back to manual`);
-          await dashboard.postNotice("info", "Auto mode isn't supported on the real Perplexity site yet — opening manual login instead.");
-          const fallback = await authManager.login({
-            profile,
-            mode: "manual",
-            onProgress: (phase) => log(`[login] ${phase}`),
-          });
-          if (!fallback.ok) {
-            log(`[login] Manual fallback failed: ${fallback.reason ?? "unknown"}`);
-            await dashboard.postNotice("error", `Manual fallback login failed: ${fallback.reason ?? "unknown"}`);
-            return;
-          }
-        } else if (!result.ok) {
-          log(`[login] Failed: ${result.reason ?? "unknown"}`);
-          await dashboard.postNotice("error", `Login failed: ${result.reason ?? "unknown"}`);
-          return;
-        }
-
-        serverDefinitionsChanged.fire();
-        await dashboard.refresh();
-        await dashboard.postNotice("info", "Perplexity login completed. MCP server definitions refreshed.");
-        // Kick a live refresh now that we have fresh cookies.
-        void dashboard.refreshModels();
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        log(`[login] Failed: ${msg}`);
-        await dashboard.postNotice("error", `Login failed: ${msg}`);
-      }
+      return runLoginForProfile(profile, loginMode, email);
     })
   );
 
@@ -308,12 +354,22 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("Perplexity.addAccount", async () => {
-      const name = await vscode.window.showInputBox({ prompt: "Profile name (a-z, 0-9, _, -; max 32)", validateInput: (v) => /^[a-z0-9_-]{1,32}$/.test(v) ? null : "Invalid name" });
-      if (!name) return;
-      const mode = (await vscode.window.showQuickPick(["auto", "manual"], { placeHolder: "Login mode" })) as "auto" | "manual" | undefined;
-      if (!mode) return;
-      createProfile(name, { loginMode: mode });
-      await dashboard.refresh();
+      const config = await promptNewProfileConfig();
+      if (!config) return false;
+
+      try {
+        createProfile(config.name, { loginMode: config.mode });
+        setActive(config.name);
+        serverDefinitionsChanged.fire();
+        await dashboard.refresh();
+        await dashboard.postNotice("info", `Created profile '${config.name}'. Starting login…`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await dashboard.postNotice("error", `Could not create profile: ${msg}`);
+        return false;
+      }
+
+      return runLoginForProfile(config.name, config.mode, config.email);
     })
   );
 

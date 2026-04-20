@@ -49,11 +49,12 @@ describe("login-runner (integration)", () => {
       PERPLEXITY_PROFILE: "default",
       PERPLEXITY_EMAIL: "auto@mock.test",
       PERPLEXITY_ORIGIN: mock.url,
-      PERPLEXITY_LOGIN_PATH: "/login",
+      PERPLEXITY_LOGIN_PATH: "/account",
     }, ["123456"]);
     expect(msgs.some((m) => m?.phase === "awaiting_otp")).toBe(true);
     expect(code).toBe(0);
     expect(result.ok).toBe(true);
+    expect(result.tier).toBe("Pro");
     const vault = new Vault();
     expect(await vault.get("default", "email")).toBe("auto@mock.test");
   }, 30_000);
@@ -65,7 +66,7 @@ describe("login-runner (integration)", () => {
       PERPLEXITY_PROFILE: "default",
       PERPLEXITY_EMAIL: "auto@mock.test",
       PERPLEXITY_ORIGIN: mock.url,
-      PERPLEXITY_LOGIN_PATH: "/login",
+      PERPLEXITY_LOGIN_PATH: "/account",
     }, ["000000", "000000", "000000"]);
     const otpPrompts = msgs.filter((m) => m?.phase === "awaiting_otp").length;
     expect(otpPrompts).toBeGreaterThanOrEqual(2);
@@ -80,7 +81,7 @@ describe("login-runner (integration)", () => {
       PERPLEXITY_PROFILE: "default",
       PERPLEXITY_EMAIL: "someone@sso.test",
       PERPLEXITY_ORIGIN: mock.url,
-      PERPLEXITY_LOGIN_PATH: "/login",
+      PERPLEXITY_LOGIN_PATH: "/account",
     });
     expect(code).toBe(2);
     expect(result.reason).toBe("sso_required");
@@ -93,7 +94,7 @@ describe("login-runner (integration)", () => {
       PERPLEXITY_PROFILE: "default",
       PERPLEXITY_EMAIL: "auto@mock.test",
       PERPLEXITY_ORIGIN: mock.url,
-      PERPLEXITY_LOGIN_PATH: "/login",
+      PERPLEXITY_LOGIN_PATH: "/account",
       PERPLEXITY_OTP_TIMEOUT_MS: "500",
     });
     expect(code).toBe(2);
@@ -109,7 +110,7 @@ describe("login-runner (integration)", () => {
         PERPLEXITY_PROFILE: "default",
         PERPLEXITY_EMAIL: "auto@mock.test",
         PERPLEXITY_ORIGIN: unsupportedMock.url,
-        PERPLEXITY_LOGIN_PATH: "/login",
+        PERPLEXITY_LOGIN_PATH: "/account",
       });
       expect(code).toBe(2);
       expect(result.reason).toBe("auto_unsupported");

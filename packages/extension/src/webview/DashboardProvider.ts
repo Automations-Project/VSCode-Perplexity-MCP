@@ -38,6 +38,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
   private debugCollector?: DebugCollector;
   private authManager?: AuthManager;
   private otpResolvers = new Map<string, (s: string | null) => void>();
+  private onMcpServerDefinitionsChanged?: () => void;
   // Cache the most-recent doctor report so "Report issue" can reuse it instead
   // of re-running all 10 checks. Cleared when the user clicks Run again.
   private lastDoctorReport: unknown = null;
@@ -50,6 +51,10 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
 
   setAuthManager(m: AuthManager): void {
     this.authManager = m;
+  }
+
+  setOnMcpServerDefinitionsChanged(fn: () => void): void {
+    this.onMcpServerDefinitionsChanged = fn;
   }
 
   async postAuthState(s: AuthState): Promise<void> {
@@ -116,8 +121,8 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
           case "auth:login":
             debug("Handling auth:login");
             try {
-              await vscode.commands.executeCommand("Perplexity.login");
-              await this.postActionResult(message.id, true);
+              const ok = await vscode.commands.executeCommand<boolean>("Perplexity.login");
+              await this.postActionResult(message.id, ok !== false, ok === false ? "login_not_completed" : undefined);
             } catch (err) {
               await this.postActionResult(message.id, false, String(err));
             }
@@ -212,25 +217,36 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             this.otpResolvers.get(profile)?.(null);
             this.otpResolvers.delete(profile);
             try {
-              const result = await this.authManager.login({
-                profile, mode, email,
+              const runLogin = (loginMode: "auto" | "manual") => this.authManager!.login({
+                profile,
+                mode: loginMode,
+                ...(loginMode === "auto" ? { email } : {}),
                 onOtpPrompt: () => new Promise<string | null>((resolve) => {
                   void this.view?.webview.postMessage({ type: "auth:otp-prompt", payload: { profile, attempt: 0, email: email ?? "" } });
                   this.otpResolvers.set(profile, resolve);
                 }),
+                onProgress: (phase) => {
+                  if (phase !== "awaiting_user" || loginMode !== "manual") return;
+                  const message = "Manual login opened in Chrome. Finish sign-in there; if it is behind other windows, bring Chrome to the front.";
+                  void vscode.window.showInformationMessage(message);
+                  void this.postNotice("info", message);
+                },
               });
+              const result = await runLogin(mode);
 
               if (!result.ok && result.reason === "auto_unsupported" && mode === "auto") {
-                await this.postNotice("info", "Auto mode isn't supported on the real Perplexity site yet — opening manual login instead.");
-                const fallback = await this.authManager.login({ profile, mode: "manual" });
+                await this.postNotice("info", "Auto login could not continue with the current site response — opening manual login instead.");
+                const fallback = await runLogin("manual");
                 if (!fallback.ok) {
                   await this.postActionResult(message.id, false, fallback.reason ?? "manual-fallback-failed");
                 } else {
+                  this.onMcpServerDefinitionsChanged?.();
                   await this.postActionResult(message.id, true);
                 }
               } else if (!result.ok) {
                 await this.postActionResult(message.id, false, result.reason ?? "login_failed");
               } else {
+                this.onMcpServerDefinitionsChanged?.();
                 await this.postActionResult(message.id, true);
               }
             } catch (err) {
@@ -254,6 +270,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
           case "auth:logout": {
             if (!this.authManager) break;
             await this.authManager.logout(message.payload);
+            this.onMcpServerDefinitionsChanged?.();
             await this.postActionResult(message.id, true);
             await this.refresh();
             break;
@@ -262,50 +279,54 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             break;
           case "profile:switch": {
             setActive(message.payload.name);
+            this.onMcpServerDefinitionsChanged?.();
             await this.postActionResult(message.id, true);
             await this.postProfileList();
             await this.refresh();
             break;
           }
           case "profile:add-prompt": {
-            const name = await vscode.window.showInputBox({
-              prompt: "New profile name",
-              placeHolder: "e.g. work, personal",
-              ignoreFocusOut: true,
-              validateInput: (v) => /^[a-z0-9_-]{1,32}$/.test(v) ? null : "Lowercase letters, digits, _ or -; 1–32 chars.",
-            });
-            if (!name) break;
-            const modePick = await vscode.window.showQuickPick(
-              [
-                { label: "Manual (recommended)", value: "manual" as const },
-                { label: "Auto (email + OTP) — experimental", value: "auto" as const },
-              ],
-              { placeHolder: "Login mode for this profile", ignoreFocusOut: true },
-            );
-            if (!modePick) break;
             try {
-              createProfile(name, { loginMode: modePick.value });
-              await this.postNotice("info", `Created profile '${name}'.`);
+              await vscode.commands.executeCommand("Perplexity.addAccount");
             } catch (err) {
-              await this.postNotice("error", `Could not create profile: ${(err as Error).message}`);
+              await this.postNotice("error", `Could not add profile: ${(err as Error).message}`);
             }
-            await this.postProfileList();
             break;
           }
           case "profile:add": {
             try {
               createProfile(message.payload.name, { loginMode: message.payload.loginMode });
+              setActive(message.payload.name);
+              this.onMcpServerDefinitionsChanged?.();
               await this.postActionResult(message.id, true);
             } catch (err) {
               await this.postActionResult(message.id, false, (err as Error).message);
             }
             await this.postProfileList();
+            await this.refresh();
             break;
           }
           case "profile:delete": {
-            deleteProfile(message.payload.name);
+            const name = message.payload.name;
+            const confirm = await vscode.window.showWarningMessage(
+              `Delete profile '${name}' and remove its stored cookies, browser data, cache, history, attachments, and local profile files?`,
+              {
+                modal: true,
+                detail: "This permanently removes the local Perplexity MCP profile from this machine.",
+              },
+              "Delete profile",
+            );
+            if (confirm !== "Delete profile") {
+              await this.postActionResult(message.id, false, "cancelled");
+              break;
+            }
+            const wasActive = getActiveName() === name;
+            deleteProfile(name);
+            if (wasActive) this.onMcpServerDefinitionsChanged?.();
+            await this.postNotice("info", `Deleted profile '${name}'.`);
             await this.postActionResult(message.id, true);
             await this.postProfileList();
+            await this.refresh();
             break;
           }
           case "doctor:run":
@@ -362,7 +383,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
                 extVersion: this.context.extension.packageJSON.version as string,
                 nodeVersion: process.version,
                 os: `${process.platform} ${process.arch}`,
-                activeTier: null,
+                activeTier: getAccountSnapshot().tier ?? null,
               });
               const choice = await renderPreview({
                 markdown: diag.markdown,

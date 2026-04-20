@@ -5,8 +5,10 @@
 import { writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { chromium } from "patchright";
 import { Vault } from "./vault.js";
+import { resolveBrowserExecutable } from "./config.js";
 import { getProfilePaths, getActiveName, recordLoginSuccess } from "./profiles.js";
 import { redact } from "./redact.js";
+import { collectSessionMetadata } from "./session-metadata.js";
 
 const ORIGIN = process.env.PERPLEXITY_ORIGIN || "https://www.perplexity.ai";
 // Perplexity's login flow lives at /account (the `/login` path doesn't exist
@@ -28,8 +30,20 @@ function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\n"); }
 
 async function main() {
   const PROFILE = resolveProfile();
+  let executablePath;
+  if (!isTest) {
+    try {
+      ({ path: executablePath } = await resolveBrowserExecutable());
+    } catch (err) {
+      emit({ ok: false, reason: "chrome_missing", error: redact(String(err?.message ?? err)) });
+      process.exit(4);
+    }
+  }
 
-  const browser = await chromium.launch({ headless: isTest });  // isTest = headless in CI; humans see headed.
+  const browser = await chromium.launch({
+    headless: isTest,
+    ...(executablePath ? { executablePath } : {}),
+  });  // isTest = headless in CI; humans see headed.
   const ctx = await browser.newContext({ ignoreHTTPSErrors: true });
   const page = await ctx.newPage();
 
@@ -42,6 +56,7 @@ async function main() {
   // in-page fetch. Path is env-var-configurable for the mock server tests.
   try { await page.goto(`${ORIGIN}${LOGIN_PATH}`, { waitUntil: "domcontentloaded", timeout: 30_000 }); }
   catch { /* continue; next phase checks CF */ }
+  if (!isTest) await page.bringToFront().catch(() => {});
 
   // CF resolve check
   const cfStart = Date.now();
@@ -62,6 +77,7 @@ async function main() {
   }
 
   ipc({ phase: "awaiting_user" });
+  if (!isTest) await page.bringToFront().catch(() => {});
 
   // Test hook: auto-drive the login so CI doesn't need a human.
   if (process.env.PERPLEXITY_TEST_AUTO_LOGIN_EMAIL) {
@@ -96,43 +112,24 @@ async function main() {
   }
 
   const allCookies = await ctx.cookies();
-  const sessionData = await page.evaluate(async (u) => {
-    const r = await fetch(u, { credentials: "include" });
-    return r.ok ? r.json() : null;
-  }, `${ORIGIN}/api/auth/session`);
+  const metadata = await collectSessionMetadata(page, ORIGIN, { sessionTimeoutMs: 10_000 });
 
   const vault = new Vault();
   await vault.set(PROFILE, "cookies", JSON.stringify(allCookies));
-  if (sessionData?.user?.email) await vault.set(PROFILE, "email", sessionData.user.email);
-  if (sessionData?.user?.id) await vault.set(PROFILE, "userId", sessionData.user.id);
-
-  const [models, asi, rate, exp] = await Promise.all([
-    pageFetch(page, `${ORIGIN}/rest/models-config`),
-    pageFetch(page, `${ORIGIN}/rest/asi-access`),
-    pageFetch(page, `${ORIGIN}/rest/rate-limit`),
-    pageFetch(page, `${ORIGIN}/rest/user/experiments`),
-  ]);
-  const tier = exp?.server_is_max ? "Max" : exp?.server_is_pro ? "Pro"
-             : exp?.server_is_enterprise ? "Enterprise" : "Authenticated";
+  if (metadata.sessionData?.user?.email) await vault.set(PROFILE, "email", metadata.sessionData.user.email);
+  if (metadata.sessionData?.user?.id) await vault.set(PROFILE, "userId", metadata.sessionData.user.id);
 
   const paths = getProfilePaths(PROFILE);
   if (!existsSync(paths.dir)) mkdirSync(paths.dir, { recursive: true });
-  writeFileSync(paths.modelsCache, JSON.stringify({ modelsConfig: models, rateLimits: rate, isPro: !!exp?.server_is_pro, isMax: !!exp?.server_is_max, isEnterprise: !!exp?.server_is_enterprise, canUseComputer: !!asi?.can_use_computer }, null, 2));
+  writeFileSync(paths.modelsCache, JSON.stringify(metadata.cache, null, 2));
 
-  recordLoginSuccess(PROFILE, { tier, loginMode: "manual", lastLogin: new Date().toISOString() });
+  recordLoginSuccess(PROFILE, { tier: metadata.tier, loginMode: "manual", lastLogin: new Date().toISOString() });
 
   writeFileSync(paths.reinit, String(Date.now()));
 
   await browser.close().catch(() => {});
-  emit({ ok: true, tier, modelCount: Object.keys(models?.models ?? {}).length });
+  emit({ ok: true, tier: metadata.tier, modelCount: Object.keys(metadata.models?.models ?? {}).length });
   process.exit(0);
-}
-
-async function pageFetch(page, url) {
-  return page.evaluate(async (u) => {
-    const r = await fetch(u, { credentials: "include" });
-    return r.ok ? r.json() : null;
-  }, url);
 }
 
 main().catch((err) => {

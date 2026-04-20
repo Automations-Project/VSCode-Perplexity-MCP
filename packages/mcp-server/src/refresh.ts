@@ -24,9 +24,6 @@
 import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
-  BROWSER_DATA_DIR,
-  COOKIES_FILE,
-  CONFIG_DIR,
   PERPLEXITY_URL,
   MODELS_CONFIG_ENDPOINT,
   ASI_ACCESS_ENDPOINT,
@@ -43,9 +40,23 @@ import {
   type UserInfoResponse,
   type PlaywrightCookie,
 } from "./config.js";
+import { getActiveName, getConfigDir, getProfilePaths } from "./profiles.js";
 
-const MODELS_CACHE_FILE = join(BROWSER_DATA_DIR, "..", "models-cache.json");
-const IMPIT_RUNTIME_DIR = join(CONFIG_DIR, "native-deps");
+function getActiveProfileName(): string {
+  return process.env.PERPLEXITY_PROFILE || getActiveName() || "default";
+}
+
+function getModelsCacheFile(): string {
+  return getProfilePaths(getActiveProfileName()).modelsCache;
+}
+
+function getLegacyCookiesFile(): string {
+  return join(getProfilePaths(getActiveProfileName()).dir, "cookies.json");
+}
+
+function getImpitRuntimeDirPath(): string {
+  return join(getConfigDir(), "native-deps");
+}
 
 const STEALTH_ARGS = [
   "--disable-blink-features=AutomationControlled",
@@ -257,8 +268,8 @@ interface ImpitModule {
  */
 async function loadImpit(): Promise<ImpitModule | null> {
   const candidates = [
-    join(IMPIT_RUNTIME_DIR, "node_modules", "impit", "index.js"),
-    join(IMPIT_RUNTIME_DIR, "node_modules", "impit", "dist", "index.js"),
+    join(getImpitRuntimeDirPath(), "node_modules", "impit", "index.js"),
+    join(getImpitRuntimeDirPath(), "node_modules", "impit", "dist", "index.js"),
   ];
   for (const p of candidates) {
     if (!existsSync(p)) continue;
@@ -274,7 +285,7 @@ async function loadImpit(): Promise<ImpitModule | null> {
 }
 
 export function isImpitAvailable(): boolean {
-  const marker = join(IMPIT_RUNTIME_DIR, "node_modules", "impit", "package.json");
+  const marker = join(getImpitRuntimeDirPath(), "node_modules", "impit", "package.json");
   return existsSync(marker);
 }
 
@@ -484,6 +495,8 @@ export async function refreshAccountInfo(opts: RefreshOptions = {}): Promise<Ref
   const log = opts.log ?? noopLog;
   const started = Date.now();
   const timeoutMs = opts.timeoutMs ?? 25000;
+  const modelsCacheFile = getModelsCacheFile();
+  const legacyCookiesFile = getLegacyCookiesFile();
 
   const savedCookies = await getSavedCookies();
   if (savedCookies.length === 0) {
@@ -494,7 +507,7 @@ export async function refreshAccountInfo(opts: RefreshOptions = {}): Promise<Ref
       modelCount: 0,
       accountTier: "Unknown",
       error: "No saved cookies — run Perplexity: Login first.",
-      cachePath: MODELS_CACHE_FILE,
+      cachePath: modelsCacheFile,
       elapsedMs: Date.now() - started,
     };
   }
@@ -543,7 +556,7 @@ export async function refreshAccountInfo(opts: RefreshOptions = {}): Promise<Ref
       error: lastChallenged
         ? "All tiers hit Cloudflare challenge. Run Perplexity: Login to re-solve Turnstile."
         : "All refresh tiers failed. See logs.",
-      cachePath: MODELS_CACHE_FILE,
+      cachePath: modelsCacheFile,
       elapsedMs: Date.now() - started,
       tierAttempts: attempts,
     };
@@ -551,7 +564,7 @@ export async function refreshAccountInfo(opts: RefreshOptions = {}): Promise<Ref
 
   const { tier, result } = successful;
   const payload = result.payload!;
-  const existing = readExistingCache();
+  const existing = readExistingCache(modelsCacheFile);
 
   // Prefer /rest/user/info flags (direct, stable) over /rest/experiments
   // which returns many unrelated server-side A/B flags and has been seen to
@@ -574,19 +587,19 @@ export async function refreshAccountInfo(opts: RefreshOptions = {}): Promise<Ref
     rateLimits: payload.rateLimits ?? existing?.rateLimits ?? null,
   };
 
-  if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true });
-  writeFileSync(MODELS_CACHE_FILE, JSON.stringify(info, null, 2));
-  log(`refresh: wrote ${MODELS_CACHE_FILE} (${Object.keys(payload.models.models || {}).length} models)`);
+  mkdirSync(dirname(modelsCacheFile), { recursive: true });
+  writeFileSync(modelsCacheFile, JSON.stringify(info, null, 2));
+  log(`refresh: wrote ${modelsCacheFile} (${Object.keys(payload.models.models || {}).length} models)`);
 
   // Write back fresh cookies if the tier produced them (only the browser tier does).
   if (payload.freshCookies && payload.freshCookies.length > 0) {
     try {
-      mkdirSync(dirname(COOKIES_FILE), { recursive: true });
+      mkdirSync(dirname(legacyCookiesFile), { recursive: true });
       writeFileSync(
-        COOKIES_FILE,
+        legacyCookiesFile,
         JSON.stringify({ allCookies: payload.freshCookies, savedAt: new Date().toISOString() }, null, 2)
       );
-      log(`refresh: persisted ${payload.freshCookies.length} fresh cookies to ${COOKIES_FILE}`);
+      log(`refresh: persisted ${payload.freshCookies.length} fresh cookies to ${legacyCookiesFile}`);
     } catch (err) {
       log(`refresh: could not persist fresh cookies (non-fatal): ${(err as Error).message}`);
     }
@@ -598,7 +611,7 @@ export async function refreshAccountInfo(opts: RefreshOptions = {}): Promise<Ref
     tier,
     modelCount: Object.keys(payload.models.models || {}).length,
     accountTier: deriveTier(info),
-    cachePath: MODELS_CACHE_FILE,
+    cachePath: modelsCacheFile,
     elapsedMs: Date.now() - started,
     tierAttempts: attempts,
   };
@@ -611,22 +624,23 @@ function deriveTier(info: AccountInfo): RefreshResult["accountTier"] {
   return "Free";
 }
 
-function readExistingCache(): AccountInfo | null {
-  if (!existsSync(MODELS_CACHE_FILE)) return null;
+function readExistingCache(modelsCacheFile = getModelsCacheFile()): AccountInfo | null {
+  if (!existsSync(modelsCacheFile)) return null;
   try {
-    return JSON.parse(readFileSync(MODELS_CACHE_FILE, "utf8")) as AccountInfo;
+    return JSON.parse(readFileSync(modelsCacheFile, "utf8")) as AccountInfo;
   } catch {
     return null;
   }
 }
 
 export function getModelsCacheInfo(): { path: string; exists: boolean; mtime: Date | null; ageHours: number | null } {
-  const exists = existsSync(MODELS_CACHE_FILE);
-  const mtime = exists ? statSync(MODELS_CACHE_FILE).mtime : null;
+  const path = getModelsCacheFile();
+  const exists = existsSync(path);
+  const mtime = exists ? statSync(path).mtime : null;
   const ageHours = mtime ? (Date.now() - mtime.getTime()) / 3_600_000 : null;
-  return { path: MODELS_CACHE_FILE, exists, mtime, ageHours };
+  return { path, exists, mtime, ageHours };
 }
 
 export function getImpitRuntimeDir(): string {
-  return IMPIT_RUNTIME_DIR;
+  return getImpitRuntimeDirPath();
 }

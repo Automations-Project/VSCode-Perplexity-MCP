@@ -14,7 +14,7 @@ export function ExpiredBanner({ send }: { send: SendFn }) {
     <div className="expired-banner">
       <AlertTriangle size={16} />
       <span>Your Perplexity session for <b>{active}</b> has expired.</span>
-      <button onClick={() => send({ type: "auth:login-start", id: crypto.randomUUID(), payload: { profile: active ?? "default", mode: "manual" } })}>Re-login</button>
+      <button onClick={() => send({ type: "auth:login" })}>Re-login</button>
       <button onClick={() => {
         const name = prompt("Switch to which profile?");
         if (name) send({ type: "profile:switch", id: crypto.randomUUID(), payload: { name } });

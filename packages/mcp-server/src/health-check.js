@@ -8,6 +8,7 @@ import { chromium } from "patchright";
 import { Vault } from "./vault.js";
 import { getProfilePaths, getActiveName } from "./profiles.js";
 import { redact } from "./redact.js";
+import { collectSessionMetadata } from "./session-metadata.js";
 
 const ORIGIN = process.env.PERPLEXITY_ORIGIN || "https://www.perplexity.ai";
 const LOGIN_PATH = process.env.PERPLEXITY_LOGIN_PATH || "/account";
@@ -54,34 +55,21 @@ async function main() {
     // mock's `/login` route.
     await page.goto(`${ORIGIN}${LOGIN_PATH}`, { waitUntil: "domcontentloaded" }).catch(() => {});
 
-    const sessionData = await page.evaluate(async (u) => {
-      const r = await fetch(u, { credentials: "include" });
-      return r.ok ? r.json() : null;
-    }, `${ORIGIN}/api/auth/session`);
+    const metadata = await collectSessionMetadata(page, ORIGIN, { sessionTimeoutMs: 4_000 });
 
-    if (!sessionData || !sessionData.user?.id) {
+    if (!metadata.sessionData?.user?.id) {
       result = { valid: false, reason: "expired" };
     } else {
-      const [models, asi, rate, exp] = await Promise.all([
-        pageFetch(page, `${ORIGIN}/rest/models-config`),
-        pageFetch(page, `${ORIGIN}/rest/asi-access`),
-        pageFetch(page, `${ORIGIN}/rest/rate-limit`),
-        pageFetch(page, `${ORIGIN}/rest/user/experiments`),
-      ]);
-      const tier = exp?.server_is_max ? "Max"
-                 : exp?.server_is_pro ? "Pro"
-                 : exp?.server_is_enterprise ? "Enterprise"
-                 : "Authenticated";
       result = {
         valid: true,
-        tier,
-        modelCount: Object.keys(models?.models ?? {}).length,
-        rateLimits: rate ?? null,
+        tier: metadata.tier,
+        modelCount: Object.keys(metadata.models?.models ?? {}).length,
+        rateLimits: metadata.rateLimits ?? null,
       };
       try {
         const paths = getProfilePaths(PROFILE);
         if (!existsSync(paths.dir)) mkdirSync(paths.dir, { recursive: true });
-        writeFileSync(paths.modelsCache, JSON.stringify({ modelsConfig: models, rateLimits: rate, isPro: !!exp?.server_is_pro, isMax: !!exp?.server_is_max, isEnterprise: !!exp?.server_is_enterprise, canUseComputer: !!asi?.can_use_computer }, null, 2));
+        writeFileSync(paths.modelsCache, JSON.stringify(metadata.cache, null, 2));
       } catch {}
     }
   } finally {
@@ -90,13 +78,6 @@ async function main() {
 
   emit(result);
   process.exit(result.valid ? 0 : 2);
-}
-
-async function pageFetch(page, url) {
-  return page.evaluate(async (u) => {
-    const r = await fetch(u, { credentials: "include" });
-    return r.ok ? r.json() : null;
-  }, url);
 }
 
 function emit(obj) {

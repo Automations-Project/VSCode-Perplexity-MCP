@@ -4,6 +4,44 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [0.4.6] — 2026-04-20 — profile-flow UX and active-profile login fixes
+
+### Fixed
+- **Create-account flow:** adding a profile from the dashboard or extension host now creates it, makes it active immediately, and starts the selected login mode in the same flow instead of forcing a second separate login action.
+- **Generic login targeting:** the shared `Perplexity.login` path now uses the active profile's saved `loginMode` instead of prompting again and risking a fallback to the old `default` profile.
+- **Empty-profile UX:** the webview now shows `No Account Yet` / `Add account` when no active profile exists, and the profile switcher no longer pretends the active profile is `default` after all profiles are deleted.
+- **Mode-aware re-login:** dashboard re-login actions now route through the generic profile-aware login path instead of hard-coding manual mode.
+
+## [0.4.5] — 2026-04-20 — manual-login visibility and delete-profile UX
+
+### Fixed
+- **Manual login visibility:** the headed manual login runner no longer starts Chrome minimized. It now brings the browser tab to the front and the extension shows an explicit prompt telling the user to complete sign-in there.
+- **Delete profile action:** the dashboard no longer relies on `window.confirm(...)` inside the webview. Confirmation now runs on the extension host via a modal VS Code warning, so the delete action reaches the real profile-removal path reliably.
+- **Regression coverage:** extension auth tests now cover the `awaiting_user` progress event emitted by the manual login path.
+
+## [0.4.4] — 2026-04-20 — doctor/profile polish
+
+### Fixed
+- **Doctor speed-boost detection:** the `native-deps` check now detects `impit` from the actual runtime install under `~/.perplexity-mcp/native-deps/node_modules/impit`, instead of relying on an import path that could miss a valid install and incorrectly report `not installed`.
+- **Profile deletion semantics:** deleting a profile now clears or re-points the active profile pointer instead of leaving stale state behind. The dashboard now exposes an explicit `Delete profile…` action for full profile removal.
+- **Headed login window behavior:** manual and auto login runners now attempt to start minimized and use a CDP minimize call as a best-effort fallback so the browser is less intrusive on the desktop.
+- **Doctor probe false-fail:** when the live probe completes on an authenticated session but Perplexity returns zero citations, doctor now reports a warning instead of a hard auth failure.
+
+## [0.4.3] — 2026-04-20 — live OTP runner release
+
+### Fixed
+- **Real-site auto OTP flow:** the auto login runner now drives Perplexity's live NextAuth email+OTP flow (`/api/auth/csrf`, `/api/auth/signin/email`, `/auth/verify-request`, `/api/auth/otp-redirect-link`, `/api/auth/callback/email`) instead of treating the site as unsupported because `/login/email` is absent.
+- **Post-login account metadata:** the auto runner, manual runner, and health check now collect session, model, rate-limit, ASI, experiment, and user-info data from the current live endpoints so profile caches and doctor output reflect the authenticated account correctly.
+- **Release packaging clarity:** the fixed auth build now ships as `0.4.3`, avoiding stale `0.4.2` installs that still bundle the older mock-only login runner and outdated dashboard fallback copy.
+
+## [0.4.2] — 2026-04-20 — post-Phase 3.1 auth/runtime fix
+
+### Fixed
+- **Active profile drift:** dashboard snapshots, live model refresh, and the shared MCP client now resolve profile-specific paths at call time instead of caching `default` at module import. Profile switches and per-profile logins now read/write the selected profile consistently.
+- **Webview auth/profile actions now refresh MCP definitions:** the dashboard path (`auth:login-start`, `auth:logout`, `profile:switch`) now triggers the same MCP server definition refresh that the command-palette path already did, so switching or logging into a non-default profile updates the running server instead of leaving it on the old account.
+- **Doctor runtime packaged-path crash:** the runtime check now resolves `package.json` from the extension-provided `baseDir` before falling back to `import.meta.url`, which fixes the `runtime-runner -- check crashed: Invalid URL` failure in packaged VSIX builds.
+- **VSIX build order:** `packages/extension` now rebuilds `@perplexity-user-mcp/shared` and `perplexity-user-mcp` before bundling `extension.js`, preventing stale workspace dist output from being shipped inside a new VSIX.
+
 ## [0.4.1] — 2026-04-20 — Phase 3.1 hotfix
 
 ### Fixed

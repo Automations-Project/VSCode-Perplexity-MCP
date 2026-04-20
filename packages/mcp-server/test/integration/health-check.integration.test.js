@@ -76,6 +76,8 @@ describe("health-check runner (integration)", () => {
     expect(result.reason).toBe("no_cookies");
   });
 
+  // 0.4.3+ session collection polls /api/auth/session for ~4s before declaring
+  // the token expired, so this test needs more than vitest's default 5s budget.
   it("returns {valid:false, reason:'expired'} when the session is not recognized", async () => {
     await vault.set("default", "cookies", JSON.stringify([
       { name: "__Secure-next-auth.session-token", value: "bogus-token",
@@ -91,7 +93,7 @@ describe("health-check runner (integration)", () => {
     expect(code).toBe(2);
     expect(result.valid).toBe(false);
     expect(result.reason).toBe("expired");
-  });
+  }, 15_000);
 });
 
 async function seedMockSession(mock) {

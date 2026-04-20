@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 const CATEGORY = "native-deps";
@@ -34,6 +35,10 @@ function resolveGotScrapingChain(baseDir) {
   const dpReq = createRequire(dp);
   const io = dpReq.resolve("is-obj");
   return { hg, dp, io };
+}
+
+function getImpitRuntimeDirFallback() {
+  return join(process.env.PERPLEXITY_CONFIG_DIR || join(homedir(), ".perplexity-mcp"), "native-deps");
 }
 
 export async function run(opts = {}) {
@@ -83,12 +88,20 @@ export async function run(opts = {}) {
   let impitStatus = opts.impitStatusOverride;
   if (!impitStatus) {
     try {
-      const { getImpitRuntimeDir } = await import("../config.js");
-      const marker = join(getImpitRuntimeDir(), "native-deps-state.json");
-      if (existsSync(marker)) {
-        impitStatus = JSON.parse(readFileSync(marker, "utf8"));
+      const { getImpitRuntimeDir } = await import("../refresh.js");
+      const runtimeDir = typeof getImpitRuntimeDir === "function" ? getImpitRuntimeDir() : getImpitRuntimeDirFallback();
+      const marker = join(runtimeDir, "native-deps-state.json");
+      const pkgPath = join(runtimeDir, "node_modules", "impit", "package.json");
+      const state = existsSync(marker) ? JSON.parse(readFileSync(marker, "utf8")) : null;
+      if (existsSync(pkgPath)) {
+        const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+        impitStatus = {
+          installed: true,
+          version: pkg.version ?? state?.version ?? null,
+          installedAt: state?.installedAt ?? null,
+        };
       } else {
-        impitStatus = { installed: false, version: null };
+        impitStatus = { installed: false, version: state?.version ?? null, installedAt: state?.installedAt ?? null };
       }
     } catch {
       impitStatus = { installed: false, version: null };
@@ -99,7 +112,7 @@ export async function run(opts = {}) {
       category: CATEGORY,
       name: "impit",
       status: "pass",
-      message: `impit ${impitStatus.version ?? "(unknown version)"}`,
+      message: `impit ${impitStatus.version ?? "(unknown version)"}${impitStatus.installedAt ? ` - installed ${impitStatus.installedAt}` : ""}`,
     });
   } else {
     results.push({

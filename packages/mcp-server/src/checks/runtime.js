@@ -20,6 +20,24 @@ function defaultGitShaResolver(cwd) {
   });
 }
 
+function getPackageJsonCandidates(baseDir) {
+  const candidates = [];
+  if (baseDir) {
+    candidates.push(join(baseDir, "mcp", "package.json"));
+    candidates.push(join(baseDir, "package.json"));
+  }
+  const metaUrl = import.meta.url ?? null;
+  if (metaUrl) {
+    try {
+      candidates.push(fileURLToPath(new URL("../../package.json", metaUrl)));
+    } catch {}
+    try {
+      candidates.push(fileURLToPath(new URL("../package.json", metaUrl)));
+    } catch {}
+  }
+  return candidates;
+}
+
 export async function run(opts = {}) {
   const results = [];
   const nodeVersion = opts.nodeVersionOverride ?? process.version;
@@ -35,13 +53,9 @@ export async function run(opts = {}) {
   results.push({ category: CATEGORY, name: "arch", status: "pass", message: process.arch });
 
   let version = "0.0.0";
-  const candidates = [
-    new URL("../../package.json", import.meta.url),    // from source: packages/mcp-server/src/checks/ → package.json
-    new URL("../package.json", import.meta.url),       // when bundled flat into dist/mcp/: server.mjs's sibling
-  ];
-  for (const url of candidates) {
+  for (const pkgPath of getPackageJsonCandidates(opts.baseDir)) {
     try {
-      const pkg = JSON.parse(readFileSync(fileURLToPath(url), "utf8"));
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
       if (pkg.name === "perplexity-user-mcp" && pkg.version) {
         version = pkg.version;
         break;

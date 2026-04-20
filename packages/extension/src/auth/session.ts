@@ -1,14 +1,16 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
 import type { AccountSnapshot, ModelsConfigSource, RefreshTier } from "@perplexity-user-mcp/shared";
 import { MODELS_FALLBACK, MODELS_FALLBACK_CAPTURED_AT } from "@perplexity-user-mcp/shared";
-import { getProfilePaths, getActiveName } from "perplexity-user-mcp/profiles";
+import { getConfigDir, getProfilePaths, getActiveName } from "perplexity-user-mcp/profiles";
 import type { AccountInfo } from "../browser/runtime.js";
-import { BROWSER_DATA_DIR, CONFIG_DIR } from "../browser/runtime.js";
 import { getImpitStatus } from "../native-deps.js";
 
-const MODELS_CACHE_FILE = join(BROWSER_DATA_DIR, "..", "models-cache.json");
 let lastRefreshTier: RefreshTier | null = null;
+
+function getActiveProfileSnapshotPaths() {
+  const name = getActiveName() ?? "default";
+  return getProfilePaths(name);
+}
 
 export function setLastRefreshTier(tier: RefreshTier | null): void {
   lastRefreshTier = tier;
@@ -55,21 +57,23 @@ function deriveTier(accountInfo: AccountInfo | null, loggedIn: boolean): Account
 }
 
 export function getModelsCachePath(): string {
-  return MODELS_CACHE_FILE;
+  return getActiveProfileSnapshotPaths().modelsCache;
 }
 
 export function hasStoredLogin(): boolean {
   const name = getActiveName() ?? "default";
-  const { vault } = getProfilePaths(name);
-  return existsSync(vault);
+  const { vault, vaultPlain } = getProfilePaths(name);
+  return existsSync(vault) || existsSync(vaultPlain);
 }
 
 export function getAccountSnapshot(): AccountSnapshot {
-  const accountInfo = readJsonFile<AccountInfo>(MODELS_CACHE_FILE);
+  const paths = getActiveProfileSnapshotPaths();
+  const modelsCacheFile = paths.modelsCache;
+  const accountInfo = readJsonFile<AccountInfo>(modelsCacheFile);
   const loggedIn = hasStoredLogin() || !!accountInfo;
 
-  const cacheMtime = existsSync(MODELS_CACHE_FILE)
-    ? statSync(MODELS_CACHE_FILE).mtime
+  const cacheMtime = existsSync(modelsCacheFile)
+    ? statSync(modelsCacheFile).mtime
     : null;
 
   let modelsConfig = accountInfo?.modelsConfig ?? null;
@@ -95,8 +99,8 @@ export function getAccountSnapshot(): AccountSnapshot {
     modelsConfig,
     modelsConfigSource,
     rateLimits: accountInfo?.rateLimits ?? null,
-    configDir: CONFIG_DIR,
-    browserProfileDir: BROWSER_DATA_DIR,
+    configDir: getConfigDir(),
+    browserProfileDir: paths.browserData,
     lastUpdated,
     lastRefreshTier,
     speedBoost: {

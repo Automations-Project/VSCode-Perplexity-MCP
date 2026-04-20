@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { validateName, getProfilePaths, getConfigDir } from "../src/profiles.js";
+import { validateName, getProfilePaths, getConfigDir, getActiveName } from "../src/profiles.js";
 
 let TMP;
 beforeEach(() => {
@@ -155,6 +155,19 @@ describe("deleteProfile", () => {
   });
   it("is idempotent — no throw if profile doesn't exist", () => {
     expect(() => deleteProfile("nonexistent")).not.toThrow();
+  });
+  it("switches the active pointer to another profile when deleting the active profile", () => {
+    createProfile("a");
+    createProfile("b");
+    setActive("a");
+    deleteProfile("a");
+    expect(getActiveName()).toBe("b");
+  });
+  it("clears the active pointer when deleting the last profile", () => {
+    createProfile("a");
+    setActive("a");
+    deleteProfile("a");
+    expect(getActiveName()).toBeNull();
   });
 });
 

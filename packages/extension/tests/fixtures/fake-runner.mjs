@@ -14,3 +14,10 @@ if (role === "hang") {
   // never exits — used to test timeouts
   setInterval(() => {}, 100000);
 }
+if (role === "awaiting_user_ok") {
+  if (process.send) process.send({ phase: "awaiting_user" });
+  setTimeout(() => {
+    process.stdout.write(JSON.stringify({ ok: true, tier: "Pro" }) + "\n");
+    process.exit(0);
+  }, 10);
+}

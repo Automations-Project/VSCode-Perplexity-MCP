@@ -94,6 +94,7 @@ function App() {
   const notice = useDashboardStore((store) => store.notice);
   const clearNotice = useDashboardStore((store) => store.clearNotice);
   const modelsRefresh = useDashboardStore((store) => store.modelsRefresh);
+  const activeProfile = useDashboardStore((store) => store.activeProfile);
 
   const [modelFilter, setModelFilter] = useState("");
   const [historyFilter, setHistoryFilter] = useState("");
@@ -156,7 +157,7 @@ function App() {
           <div className="min-w-0 flex-1">
             <div style={{ fontSize: "0.65rem" }} className="uppercase tracking-[0.2em] text-[var(--text-muted)]">Perplexity</div>
             <div className="text-sm font-semibold text-[var(--text-primary)] truncate">
-              {snapshot?.loggedIn ? "Command Center" : "Login Required"}
+              {!activeProfile ? "No Account Yet" : snapshot?.loggedIn ? "Command Center" : "Login Required"}
             </div>
           </div>
           <div className="flex-shrink-0 flex items-center gap-2">
@@ -197,7 +198,12 @@ function App() {
             <RefreshCcw size={13} className={modelsRefresh.phase === "pending" ? "refresh-spin" : undefined} />
             <span>{modelsRefresh.phase === "pending" ? "Refreshing..." : "Refresh"}</span>
           </button>
-          {snapshot?.loggedIn ? (
+          {!activeProfile ? (
+            <button className="primary-button flex-1" style={{ padding: "6px 10px", fontSize: "0.78rem", minWidth: 0, justifyContent: "center" }} onClick={() => send({ type: "profile:add-prompt" })}>
+              <Sparkles size={13} />
+              <span>Add account</span>
+            </button>
+          ) : snapshot?.loggedIn ? (
             <button className="ghost-button flex-1" style={{ padding: "6px 10px", fontSize: "0.78rem", minWidth: 0, justifyContent: "center", opacity: 0.7 }} onClick={() => send({ type: "auth:login" })}>
               <Sparkles size={13} />
               <span>Re-login</span>

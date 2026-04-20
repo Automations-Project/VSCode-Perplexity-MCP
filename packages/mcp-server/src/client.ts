@@ -16,8 +16,6 @@ import {
   RATE_LIMIT_ENDPOINT,
   EXPERIMENTS_ENDPOINT,
   SUPPORTED_BLOCK_USE_CASES,
-  BROWSER_DATA_DIR,
-  CONFIG_DIR,
   findChromeExecutable,
   resolveBrowserExecutable,
   getSavedCookies,
@@ -30,8 +28,19 @@ import {
 } from "./config.js";
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
+import { getActiveName, getConfigDir, getProfilePaths } from "./profiles.js";
 
-const MODELS_CACHE_FILE = join(BROWSER_DATA_DIR, "..", "models-cache.json");
+function getActiveProfileName(): string {
+  return process.env.PERPLEXITY_PROFILE || getActiveName() || "default";
+}
+
+function getActivePaths() {
+  return getProfilePaths(getActiveProfileName());
+}
+
+function getModelsCacheFile(): string {
+  return getActivePaths().modelsCache;
+}
 
 const STEALTH_ARGS = [
   "--disable-blink-features=AutomationControlled",
@@ -99,8 +108,9 @@ export class PerplexityClient {
    * Set env PERPLEXITY_HEADLESS_ONLY=1 to skip the headed phase (uses disk cache).
    */
   async init(): Promise<void> {
-    if (!existsSync(BROWSER_DATA_DIR)) {
-      mkdirSync(BROWSER_DATA_DIR, { recursive: true });
+    const activePaths = getActivePaths();
+    if (!existsSync(activePaths.browserData)) {
+      mkdirSync(activePaths.browserData, { recursive: true });
     }
 
     // Fail fast with a readable message if no browser is installed at all.
@@ -167,7 +177,7 @@ export class PerplexityClient {
 
     let ctx: BrowserContext | null = null;
     try {
-      ctx = await chromium.launchPersistentContext(BROWSER_DATA_DIR, buildLaunchOptions(false));
+      ctx = await chromium.launchPersistentContext(getActivePaths().browserData, buildLaunchOptions(false));
 
       const page = ctx.pages()[0] || await ctx.newPage();
       await page.goto(PERPLEXITY_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
@@ -254,7 +264,7 @@ export class PerplexityClient {
         // Cache to disk
         if (this.accountInfo.modelsConfig) {
           try {
-            writeFileSync(MODELS_CACHE_FILE, JSON.stringify(this.accountInfo, null, 2));
+            writeFileSync(getModelsCacheFile(), JSON.stringify(this.accountInfo, null, 2));
             console.error("[perplexity-mcp] Account info cached to disk.");
           } catch { /* ignore */ }
         }
@@ -357,7 +367,7 @@ export class PerplexityClient {
     // Cache live data to disk for next time
     if (gotLiveData) {
       try {
-        writeFileSync(MODELS_CACHE_FILE, JSON.stringify(this.accountInfo, null, 2));
+        writeFileSync(getModelsCacheFile(), JSON.stringify(this.accountInfo, null, 2));
         console.error("[perplexity-mcp] Account info cached to disk.");
       } catch { /* ignore */ }
     } else {
@@ -370,12 +380,13 @@ export class PerplexityClient {
    * Load cached account info from disk (fallback when Cloudflare blocks).
    */
   private loadCachedAccountInfo(): void {
-    if (!existsSync(MODELS_CACHE_FILE)) {
+    const modelsCacheFile = getModelsCacheFile();
+    if (!existsSync(modelsCacheFile)) {
       console.error("[perplexity-mcp] No cached account info found.");
       return;
     }
     try {
-      const cached = JSON.parse(readFileSync(MODELS_CACHE_FILE, "utf-8")) as AccountInfo;
+      const cached = JSON.parse(readFileSync(modelsCacheFile, "utf-8")) as AccountInfo;
       this.accountInfo = cached;
       const modelCount = cached.modelsConfig ? Object.keys(cached.modelsConfig.models || {}).length : 0;
       console.error(`[perplexity-mcp] Loaded ${modelCount} models from disk cache.`);
@@ -1140,7 +1151,7 @@ export class PerplexityClient {
   private async downloadASIFiles(files: ASIFile[], threadSlug: string): Promise<void> {
     if (!this.page || files.length === 0) return;
 
-    const downloadDir = join(CONFIG_DIR, "downloads", threadSlug || "unknown");
+    const downloadDir = join(getConfigDir(), "downloads", threadSlug || "unknown");
     if (!existsSync(downloadDir)) {
       mkdirSync(downloadDir, { recursive: true });
     }
