@@ -30,9 +30,9 @@ describe("parseArgs", () => {
 
 describe("routeCommand (stubs)", () => {
   it("dispatches known stub commands", async () => {
-    const res = await routeCommand({ command: "doctor", flags: { json: true } });
+    const res = await routeCommand({ command: "install-browser", flags: { json: true } });
     expect(res.code).toBe(0);
-    expect(res.stdout).toMatch(/not-yet-implemented|doctor/i);
+    expect(res.stdout).toMatch(/not-yet-implemented|install-browser/i);
   });
   it("unknown command exits 1", async () => {
     const res = await routeCommand({ command: "nope", flags: {} });
@@ -72,11 +72,6 @@ describe("routeCommand — help and version", () => {
 });
 
 describe("routeCommand — phase mapping (remaining stubs)", () => {
-  it("doctor maps to Phase 3", async () => {
-    const res = await routeCommand({ command: "doctor", flags: {} });
-    expect(res.stdout).toMatch(/Phase 3/);
-  });
-
   it("install-browser maps to Phase 3", async () => {
     const res = await routeCommand({ command: "install-browser", flags: {} });
     expect(res.stdout).toMatch(/Phase 3/);
@@ -99,17 +94,17 @@ describe("routeCommand — phase mapping (remaining stubs)", () => {
 });
 
 describe("routeCommand — JSON mode for stubs", () => {
-  it("returns parseable JSON when --json flag is set", async () => {
-    const res = await routeCommand({ command: "doctor", flags: { json: true } });
+  it("returns parseable JSON when --json flag is set (install-browser stub)", async () => {
+    const res = await routeCommand({ command: "install-browser", flags: { json: true } });
     const lines = res.stdout.trim().split("\n");
     const parsed = JSON.parse(lines[lines.length - 1]);
     expect(parsed.ok).toBe(false);
     expect(parsed.error).toBe("not-yet-implemented");
-    expect(parsed.command).toBe("doctor");
+    expect(parsed.command).toBe("install-browser");
   });
 
-  it("returns non-JSON message when --json flag is not set", async () => {
-    const res = await routeCommand({ command: "doctor", flags: {} });
+  it("returns non-JSON message when --json flag is not set (install-browser stub)", async () => {
+    const res = await routeCommand({ command: "install-browser", flags: {} });
     expect(res.code).toBe(0);
     expect(res.stdout).toMatch(/not yet implemented/);
     expect(res.stdout).not.toMatch(/^{/);
@@ -136,11 +131,6 @@ describe("parseArgs — edge cases", () => {
 });
 
 describe("routeCommand — all phase-3 commands text mode", () => {
-  it("doctor outputs Phase 3 text", async () => {
-    const res = await routeCommand({ command: "doctor", flags: {} });
-    expect(res.stdout).toMatch(/Phase 3/);
-  });
-
   it("install-browser outputs Phase 3 text", async () => {
     const res = await routeCommand({ command: "install-browser", flags: {} });
     expect(res.stdout).toMatch(/Phase 3/);
@@ -321,5 +311,21 @@ describe("cli: account commands (stubs replaced)", () => {
     expect(res.code).toBe(0);
     const parsed = JSON.parse(res.stdout.trim());
     expect(parsed.purged).toBe(true);
+  });
+});
+
+describe("doctor subcommand", () => {
+  it("doctor --json emits one JSON line with overall status", async () => {
+    const res = await routeCommand({ command: "doctor", flags: { json: true }, positional: [] });
+    expect([0, 10]).toContain(res.code);
+    const lines = res.stdout.trim().split("\n");
+    const last = JSON.parse(lines[lines.length - 1]);
+    expect(["pass", "warn", "fail"]).toContain(last.overall);
+    expect(last.byCategory).toBeDefined();
+  });
+
+  it("doctor (human) prints a report header", async () => {
+    const res = await routeCommand({ command: "doctor", flags: {}, positional: [] });
+    expect(res.stdout).toMatch(/Perplexity Doctor report/);
   });
 });

@@ -165,6 +165,20 @@ export async function routeCommand(parsed) {
   }
   /* v8 ignore stop */
 
+  if (command === "doctor") {
+    const { runAll, exitCodeFor, formatReportMarkdown } = await import("./doctor.js");
+    const report = await runAll({
+      profile: flags.profile,
+      probe: !!flags.probe,
+      allProfiles: !!flags.all,
+    });
+    const exit = exitCodeFor(report);
+    if (flags.json) {
+      return { code: exit, stdout: JSON.stringify(report) + "\n", stderr: "" };
+    }
+    return { code: exit, stdout: formatReportMarkdown(report) + "\n", stderr: "" };
+  }
+
   // Phase-1 stub: all real subcommands are placeholder until their phases land.
   const msg = flags.json
     ? JSON.stringify({ ok: false, error: "not-yet-implemented", command })
@@ -173,7 +187,7 @@ export async function routeCommand(parsed) {
 }
 
 function phaseFor(cmd) {
-  if (cmd === "doctor" || cmd === "install-browser") return 3;
+  if (cmd === "install-browser") return 3;
   if (cmd === "export" || cmd === "open" || cmd === "rebuild-history-index") return 4;
   /* v8 ignore next -- fallback for unmapped commands that shouldn't exist */
   return "?";
