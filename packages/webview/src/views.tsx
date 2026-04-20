@@ -191,10 +191,12 @@ export function DashboardView({
           </div>
         </div>
         <div className="flex flex-wrap gap-2 mt-2">
-          <button className="primary-button" onClick={() => send({ type: "auth:login" })}>
-            <Sparkles size={13} />
-            Login
-          </button>
+          {!snapshot.loggedIn && (
+            <button className="primary-button" onClick={() => send({ type: "auth:login" })}>
+              <Sparkles size={13} />
+              Login
+            </button>
+          )}
           <button
             className="ghost-button"
             onClick={() => send({ type: "configs:generate", payload: { target: "all" } })}

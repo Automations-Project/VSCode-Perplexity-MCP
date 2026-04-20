@@ -2,8 +2,9 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AccountSnapshot, ModelsConfigSource, RefreshTier } from "@perplexity-user-mcp/shared";
 import { MODELS_FALLBACK, MODELS_FALLBACK_CAPTURED_AT } from "@perplexity-user-mcp/shared";
+import { getProfilePaths, getActiveName } from "perplexity-user-mcp/profiles";
 import type { AccountInfo } from "../browser/runtime.js";
-import { BROWSER_DATA_DIR, CONFIG_DIR, COOKIES_FILE } from "../browser/runtime.js";
+import { BROWSER_DATA_DIR, CONFIG_DIR } from "../browser/runtime.js";
 import { getImpitStatus } from "../native-deps.js";
 
 const MODELS_CACHE_FILE = join(BROWSER_DATA_DIR, "..", "models-cache.json");
@@ -58,13 +59,14 @@ export function getModelsCachePath(): string {
 }
 
 export function hasStoredLogin(): boolean {
-  return existsSync(COOKIES_FILE) || existsSync(BROWSER_DATA_DIR);
+  const name = getActiveName() ?? "default";
+  const { vault } = getProfilePaths(name);
+  return existsSync(vault);
 }
 
 export function getAccountSnapshot(): AccountSnapshot {
   const accountInfo = readJsonFile<AccountInfo>(MODELS_CACHE_FILE);
-  const storedCookies = existsSync(COOKIES_FILE);
-  const loggedIn = storedCookies || !!accountInfo;
+  const loggedIn = hasStoredLogin() || !!accountInfo;
 
   const cacheMtime = existsSync(MODELS_CACHE_FILE)
     ? statSync(MODELS_CACHE_FILE).mtime

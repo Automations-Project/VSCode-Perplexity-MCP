@@ -92,6 +92,8 @@ a {
   gap: 8px;
   border-radius: 14px;
   padding: 10px;
+  position: relative;
+  z-index: 50;
 }
 
 /* ── Tab Bar ──────────────────────────────── */

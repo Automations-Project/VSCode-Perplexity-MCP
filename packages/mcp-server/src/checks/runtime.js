@@ -35,10 +35,19 @@ export async function run(opts = {}) {
   results.push({ category: CATEGORY, name: "arch", status: "pass", message: process.arch });
 
   let version = "0.0.0";
-  try {
-    const pkg = JSON.parse(readFileSync(fileURLToPath(new URL("../../package.json", import.meta.url)), "utf8"));
-    version = pkg.version ?? "0.0.0";
-  } catch {}
+  const candidates = [
+    new URL("../../package.json", import.meta.url),    // from source: packages/mcp-server/src/checks/ → package.json
+    new URL("../package.json", import.meta.url),       // when bundled flat into dist/mcp/: server.mjs's sibling
+  ];
+  for (const url of candidates) {
+    try {
+      const pkg = JSON.parse(readFileSync(fileURLToPath(url), "utf8"));
+      if (pkg.name === "perplexity-user-mcp" && pkg.version) {
+        version = pkg.version;
+        break;
+      }
+    } catch {}
+  }
   results.push({
     category: CATEGORY,
     name: "package-version",
