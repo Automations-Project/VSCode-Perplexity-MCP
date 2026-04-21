@@ -300,7 +300,13 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
     host,
     port: getBoundPort(httpServer),
     url: `http://${host}:${getBoundPort(httpServer)}`,
-    bearerToken: currentToken.bearerToken,
+    // Live getter: must reflect the CURRENT token after rotation.
+    // A plain snapshot here causes the launcher's syncLockfile to write
+    // the stale pre-rotation bearer back into the lockfile on every
+    // publishTunnelState, breaking auth for probes.
+    get bearerToken() {
+      return currentToken.bearerToken;
+    },
     auditPath,
     tokenPath,
     close,

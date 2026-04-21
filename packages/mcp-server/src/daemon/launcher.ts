@@ -10,7 +10,7 @@ import type { StartedDaemonServer } from "./server.js";
 import { startDaemonServer } from "./server.js";
 import { getTunnelBinaryPath } from "./install-tunnel.js";
 import { acquire, getLockfilePath, isStale, read, release, replace, type DaemonLockRecord } from "./lockfile.js";
-import { ensureToken, getTokenPath } from "./token.js";
+import { ensureToken, getTokenPath, readToken } from "./token.js";
 import { startTunnel, type TunnelState } from "./tunnel.js";
 
 export interface DaemonHealthStatus {
@@ -124,7 +124,35 @@ export async function getDaemonStatus(options: {
     };
   }
 
-  const health = await probeHealth(record, { timeoutMs: options.healthTimeoutMs });
+  // Probe with the lockfile's bearer first. If it returns 401 (bearer drift
+  // between lockfile and token file) fall back to the token file's bearer —
+  // the token file is the authoritative source the daemon actually uses for
+  // auth.
+  let health = await probeHealth(record, { timeoutMs: options.healthTimeoutMs });
+  if (!health) {
+    try {
+      const tokenRecord = readToken({ tokenPath });
+      if (tokenRecord && tokenRecord.bearerToken !== record.bearerToken) {
+        health = await probeHealth(
+          { ...record, bearerToken: tokenRecord.bearerToken },
+          { timeoutMs: options.healthTimeoutMs },
+        );
+        if (health && options.reclaimStale) {
+          // Heal the lockfile so future probes use the correct bearer directly.
+          try {
+            replace(
+              { ...record, bearerToken: tokenRecord.bearerToken },
+              { lockPath, expectedUuid: record.uuid },
+            );
+          } catch {
+            // best-effort: next publishTunnelState will sync
+          }
+        }
+      }
+    } catch {
+      // readToken may throw if file is malformed; treat as unhealthy
+    }
+  }
   const healthy = Boolean(health?.ok && health.uuid === record.uuid);
   const stale = !healthy && isStale(record, { echoedUuid: health?.uuid ?? null });
 
