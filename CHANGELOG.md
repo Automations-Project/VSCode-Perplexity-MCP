@@ -4,6 +4,30 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [0.6.0] — 2026-04-22 — Phase 6b: OAuth 2.1 authorization server
+
+### Added
+- **OAuth 2.1 authorization server**, implementing the MCP `OAuthServerProvider` interface via a new `PerplexityOAuthProvider` (in `packages/mcp-server/src/daemon/oauth-provider.ts`). Exposes the full RFC 6749 / PKCE-required flow:
+  - `GET /.well-known/oauth-authorization-server` — RFC 8414 authorization server metadata. Dynamic issuer; tunnel clients see the trycloudflare URL, loopback callers see `127.0.0.1`.
+  - `GET /.well-known/oauth-protected-resource` — RFC 9728 protected-resource metadata pointing at the same issuer.
+  - `POST /register` — RFC 7591 dynamic client registration (public clients; no client_secret).
+  - `GET /authorize` — PKCE `S256` required. Bridges to a VS Code modal via the SSE consent coordinator.
+  - `POST /token` — `authorization_code` + `refresh_token` grants. Access tokens are opaque (32-byte base64url) with a 1h TTL; refresh tokens rotate on each exchange.
+  - `POST /revoke` — invalidates a given access or refresh token.
+- **VS Code consent modal**. When a client hits `/authorize`, the daemon emits a `daemon:oauth-consent-request` SSE event. The extension host shows a native modal with client name, client_id, and redirect_uri. Approval/denial routes back through the new `/daemon/oauth-consent` admin endpoint (static-bearer gated, so OAuth clients cannot approve their own consent).
+- **Clients persistence** at `<configDir>/oauth-clients.json` (0600). Access + refresh tokens are kept in memory.
+- **`/mcp` accepts both auth shapes** — the static daemon bearer (for loopback + CLI) and OAuth access tokens (for remote MCP clients like Claude Desktop's custom connector). The SDK `requireBearerAuth` middleware is used with our provider as the verifier. A small `promoteCallerClientId` shim promotes a `x-perplexity-client-id` header onto `req.auth.clientId` when the caller authenticated via static bearer, so audit and progress-event filters stay meaningful.
+
+### Changed
+- `packages/mcp-server` and `packages/extension` bump to `0.6.0`.
+- `StartedDaemonServer` gains `listOAuthClients`, `revokeOAuthClient`, and `resolveOAuthConsent` helpers.
+- `StartDaemonServerOptions` gains `onOAuthConsentRequest` and `getTunnelUrl` hooks.
+
+### Security notes
+- Consent modal is the only path that issues an authorization code — browser-only flows (just hitting `/authorize`) can't self-approve.
+- Consent times out after 2 minutes with implicit deny. Each consent requires re-approval — we do not cache approvals across `/authorize` calls.
+- Static-bearer callers are reported as `clientId: "local-static"` in `verifyAccessToken` unless they pass `x-perplexity-client-id`.
+
 ## [0.5.1] — 2026-04-22 — Phase 6a: public-exposure hardening
 
 ### Added

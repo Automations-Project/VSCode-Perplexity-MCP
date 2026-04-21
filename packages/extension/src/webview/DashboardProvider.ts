@@ -1092,6 +1092,44 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       );
       await this.postDaemonState();
     }
+
+    if (event === "daemon:oauth-consent-request") {
+      const consentId = typeof payload.consentId === "string" ? payload.consentId : null;
+      const clientId = typeof payload.clientId === "string" ? payload.clientId : "unknown";
+      const clientName = typeof payload.clientName === "string" ? payload.clientName : clientId;
+      const redirectUri = typeof payload.redirectUri === "string" ? payload.redirectUri : "";
+      if (!consentId) {
+        return;
+      }
+      const approve = "Approve";
+      const deny = "Deny";
+      const choice = await vscode.window.showWarningMessage(
+        `An MCP client is requesting access to your Perplexity session.\n\n` +
+          `Client: ${clientName}\n` +
+          `Client ID: ${clientId}\n` +
+          `Redirect: ${redirectUri}\n\n` +
+          `Approve only if you just initiated this flow from that application.`,
+        { modal: true },
+        approve,
+        deny,
+      );
+      const approved = choice === approve;
+      try {
+        const daemon = await ensureBundledDaemon();
+        await fetch(`${daemon.url}/daemon/oauth-consent`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${daemon.bearerToken}`,
+            "x-perplexity-source": "loopback",
+          },
+          body: JSON.stringify({ consentId, approved }),
+        });
+      } catch (err) {
+        debug(`[trace] oauth-consent post failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
   }
 
   private toDaemonStatusPayload(status: Awaited<ReturnType<typeof getBundledDaemonStatus>>): DaemonStatusState {

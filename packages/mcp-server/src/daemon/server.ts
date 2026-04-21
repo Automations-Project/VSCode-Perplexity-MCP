@@ -1,5 +1,7 @@
 import { createServer, type Server as HttpServer } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
+import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express from "express";
 import { PerplexityClient } from "../client.js";
@@ -8,6 +10,11 @@ import { registerResources } from "../resources.js";
 import { getEnabledTools, loadToolConfig } from "../tool-config.js";
 import { registerTools } from "../tools.js";
 import { appendAuditEntry, getAuditLogPath, readAuditTail } from "./audit.js";
+import {
+  ConsentCoordinator,
+  PerplexityOAuthProvider,
+  type AuthorizedClientSummary,
+} from "./oauth-provider.js";
 import { getHomepageHtml, getRobotsTxt } from "./public-pages.js";
 import { createSecurity, type SecurityMiddlewareResult } from "./security.js";
 import { ensureToken, getTokenPath, rotateToken, type DaemonTokenRecord } from "./token.js";
@@ -35,6 +42,20 @@ export interface StartDaemonServerOptions {
   onEnableTunnel?: () => Promise<void> | void;
   onDisableTunnel?: () => Promise<void> | void;
   onTunnelAutoDisable?: (info: { failures: number; windowMs: number }) => Promise<void> | void;
+  /**
+   * Called when an MCP client hits `/authorize` and we need the local user
+   * to approve the consent. Host (the VS Code extension) resolves true to
+   * approve, false to deny. Called with a fresh consent id that the host
+   * posts back to `/daemon/oauth-consent` with its decision.
+   */
+  onOAuthConsentRequest?: (info: {
+    consentId: string;
+    clientId: string;
+    clientName: string;
+    redirectUri: string;
+  }) => Promise<void> | void;
+  /** When tunnel is enabled we advertise this as the OAuth issuer. */
+  getTunnelUrl?: () => string | null;
 }
 
 export interface StartedDaemonServer {
@@ -48,6 +69,12 @@ export interface StartedDaemonServer {
   publishEvent: (event: string, payload: EventPayload) => void;
   getHealth: () => Record<string, unknown>;
   readAuditTail: (limit?: number) => ReturnType<typeof readAuditTail>;
+  /** Returns registered OAuth clients with their current token counts. */
+  listOAuthClients: () => AuthorizedClientSummary[];
+  /** Deletes an OAuth client and all its outstanding tokens. */
+  revokeOAuthClient: (clientId: string) => boolean;
+  /** Extension host resolves a pending /authorize consent. */
+  resolveOAuthConsent: (consentId: string, approved: boolean) => boolean;
 }
 
 export async function startDaemonServer(options: StartDaemonServerOptions = {}): Promise<StartedDaemonServer> {
@@ -69,6 +96,28 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
   let closed = false;
   let client: PerplexityClient | undefined;
   let clientInitPromise: Promise<void> | null = null;
+
+  // OAuth 2.1 authorization-server wiring. The provider persists clients to
+  // <configDir>/oauth-clients.json and holds codes/tokens in memory. Consent
+  // flows route through the host-supplied onOAuthConsentRequest callback.
+  const consentCoordinator = new ConsentCoordinator();
+  const oauthProvider = new PerplexityOAuthProvider({
+    configDir: options.configDir ?? ".",
+    getStaticBearer: () => currentToken.bearerToken,
+    requestConsent: ({ clientId, clientName, redirectUri, consentId }) => {
+      return consentCoordinator.request({
+        id: consentId,
+        clientId,
+        clientName,
+        redirectUri,
+        timeoutMs: 2 * 60_000,
+        onRequest: () => {
+          void options.onOAuthConsentRequest?.({ consentId, clientId, clientName, redirectUri });
+          publishEvent("daemon:oauth-consent-request", { consentId, clientId, clientName, redirectUri });
+        },
+      });
+    },
+  });
   let httpServer: HttpServer | undefined;
   const startedAt = Date.now();
   const heartbeatMap = new Map<string, number>();
@@ -189,6 +238,67 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
     }
   };
 
+  // OAuth 2.1 authorization-server endpoints (discovery, register, authorize,
+  // token, revoke). Mounted BEFORE the bearer-guarded routes so discovery and
+  // dynamic client registration are reachable unauthenticated. The SDK router
+  // emits its own /.well-known/* responses — we replace them below with
+  // dynamic handlers so the issuer matches the request's Host (which differs
+  // between loopback and tunnel).
+  // Placeholder issuer for mcpAuthRouter's internal checks. The actual issuer
+  // served in /.well-known responses is computed per request from req.headers.host.
+  const oauthIssuer = new URL("http://localhost");
+  // Dynamic metadata — recomputes issuer per request so that tunnel clients
+  // see the tunnel URL and loopback clients see 127.0.0.1.
+  app.get("/.well-known/oauth-authorization-server", (req: any, res: any) => {
+    const issuer = resolveIssuer(req, oauthIssuer);
+    const body = {
+      issuer: issuer.href.replace(/\/$/, ""),
+      authorization_endpoint: new URL("/authorize", issuer).href,
+      token_endpoint: new URL("/token", issuer).href,
+      registration_endpoint: new URL("/register", issuer).href,
+      revocation_endpoint: new URL("/revoke", issuer).href,
+      response_types_supported: ["code"],
+      grant_types_supported: ["authorization_code", "refresh_token"],
+      code_challenge_methods_supported: ["S256"],
+      token_endpoint_auth_methods_supported: ["none"],
+    };
+    res.setHeader("Cache-Control", "no-store");
+    res.json(body);
+  });
+  app.get("/.well-known/oauth-protected-resource", (req: any, res: any) => {
+    const issuer = resolveIssuer(req, oauthIssuer);
+    res.json({
+      resource: new URL("/mcp", issuer).href,
+      authorization_servers: [issuer.href.replace(/\/$/, "")],
+      scopes_supported: ["mcp"],
+      resource_name: "Perplexity MCP",
+    });
+  });
+  try {
+    app.use(
+      mcpAuthRouter({
+        provider: oauthProvider,
+        issuerUrl: oauthIssuer,
+      }),
+    );
+  } catch (err) {
+    console.error("[trace] mcpAuthRouter mount failed:", err instanceof Error ? err.message : String(err));
+  }
+
+  // Consent bridge — extension host POSTs here with { consentId, approved }
+  // after showing its modal. Static bearer only (NOT OAuth-token-authed) so
+  // a rogue OAuth client can't approve its own consent.
+  app.post("/daemon/oauth-consent", requireBearer, (req: any, res: any) => {
+    const consentId = typeof req.body?.consentId === "string" ? req.body.consentId : null;
+    const approved = req.body?.approved === true;
+    if (!consentId) {
+      res.status(400).json({ error: "consentId required" });
+      return;
+    }
+    const resolved = consentCoordinator.resolve(consentId, approved);
+    res.json({ ok: resolved });
+  });
+
   // Unauthenticated public pages — homepage, robots.txt, favicon. These go
   // through the security middleware (rate limit, UA block) but bypass bearer.
   app.get("/", (_req: any, res: any) => {
@@ -273,7 +383,28 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
     }
   });
 
-  app.all("/mcp", requireBearer, async (req: any, res: any, next: any) => {
+  // /mcp accepts either the static daemon bearer OR a valid OAuth access
+  // token. The provider's verifyAccessToken handles both. When the bearer is
+  // the static daemon token, callers can still tag themselves via the
+  // x-perplexity-client-id header (used by the extension host, cli, and
+  // client-http helpers) so audit + progress-event filters stay meaningful.
+  const requireMcpAuth: any = requireBearerAuth({ verifier: oauthProvider });
+  const promoteCallerClientId = (req: any, _res: any, next: any) => {
+    try {
+      const auth = (req as any).auth;
+      if (auth && auth.clientId === "local-static") {
+        const header = req.headers?.["x-perplexity-client-id"];
+        const caller = typeof header === "string" ? header : Array.isArray(header) ? header[0] : undefined;
+        if (caller && caller.length > 0) {
+          auth.clientId = caller;
+        }
+      }
+    } catch {
+      // best-effort
+    }
+    next();
+  };
+  app.all("/mcp", requireMcpAuth, promoteCallerClientId, async (req: any, res: any, next: any) => {
     try {
       const mcpServer = new McpServer({
         name: "perplexity",
@@ -379,7 +510,26 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
     publishEvent,
     getHealth,
     readAuditTail: (limit = 50) => readAuditTail(limit, { auditPath }),
+    listOAuthClients: () => oauthProvider.listClients(),
+    revokeOAuthClient: (clientId: string) => oauthProvider.revokeClient(clientId),
+    resolveOAuthConsent: (consentId: string, approved: boolean) => consentCoordinator.resolve(consentId, approved),
   };
+}
+
+/** Resolve the OAuth issuer from the request's Host header so tunnel + loopback clients both see a correct metadata doc. */
+function resolveIssuer(req: any, fallback: URL): URL {
+  const host = typeof req.headers?.host === "string" ? req.headers.host : null;
+  const forwardedProto = typeof req.headers?.["x-forwarded-proto"] === "string" ? req.headers["x-forwarded-proto"] : null;
+  const cfConnecting = req.headers?.["cf-connecting-ip"];
+  if (host) {
+    const proto = forwardedProto ?? (cfConnecting ? "https" : "http");
+    try {
+      return new URL(`${proto}://${host}`);
+    } catch {
+      // fall through to fallback
+    }
+  }
+  return fallback;
 }
 
 function readAuthorizationHeader(value: string | string[] | undefined): string | null {

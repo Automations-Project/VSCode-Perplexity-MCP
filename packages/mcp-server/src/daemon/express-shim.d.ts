@@ -14,7 +14,12 @@ declare module "express" {
     end(chunk?: string): this;
     on(event: string, listener: (...args: any[]) => void): this;
     flushHeaders?: () => void;
+    redirect(url: string): void;
+    redirect(status: number, url: string): void;
+    send(body?: unknown): this;
   }
+
+  export type RequestHandler = (req: Request, res: Response, next: NextFunction) => void | Promise<void>;
 
   export type NextFunction = (error?: unknown) => void;
 
