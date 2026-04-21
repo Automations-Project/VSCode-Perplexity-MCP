@@ -15,6 +15,27 @@ export function parseArgs(argv) {
   const first = argv[0];
   if (first === "--version" || first === "-v") return { command: "version", flags: {} };
   if (first === "--help" || first === "-h") return { command: "help", flags: {} };
+  if (first === "daemon") {
+    const subcommand = argv[1] ?? "help";
+    const flags = {};
+    const positional = [];
+    for (let i = 2; i < argv.length; i++) {
+      const a = argv[i];
+      if (a.startsWith("--")) {
+        const key = a.slice(2);
+        const next = argv[i + 1];
+        if (next === undefined || next.startsWith("--")) {
+          flags[key] = true;
+        } else {
+          flags[key] = next;
+          i++;
+        }
+      } else {
+        positional.push(a);
+      }
+    }
+    return { command: `daemon:${subcommand}`, flags, positional };
+  }
 
   const command = first;
   const flags = {};
@@ -42,6 +63,8 @@ const KNOWN_COMMANDS = new Set([
   "login", "logout", "status", "doctor", "install-browser",
   "add-account", "switch-account", "list-accounts",
   "export", "open", "rebuild-history-index", "sync-cloud",
+  "daemon:help", "daemon:start", "daemon:stop", "daemon:status", "daemon:attach",
+  "daemon:rotate-token", "daemon:install-tunnel", "daemon:enable-tunnel", "daemon:disable-tunnel",
 ]);
 
 function normalizeExportFormat(value) {
@@ -85,11 +108,94 @@ export async function routeCommand(parsed) {
   }
   /* v8 ignore start -- starting the real MCP server is impractical in unit tests */
   if (command === "server") {
-    // Start the MCP stdio server. Delegates to index.js's existing main().
-    await import("./index.js");
+    const { main } = await import("./index.js");
+    await main();
     return { code: 0, stdout: "", stderr: "" };
   }
   /* v8 ignore stop */
+
+  if (command === "daemon:help") {
+    return { code: 0, stdout: DAEMON_HELP_TEXT, stderr: "" };
+  }
+
+  if (command === "daemon:start") {
+    const port = parseOptionalPort(flags.port);
+    if (flags.port !== undefined && port === null) {
+      return { code: 1, stdout: "", stderr: "daemon start requires --port to be a positive integer.\n" };
+    }
+    const { startDaemon } = await import("./daemon/launcher.js");
+    const daemon = await startDaemon({
+      configDir: process.env.PERPLEXITY_CONFIG_DIR,
+      port: port ?? undefined,
+      tunnel: !!flags.tunnel,
+    });
+    if (daemon.attached) {
+      const body = flags.json
+        ? JSON.stringify({ ok: true, attached: true, ...serializeDaemonConnection(daemon) })
+        : `Attached to daemon pid=${daemon.pid} port=${daemon.port}`;
+      return { code: 0, stdout: body + "\n", stderr: "" };
+    }
+
+    await daemon.closed;
+    return { code: 0, stdout: "", stderr: "" };
+  }
+
+  if (command === "daemon:status") {
+    const { getDaemonStatus } = await import("./daemon/launcher.js");
+    const status = await getDaemonStatus({
+      configDir: process.env.PERPLEXITY_CONFIG_DIR,
+      reclaimStale: true,
+    });
+    const body = flags.json
+      ? JSON.stringify(serializeDaemonStatus(status))
+      : formatDaemonStatus(status);
+    return { code: 0, stdout: body + "\n", stderr: "" };
+  }
+
+  if (command === "daemon:stop") {
+    const { stopDaemon } = await import("./daemon/launcher.js");
+    const result = await stopDaemon({ configDir: process.env.PERPLEXITY_CONFIG_DIR });
+    const body = flags.json
+      ? JSON.stringify({ ok: true, ...result })
+      : result.stopped
+        ? `Stopped daemon pid=${result.pid ?? "unknown"}.`
+        : "Daemon is not running.";
+    return { code: 0, stdout: body + "\n", stderr: "" };
+  }
+
+  if (command === "daemon:rotate-token") {
+    try {
+      const { rotateDaemonToken } = await import("./daemon/launcher.js");
+      const daemon = await rotateDaemonToken({ configDir: process.env.PERPLEXITY_CONFIG_DIR });
+      const body = flags.json
+        ? JSON.stringify({ ok: true, ...serializeDaemonConnection(daemon) })
+        : `Rotated daemon token for pid=${daemon.pid} port=${daemon.port}.`;
+      return { code: 0, stdout: body + "\n", stderr: "" };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { code: 1, stdout: "", stderr: message + "\n" };
+    }
+  }
+
+  if (command === "daemon:attach") {
+    const { attachToDaemon } = await import("./daemon/attach.js");
+    await attachToDaemon({
+      configDir: process.env.PERPLEXITY_CONFIG_DIR,
+      clientId: "daemon-attach-cli",
+    });
+    return { code: 0, stdout: "", stderr: "" };
+  }
+
+  if (
+    command === "daemon:install-tunnel"
+    || command === "daemon:enable-tunnel"
+    || command === "daemon:disable-tunnel"
+  ) {
+    const message = flags.json
+      ? JSON.stringify({ ok: false, error: "not-yet-implemented", command })
+      : `'${command.replace("daemon:", "daemon ")}' is not yet implemented (arrives in Task 4).`;
+    return { code: 0, stdout: message + "\n", stderr: "" };
+  }
 
   if (command === "list-accounts") {
     const { listProfiles, getActiveName } = await import("./profiles.js");
@@ -340,10 +446,83 @@ function phaseFor(cmd) {
   return "?";
 }
 
+function parseOptionalPort(value) {
+  if (value === undefined || value === true) return null;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 65535) {
+    return null;
+  }
+  return parsed;
+}
+
+function formatDaemonStatus(status) {
+  if (!status.running || !status.record) {
+    return "Daemon is not running.";
+  }
+
+  if (!status.healthy || !status.health) {
+    return `Daemon lock exists for pid=${status.record.pid}, but the health probe is not ready.`;
+  }
+
+  const tunnelUrl = status.health.tunnel?.url ?? status.record.tunnelUrl ?? null;
+  const parts = [
+    `Daemon running pid=${status.record.pid} port=${status.record.port}`,
+    `uptime=${formatDuration(status.health.uptimeMs)}`,
+  ];
+  if (tunnelUrl) {
+    parts.push(`tunnel=${tunnelUrl}`);
+  }
+  return parts.join(" ");
+}
+
+function serializeDaemonStatus(status) {
+  return {
+    running: status.running,
+    healthy: status.healthy,
+    stale: status.stale,
+    pid: status.record?.pid ?? null,
+    uuid: status.record?.uuid ?? null,
+    port: status.record?.port ?? null,
+    version: status.record?.version ?? null,
+    startedAt: status.record?.startedAt ?? null,
+    tunnelUrl: status.health?.tunnel?.url ?? status.record?.tunnelUrl ?? null,
+  };
+}
+
+function serializeDaemonConnection(daemon) {
+  return {
+    pid: daemon.pid,
+    uuid: daemon.uuid,
+    port: daemon.port,
+    url: daemon.url,
+    version: daemon.version,
+    startedAt: daemon.startedAt,
+    tunnelUrl: daemon.tunnelUrl ?? null,
+  };
+}
+
+function formatDuration(durationMs) {
+  if (!Number.isFinite(durationMs) || durationMs < 0) {
+    return "0s";
+  }
+  const seconds = Math.floor(durationMs / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  if (minutes < 60) return `${minutes}m${remainder}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h${minutes % 60}m`;
+}
+
 const HELP_TEXT = `perplexity-user-mcp
 
 Usage:
   npx perplexity-user-mcp                      Start MCP stdio server
+  npx perplexity-user-mcp daemon start [--port N] [--tunnel]
+  npx perplexity-user-mcp daemon stop
+  npx perplexity-user-mcp daemon status [--json]
+  npx perplexity-user-mcp daemon attach
+  npx perplexity-user-mcp daemon rotate-token
   npx perplexity-user-mcp login [--profile X] [--mode auto|manual] [--plain-cookies]
   npx perplexity-user-mcp logout [--profile X] [--purge]
   npx perplexity-user-mcp status [--profile X] [--all]
@@ -359,13 +538,23 @@ Usage:
   npx perplexity-user-mcp --version
   npx perplexity-user-mcp --help
 
-Phase-1 release: dispatcher + vault + profiles only. Subcommands land in
-Phases 2-4.
-
 Environment:
   PERPLEXITY_CONFIG_DIR         Override config dir (default: ~/.perplexity-mcp)
   PERPLEXITY_VAULT_PASSPHRASE   Env-var master-key fallback for headless Linux
   PERPLEXITY_MCP_STDIO=1        Forces stdio-server mode (no prompts)
+`;
+
+const DAEMON_HELP_TEXT = `perplexity-user-mcp daemon
+
+Usage:
+  npx perplexity-user-mcp daemon start [--port N] [--tunnel]
+  npx perplexity-user-mcp daemon stop
+  npx perplexity-user-mcp daemon status [--json]
+  npx perplexity-user-mcp daemon attach
+  npx perplexity-user-mcp daemon rotate-token
+  npx perplexity-user-mcp daemon install-tunnel
+  npx perplexity-user-mcp daemon enable-tunnel
+  npx perplexity-user-mcp daemon disable-tunnel
 `;
 
 /* v8 ignore start -- only runs when cli.js is executed as a script */

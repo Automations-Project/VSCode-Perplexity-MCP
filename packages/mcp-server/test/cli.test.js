@@ -1,9 +1,28 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseArgs, routeCommand } from "../src/cli.js";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { startDaemon } from "../src/daemon/launcher.ts";
 import { __resetKeyCache } from "../src/vault.js";
+
+function createMockClient() {
+  return {
+    authenticated: true,
+    userId: "cli-daemon-test",
+    accountInfo: {
+      isMax: false,
+      isPro: true,
+      isEnterprise: false,
+      canUseComputer: false,
+      modelsConfig: null,
+      rateLimits: null,
+    },
+    init: async () => undefined,
+    reinit: async () => undefined,
+    shutdown: async () => undefined,
+  };
+}
 
 describe("parseArgs", () => {
   it("parses subcommand + flags", () => {
@@ -25,6 +44,11 @@ describe("parseArgs", () => {
   it("handles --version and --help at top level", () => {
     expect(parseArgs(["--version"]).command).toBe("version");
     expect(parseArgs(["--help"]).command).toBe("help");
+  });
+  it("parses daemon subcommands as a grouped command", () => {
+    const a = parseArgs(["daemon", "status", "--json"]);
+    expect(a.command).toBe("daemon:status");
+    expect(a.flags.json).toBe(true);
   });
 });
 
@@ -336,6 +360,56 @@ describe("cli: account commands (stubs replaced)", () => {
     expect(parsed.scanned).toBe(1);
     expect(parsed.recovered).toBe(1);
     expect(parsed.skipped).toBe(0);
+  });
+});
+
+describe("cli: daemon commands", () => {
+  let configDir;
+  let runtime;
+
+  beforeEach(() => {
+    configDir = mkdtempSync(join(tmpdir(), "px-cli-daemon-"));
+    process.env.PERPLEXITY_CONFIG_DIR = configDir;
+  });
+
+  afterEach(async () => {
+    await runtime?.close?.().catch(() => undefined);
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  it("daemon status --json reports no daemon when nothing is running", async () => {
+    const res = await routeCommand(parseArgs(["daemon", "status", "--json"]));
+    expect(res.code).toBe(0);
+    expect(JSON.parse(res.stdout.trim())).toMatchObject({
+      running: false,
+      healthy: false,
+    });
+  });
+
+  it("daemon status and stop operate against a running daemon", async () => {
+    runtime = await startDaemon({
+      configDir,
+      createClient: createMockClient,
+    });
+
+    const statusRes = await routeCommand(parseArgs(["daemon", "status", "--json"]));
+    expect(statusRes.code).toBe(0);
+    expect(JSON.parse(statusRes.stdout.trim())).toMatchObject({
+      running: true,
+      healthy: true,
+      pid: runtime.pid,
+      port: runtime.port,
+    });
+
+    const stopRes = await routeCommand(parseArgs(["daemon", "stop", "--json"]));
+    expect(stopRes.code).toBe(0);
+    expect(JSON.parse(stopRes.stdout.trim())).toMatchObject({
+      ok: true,
+      stopped: true,
+      pid: runtime.pid,
+    });
+
+    runtime = undefined;
   });
 });
 

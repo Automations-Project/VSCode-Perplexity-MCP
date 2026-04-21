@@ -1,4 +1,4 @@
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getConfigDir } from "../profiles.js";
 
@@ -15,6 +15,10 @@ export interface DaemonLockRecord {
 
 export interface LockfileOptions {
   lockPath?: string;
+}
+
+export interface ReplaceLockfileOptions extends LockfileOptions {
+  expectedUuid?: string;
 }
 
 export interface LockfileStaleOptions {
@@ -79,6 +83,24 @@ export function release(options: LockfileOptions & { expectedUuid?: string } = {
   }
 
   rmSync(lockPath, { force: true });
+  return true;
+}
+
+export function replace(record: DaemonLockRecord, options: ReplaceLockfileOptions = {}): boolean {
+  const lockPath = options.lockPath ?? getLockfilePath();
+  const normalized = normalizeRecord(record);
+
+  if (options.expectedUuid) {
+    const current = read({ lockPath });
+    if (!current || current.uuid !== options.expectedUuid) {
+      return false;
+    }
+  }
+
+  mkdirSync(dirname(lockPath), { recursive: true });
+  const tempPath = `${lockPath}.tmp`;
+  writeFileSync(tempPath, serialize(normalized), "utf8");
+  renameSync(tempPath, lockPath);
   return true;
 }
 

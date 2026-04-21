@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
+import { pathToFileURL } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { PerplexityClient } from "./client.js";
+import { ensureDaemon, startDaemon } from "./daemon/launcher.js";
 import { registerTools } from "./tools.js";
 import { registerPrompts } from "./prompts.js";
 import { registerResources } from "./resources.js";
@@ -19,7 +21,7 @@ async function getClient(): Promise<PerplexityClient> {
   return client;
 }
 
-async function main() {
+export async function main() {
   client = new PerplexityClient();
 
   const server = new McpServer({
@@ -62,14 +64,17 @@ async function main() {
   await server.connect(transport);
 }
 
-main().catch(async (error) => {
-  console.error("[perplexity-mcp] Fatal error:", error);
-  await client?.shutdown?.().catch(() => undefined);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch(async (error) => {
+    console.error("[perplexity-mcp] Fatal error:", error);
+    await client?.shutdown?.().catch(() => undefined);
+    process.exit(1);
+  });
+}
 
 // Re-export public API for library consumers
 export { PerplexityClient } from "./client.js";
+export { ensureDaemon, startDaemon } from "./daemon/launcher.js";
 export { registerTools } from "./tools.js";
 export { registerPrompts } from "./prompts.js";
 export { registerResources } from "./resources.js";

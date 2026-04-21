@@ -71,6 +71,10 @@
     "./doctor": {
       "types": "./dist/doctor.d.ts",
       "import": "./dist/doctor.mjs"
+    },
+    "./daemon": {
+      "types": "./dist/daemon/index.d.ts",
+      "import": "./dist/daemon/index.mjs"
     }
   },
   "files": [
