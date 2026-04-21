@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     include: [
       "packages/extension/tests/**/*.test.ts",
+      "packages/webview/tests/**/*.test.{ts,tsx}",
       "packages/mcp-server/test/**/*.test.{js,ts}",
     ],
     environment: "node",

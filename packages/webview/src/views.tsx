@@ -22,6 +22,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { StatusDot } from "./components/StatusDot";
+import { DaemonStatus } from "./components/DaemonStatus";
 import { DownloadMenu } from "./components/DownloadMenu";
 import { OpenWithMenu } from "./components/OpenWithMenu";
 import { getIdeIcon } from "./ide-icons";
@@ -219,6 +220,8 @@ export function DashboardView({
           value={String(snapshot.modelsConfig ? snapshot.modelsConfig.config.length : 0)}
         />
       </div>
+
+      <DaemonStatus send={send} />
 
       <div className="glass-panel section-panel">
         <SectionHeader

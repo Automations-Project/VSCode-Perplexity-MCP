@@ -6,6 +6,7 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
+    "test": "cd ../.. && npx vitest run packages/webview/tests",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

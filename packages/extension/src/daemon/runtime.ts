@@ -5,7 +5,9 @@ import {
   ensureDaemon,
   exportHistoryViaDaemon,
   getDaemonStatus,
+  getAuditLogPath,
   hydrateCloudHistoryEntryViaDaemon,
+  readAuditTail,
   rotateDaemonToken,
   syncCloudHistoryViaDaemon,
   type DaemonCloudSyncProgress,
@@ -83,6 +85,11 @@ export async function enableBundledDaemonTunnel() {
 export async function disableBundledDaemonTunnel() {
   const config = requireRuntimeConfig();
   return disableDaemonTunnel({ configDir: config.configDir });
+}
+
+export function readBundledDaemonAuditTail(limit = 50) {
+  const config = requireRuntimeConfig();
+  return readAuditTail(limit, { auditPath: getAuditLogPath(config.configDir) });
 }
 
 export function getBundledDaemonConfigDir(): string {

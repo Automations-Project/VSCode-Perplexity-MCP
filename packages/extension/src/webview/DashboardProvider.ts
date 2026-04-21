@@ -2,6 +2,9 @@ import * as crypto from "node:crypto";
 import * as vscode from "vscode";
 import {
   EXTENSION_ID,
+  type DaemonAuditEntry,
+  type DaemonStatusState,
+  type DaemonTunnelState,
   type DashboardState,
   type ExtensionMessage,
   type WebviewMessage
@@ -47,6 +50,14 @@ import {
   runExport,
   tagHistoryEntry,
 } from "../history/open-handlers.js";
+import {
+  disableBundledDaemonTunnel,
+  enableBundledDaemonTunnel,
+  ensureBundledDaemon,
+  getBundledDaemonStatus,
+  readBundledDaemonAuditTail,
+  rotateBundledDaemonToken,
+} from "../daemon/runtime.js";
 
 export class DashboardProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
@@ -54,6 +65,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
   private authManager?: AuthManager;
   private otpResolvers = new Map<string, (s: string | null) => void>();
   private onMcpServerDefinitionsChanged?: () => void;
+  private daemonEventsAbort: AbortController | null = null;
   // Cache the most-recent doctor report so "Report issue" can reuse it instead
   // of re-running all 10 checks. Cleared when the user clicks Run again.
   private lastDoctorReport: unknown = null;
@@ -138,6 +150,14 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       log(`resolveWebviewView ERROR: ${msg}`);
       webviewView.webview.html = `<!DOCTYPE html><html><body style="padding:16px;font-family:sans-serif;color:#f8fafc;background:#0f172a"><h2>Perplexity Dashboard Error</h2><pre style="white-space:pre-wrap;color:#fca5a5">${msg.replace(/</g, "&lt;")}</pre><p>Check Output &gt; Perplexity Internal MCP for details.</p></body></html>`;
     }
+
+    const disposeHook = (webviewView as vscode.WebviewView & { onDidDispose?: (listener: () => void) => vscode.Disposable }).onDidDispose?.(() => {
+      this.stopDaemonEventStream();
+    });
+    if (disposeHook) {
+      this.context.subscriptions.push(disposeHook);
+    }
+    void this.postDaemonState({ ensure: true, restartEvents: true });
 
     webviewView.webview.onDidReceiveMessage(async (message: WebviewMessage) => {
       debug(`Webview message received: ${JSON.stringify(message)}`);
@@ -470,6 +490,76 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             }
             break;
           }
+          case "daemon:status": {
+            try {
+              await this.postDaemonState({ ensure: true, restartEvents: true });
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "daemon:rotate-token": {
+            const confirm = await vscode.window.showWarningMessage(
+              "Rotate the daemon bearer token? Existing MCP clients must reconnect before they can use the daemon again.",
+              {
+                modal: true,
+                detail: "This updates the token file and daemon lockfile, then broadcasts a token-rotation event.",
+              },
+              "Rotate token",
+            );
+            if (confirm !== "Rotate token") {
+              await this.postActionResult(message.id, false, "cancelled");
+              break;
+            }
+
+            try {
+              await rotateBundledDaemonToken();
+              await this.view?.webview.postMessage({
+                type: "daemon:token-rotated",
+                payload: { rotatedAt: new Date().toISOString() },
+              } satisfies ExtensionMessage);
+              this.onMcpServerDefinitionsChanged?.();
+              await this.postDaemonState({ ensure: true, restartEvents: true });
+              await this.postNotice("info", "Daemon token rotated. MCP clients will reconnect with the new bearer token.");
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "daemon:enable-tunnel": {
+            const confirm = await vscode.window.showWarningMessage(
+              "Your Perplexity Pro/Max session will be accessible over the public internet. Anyone with the tunnel URL and bearer token can use your account. Continue?",
+              { modal: true },
+              "Enable tunnel",
+            );
+            if (confirm !== "Enable tunnel") {
+              await this.postActionResult(message.id, false, "cancelled");
+              break;
+            }
+
+            try {
+              await enableBundledDaemonTunnel();
+              await this.postDaemonState({ ensure: true, restartEvents: true });
+              await this.postNotice("info", "Cloudflare Quick Tunnel enabled for the daemon.");
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "daemon:disable-tunnel": {
+            try {
+              await disableBundledDaemonTunnel();
+              await this.postDaemonState({ ensure: true, restartEvents: true });
+              await this.postNotice("info", "Cloudflare Quick Tunnel disabled.");
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
           case "history:request-list": {
             await this.postHistoryList(100);
             break;
@@ -665,6 +755,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
     await this.postProfileList();
     await this.postHistoryList(100);
     await this.postViewersList();
+    await this.postDaemonState({ ensure: true });
   }
 
   async refreshModels(): Promise<void> {
@@ -803,6 +894,158 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private async postDaemonState(options: { ensure?: boolean; restartEvents?: boolean } = {}): Promise<void> {
+    if (!this.view) {
+      return;
+    }
+
+    if (options.ensure) {
+      await ensureBundledDaemon();
+    }
+
+    const status = await getBundledDaemonStatus();
+    await this.view.webview.postMessage({
+      type: "daemon:status-updated",
+      payload: this.toDaemonStatusPayload(status),
+    } satisfies ExtensionMessage);
+    await this.view.webview.postMessage({
+      type: "daemon:audit-tail",
+      payload: { items: readBundledDaemonAuditTail(50) as DaemonAuditEntry[] },
+    } satisfies ExtensionMessage);
+
+    if (options.restartEvents && status.running && status.healthy) {
+      await this.startDaemonEventStream();
+    }
+  }
+
+  private async startDaemonEventStream(): Promise<void> {
+    if (!this.view) {
+      return;
+    }
+
+    this.stopDaemonEventStream();
+    const controller = new AbortController();
+    this.daemonEventsAbort = controller;
+
+    try {
+      const daemon = await ensureBundledDaemon();
+      const response = await fetch(`${daemon.url}/daemon/events`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${daemon.bearerToken}`,
+          "x-perplexity-client-id": "vscode-dashboard",
+        },
+        signal: controller.signal,
+      });
+
+      if (!response.ok || !response.body) {
+        throw new Error(`Could not subscribe to daemon events (${response.status}).`);
+      }
+
+      void this.readDaemonEvents(response.body, controller);
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        await this.postNotice("warning", `Daemon events unavailable: ${(err as Error).message}`);
+      }
+    }
+  }
+
+  private stopDaemonEventStream(): void {
+    this.daemonEventsAbort?.abort();
+    this.daemonEventsAbort = null;
+  }
+
+  private async readDaemonEvents(body: ReadableStream<Uint8Array>, controller: AbortController): Promise<void> {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+      while (!controller.signal.aborted) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        buffer = consumeSseFrames(buffer, (event, payload) => {
+          void this.handleDaemonEvent(event, payload);
+        });
+      }
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        await this.postNotice("warning", `Daemon event stream ended: ${(err as Error).message}`);
+      }
+    } finally {
+      if (this.daemonEventsAbort === controller) {
+        this.daemonEventsAbort = null;
+      }
+      reader.releaseLock();
+    }
+  }
+
+  private async handleDaemonEvent(event: string, payload: Record<string, unknown>): Promise<void> {
+    if (!this.view) {
+      return;
+    }
+
+    if (event === "daemon:ready") {
+      await this.postDaemonState();
+      return;
+    }
+
+    if (event === "daemon:tunnel-url") {
+      const tunnel = normalizeTunnelState(payload);
+      await this.view.webview.postMessage({
+        type: "daemon:tunnel-url",
+        payload: tunnel,
+      } satisfies ExtensionMessage);
+      await this.postDaemonState();
+      if (tunnel.status === "crashed") {
+        await this.postNotice("error", `Cloudflare tunnel crashed${tunnel.error ? `: ${tunnel.error}` : "."}`);
+      }
+      return;
+    }
+
+    if (event === "daemon:token-rotated") {
+      await this.view.webview.postMessage({
+        type: "daemon:token-rotated",
+        payload: { rotatedAt: typeof payload.rotatedAt === "string" ? payload.rotatedAt : new Date().toISOString() },
+      } satisfies ExtensionMessage);
+      this.onMcpServerDefinitionsChanged?.();
+      await this.postDaemonState({ restartEvents: true });
+    }
+  }
+
+  private toDaemonStatusPayload(status: Awaited<ReturnType<typeof getBundledDaemonStatus>>): DaemonStatusState {
+    const health = status.health;
+    const record = status.record;
+    const port = health?.port ?? record?.port ?? null;
+    const url = port ? `http://127.0.0.1:${port}` : null;
+
+    return {
+      running: status.running,
+      healthy: status.healthy,
+      stale: status.stale,
+      configDir: status.configDir,
+      lockPath: status.lockPath,
+      tokenPath: status.tokenPath,
+      pid: health?.pid ?? record?.pid ?? null,
+      uuid: health?.uuid ?? record?.uuid ?? null,
+      port,
+      url,
+      version: health?.version ?? record?.version ?? null,
+      startedAt: health?.startedAt ?? record?.startedAt ?? null,
+      uptimeMs: health?.uptimeMs ?? null,
+      heartbeatCount: typeof health?.heartbeatCount === "number" ? health.heartbeatCount : null,
+      tunnel: normalizeTunnelState({
+        status: health?.tunnel?.status,
+        url: health?.tunnel?.url ?? record?.tunnelUrl ?? null,
+        pid: health?.tunnel?.pid ?? record?.cloudflaredPid ?? null,
+        error: health?.tunnel?.error ?? null,
+      }),
+    };
+  }
+
   async postNotice(level: "info" | "warning" | "error", message: string): Promise<void> {
     if (!this.view) {
       return;
@@ -822,5 +1065,58 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
   async reveal(): Promise<void> {
     await vscode.commands.executeCommand(`workbench.view.extension.${EXTENSION_ID}`);
     await vscode.commands.executeCommand(`${EXTENSION_ID}.dashboard.focus`);
+  }
+}
+
+function normalizeTunnelState(payload: Record<string, unknown>): DaemonTunnelState {
+  const rawStatus = typeof payload.status === "string" ? payload.status : "disabled";
+  const status: DaemonTunnelState["status"] =
+    rawStatus === "starting" || rawStatus === "enabled" || rawStatus === "crashed"
+      ? rawStatus
+      : "disabled";
+
+  return {
+    status,
+    url: typeof payload.url === "string" && payload.url.length > 0 ? payload.url : null,
+    pid: typeof payload.pid === "number" ? payload.pid : null,
+    error: typeof payload.error === "string" && payload.error.length > 0 ? payload.error : null,
+  };
+}
+
+function consumeSseFrames(
+  buffer: string,
+  onFrame: (event: string, payload: Record<string, unknown>) => void,
+): string {
+  while (true) {
+    const boundary = buffer.indexOf("\n\n");
+    if (boundary < 0) {
+      return buffer;
+    }
+
+    const frame = buffer.slice(0, boundary);
+    buffer = buffer.slice(boundary + 2);
+    if (!frame.trim()) {
+      continue;
+    }
+
+    let event = "message";
+    const dataLines: string[] = [];
+    for (const rawLine of frame.split(/\r?\n/)) {
+      if (rawLine.startsWith("event:")) {
+        event = rawLine.slice(6).trim();
+      } else if (rawLine.startsWith("data:")) {
+        dataLines.push(rawLine.slice(5).trim());
+      }
+    }
+
+    if (!dataLines.length) {
+      continue;
+    }
+
+    try {
+      onFrame(event, JSON.parse(dataLines.join("\n")) as Record<string, unknown>);
+    } catch {
+      // Ignore malformed daemon SSE frames.
+    }
   }
 }

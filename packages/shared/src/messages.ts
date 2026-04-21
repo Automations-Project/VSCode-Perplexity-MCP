@@ -54,6 +54,43 @@ export interface DashboardState {
   debug: DebugState;
 }
 
+export type DaemonTunnelStatus = "disabled" | "starting" | "enabled" | "crashed";
+
+export interface DaemonTunnelState {
+  status: DaemonTunnelStatus;
+  url: string | null;
+  pid?: number | null;
+  error?: string | null;
+}
+
+export interface DaemonStatusState {
+  running: boolean;
+  healthy: boolean;
+  stale: boolean;
+  configDir: string;
+  lockPath: string;
+  tokenPath: string;
+  pid: number | null;
+  uuid: string | null;
+  port: number | null;
+  url: string | null;
+  version: string | null;
+  startedAt: string | null;
+  uptimeMs: number | null;
+  heartbeatCount: number | null;
+  tunnel: DaemonTunnelState;
+}
+
+export interface DaemonAuditEntry {
+  timestamp: string;
+  clientId: string;
+  tool: string;
+  durationMs: number;
+  source: "loopback" | "tunnel";
+  ok: boolean;
+  error?: string;
+}
+
 export type AuthStatus =
   | "unknown" | "checking" | "valid" | "expired" | "error"
   | "logging-in" | "awaiting_otp" | "chrome_missing" | "sso_required";
@@ -174,6 +211,10 @@ export type ExtensionMessage =
   | { type: "profile:list"; payload: { active: string | null; profiles: Profile[] } }
   | { type: "doctor:running"; payload: { probeRan: boolean } }
   | { type: "doctor:report"; payload: DoctorReport }
+  | { type: "daemon:status-updated"; payload: DaemonStatusState }
+  | { type: "daemon:tunnel-url"; payload: DaemonTunnelState }
+  | { type: "daemon:token-rotated"; payload: { rotatedAt: string } }
+  | { type: "daemon:audit-tail"; payload: { items: DaemonAuditEntry[] } }
   | { type: "history:list"; payload: { items: HistoryItem[] } }
   | { type: "history:entry"; payload: HistoryEntryDetail }
   | {
@@ -278,6 +319,10 @@ export type WebviewMessage =
   | { type: "doctor:export"; id: string; payload: { targetPath?: string } }
   | { type: "doctor:report-issue"; id: string; payload: { category: DoctorCategory; check: string } }
   | { type: "doctor:action"; id: string; payload: { commandId: string; args?: unknown[] } }
+  | { type: "daemon:status"; id: string }
+  | { type: "daemon:rotate-token"; id: string }
+  | { type: "daemon:enable-tunnel"; id: string }
+  | { type: "daemon:disable-tunnel"; id: string }
   | { type: "history:request-list"; payload?: { filter?: string } }
   | { type: "history:request-entry"; id: string; payload: { historyId: string } }
   | { type: "history:open-preview"; id: string; payload: { historyId: string } }

@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import type {
   AuthState,
+  DaemonAuditEntry,
+  DaemonStatusState,
   DashboardState,
   DoctorReport,
   ExtensionMessage,
@@ -37,6 +39,9 @@ interface DashboardStore {
   expiredDismissedUntil: number | null;
   richViewEntry: HistoryEntryDetail | null;
   externalViewers: ExternalViewer[];
+  daemonStatus: DaemonStatusState | null;
+  daemonAuditTail: DaemonAuditEntry[];
+  daemonTokenRotatedAt: string | null;
   historyExport: {
     id: string | null;
     phase: "idle" | "starting" | "downloaded" | "saved" | "error";
@@ -93,6 +98,9 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
   expiredDismissedUntil: null,
   richViewEntry: null,
   externalViewers: [],
+  daemonStatus: null,
+  daemonAuditTail: [],
+  daemonTokenRotatedAt: null,
   historyExport: { id: null, phase: "idle" },
   cloudSync: { phase: "idle" },
   cloudHydrate: { historyId: null, phase: "idle" },
@@ -144,6 +152,36 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
 
     if (message.type === "viewers:list") {
       set({ externalViewers: message.payload.viewers });
+      return;
+    }
+
+    if (message.type === "daemon:status-updated") {
+      set({ daemonStatus: message.payload });
+      return;
+    }
+
+    if (message.type === "daemon:audit-tail") {
+      set({ daemonAuditTail: message.payload.items });
+      return;
+    }
+
+    if (message.type === "daemon:tunnel-url") {
+      set((store) => ({
+        daemonStatus: store.daemonStatus
+          ? { ...store.daemonStatus, tunnel: message.payload }
+          : store.daemonStatus,
+        notice: message.payload.status === "crashed"
+          ? { level: "error", message: `Cloudflare tunnel crashed${message.payload.error ? `: ${message.payload.error}` : "."}` }
+          : store.notice,
+      }));
+      return;
+    }
+
+    if (message.type === "daemon:token-rotated") {
+      set({
+        daemonTokenRotatedAt: message.payload.rotatedAt,
+        notice: { level: "info", message: "Daemon token rotated. MCP clients will reconnect with the new token." },
+      });
       return;
     }
 
