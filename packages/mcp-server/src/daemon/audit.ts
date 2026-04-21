@@ -12,6 +12,13 @@ export interface AuditEntry {
   source: "loopback" | "tunnel";
   ok: boolean;
   error?: string;
+  // Phase 6a: populated for every HTTP-level request. Tool-call audit entries
+  // (written by /mcp middleware) also include these.
+  ip?: string;
+  userAgent?: string;
+  path?: string;
+  httpStatus?: number;
+  auth?: "bearer" | "oauth" | "none";
 }
 
 export interface AuditOptions {

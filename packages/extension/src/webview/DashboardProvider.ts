@@ -1081,6 +1081,17 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       this.onMcpServerDefinitionsChanged?.();
       await this.postDaemonState({ restartEvents: true });
     }
+
+    if (event === "daemon:tunnel-auto-disabled") {
+      const failures = typeof payload.failures === "number" ? payload.failures : 0;
+      const windowMs = typeof payload.windowMs === "number" ? payload.windowMs : 60_000;
+      await this.postNotice(
+        "error",
+        `Tunnel auto-disabled after ${failures} auth failures in ${Math.round(windowMs / 1000)}s. ` +
+          "Rotate your bearer token if you suspect a leak, then re-enable the tunnel.",
+      );
+      await this.postDaemonState();
+    }
   }
 
   private toDaemonStatusPayload(status: Awaited<ReturnType<typeof getBundledDaemonStatus>>): DaemonStatusState {

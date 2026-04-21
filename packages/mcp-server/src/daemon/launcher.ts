@@ -430,6 +430,19 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Sta
         getTunnelState: () => tunnelState,
         onEnableTunnel: enableTunnelRuntime,
         onDisableTunnel: disableTunnelRuntime,
+        onTunnelAutoDisable: async (info) => {
+          // Security middleware detected a 401 burst on the tunnel. Snip the
+          // tunnel immediately; the dashboard banner surfaces this via the
+          // daemon:tunnel-auto-disabled SSE event (published from server.ts).
+          await disableTunnelRuntime().catch(() => undefined);
+          tunnelState = {
+            status: "crashed",
+            url: null,
+            pid: null,
+            error: `Auto-disabled: ${info.failures} auth failures within ${Math.round(info.windowMs / 1000)}s.`,
+          };
+          publishTunnelState();
+        },
         onTokenRotated: async (nextToken) => {
           syncLockfile(nextToken.bearerToken);
         },

@@ -8,6 +8,8 @@ import { registerResources } from "../resources.js";
 import { getEnabledTools, loadToolConfig } from "../tool-config.js";
 import { registerTools } from "../tools.js";
 import { appendAuditEntry, getAuditLogPath, readAuditTail } from "./audit.js";
+import { getHomepageHtml, getRobotsTxt } from "./public-pages.js";
+import { createSecurity, type SecurityMiddlewareResult } from "./security.js";
 import { ensureToken, getTokenPath, rotateToken, type DaemonTokenRecord } from "./token.js";
 
 type EventPayload = Record<string, unknown>;
@@ -32,6 +34,7 @@ export interface StartDaemonServerOptions {
   getTunnelState?: () => DaemonTunnelHealth;
   onEnableTunnel?: () => Promise<void> | void;
   onDisableTunnel?: () => Promise<void> | void;
+  onTunnelAutoDisable?: (info: { failures: number; windowMs: number }) => Promise<void> | void;
 }
 
 export interface StartedDaemonServer {
@@ -87,16 +90,62 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
 
   app.use(expressFactory.json({ limit: "1mb" }));
 
-  // Trace every admin/mcp request for diagnostics.
+  // Security middleware: IP/UA capture, per-bearer rate limit (tunnel only),
+  // User-Agent blocklist, slow-401, 401-burst tripwire. Runs before bearer
+  // auth so it can gate unauthenticated requests too.
+  const security: SecurityMiddlewareResult = createSecurity({
+    onTripwireTriggered: async (info) => {
+      console.error(`[trace] 401-burst tripwire fired: ${info.failures} failures in ${info.windowMs}ms`);
+      try {
+        publishEvent("daemon:tunnel-auto-disabled", {
+          failures: info.failures,
+          windowMs: info.windowMs,
+          ip: info.ip ?? null,
+        });
+      } catch {
+        // publishEvent isn't wired yet at this point during init; safe to ignore.
+      }
+      await options.onTunnelAutoDisable?.({ failures: info.failures, windowMs: info.windowMs });
+    },
+  });
+
+  // Trace every admin/mcp request + write an audit line.
   app.use((req: any, res: any, next: any) => {
     const startedAtReq = Date.now();
-    const hasAuth = typeof req.headers?.authorization === "string";
+    const ctx = req._pplx ?? {};
     res.on("finish", () => {
       const durationMs = Date.now() - startedAtReq;
-      console.error(`[trace] http ${req.method} ${req.url ?? req.path} auth=${hasAuth ? "yes" : "no"} status=${res.statusCode} dur=${durationMs}ms`);
+      const path = typeof req.path === "string" ? req.path : (req.url ?? "");
+      const status = res.statusCode;
+      const hasAuth = typeof req.headers?.authorization === "string";
+      console.error(`[trace] http ${req.method} ${path} auth=${hasAuth ? "yes" : "no"} status=${status} dur=${durationMs}ms ip=${ctx.ip ?? "?"} ua=${(ctx.userAgent ?? "").slice(0, 40)}`);
+      // Only audit admin + /mcp endpoints, not homepage/static.
+      if (path.startsWith("/daemon") || path.startsWith("/mcp") || path.startsWith("/authorize") || path.startsWith("/token") || path.startsWith("/register")) {
+        try {
+          appendAuditEntry(
+            {
+              timestamp: new Date(startedAtReq).toISOString(),
+              clientId: ctx.bearer ? "bearer-client" : "anon",
+              tool: `http:${req.method} ${path}`,
+              durationMs,
+              source: ctx.source ?? (hasAuth ? "loopback" : "tunnel"),
+              ok: status >= 200 && status < 400,
+              ip: ctx.ip ?? undefined,
+              userAgent: ctx.userAgent || undefined,
+              path,
+              httpStatus: status,
+              auth: hasAuth ? "bearer" : "none",
+            },
+            { auditPath },
+          );
+        } catch {
+          // audit is best-effort
+        }
+      }
     });
     next();
   });
+  app.use(security.middleware);
 
   const requireBearer = (req: any, res: any, next: any) => {
     const header = readAuthorizationHeader(req.headers?.authorization);
@@ -139,6 +188,23 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
       response.write(frame);
     }
   };
+
+  // Unauthenticated public pages — homepage, robots.txt, favicon. These go
+  // through the security middleware (rate limit, UA block) but bypass bearer.
+  app.get("/", (_req: any, res: any) => {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    res.setHeader("X-Robots-Tag", "noindex, nofollow");
+    res.status(200).end(getHomepageHtml());
+  });
+  app.get("/robots.txt", (_req: any, res: any) => {
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.status(200).end(getRobotsTxt());
+  });
+  app.get("/favicon.ico", (_req: any, res: any) => {
+    res.status(204).end();
+  });
 
   app.get("/daemon/events", requireBearer, (req: any, res: any) => {
     res.setHeader("Content-Type", "text/event-stream");

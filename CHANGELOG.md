@@ -4,6 +4,25 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [0.5.1] — 2026-04-22 — Phase 6a: public-exposure hardening
+
+### Added
+- **Branded unauthenticated homepage at `GET /`**, `robots.txt` with `Disallow: /`, and a favicon 204. Hitting the tunnel URL in a browser now shows a clear "not a public service" card instead of leaking `Cannot GET /`.
+- **Security middleware** (`packages/mcp-server/src/daemon/security.ts`) running before bearer auth on every request:
+  - Per-bearer rate limit on tunnel traffic (default 60 req/min, override with `PERPLEXITY_DAEMON_RATELIMIT_RPM`). Loopback traffic is exempt.
+  - Suspicious-User-Agent blocklist (`masscan`, `nmap`, `zgrab`, `sqlmap`, `nikto`, `gobuster`, `wpscan`, `hydra`, `Shodan`, `censys`).
+  - Slow-401 — every tunnel 401 is delayed 150ms to defeat bearer brute-force timing probes.
+- **401-burst auto-disable tripwire** — 20 auth failures within 60s on the tunnel snip the tunnel immediately. The dashboard raises an error banner with recovery guidance (rotate bearer → re-enable).
+- **Enriched audit log** — every HTTP request to `/daemon/*`, `/mcp`, `/authorize`, `/token`, `/register` now appends a JSONL entry with `ip`, `userAgent`, `path`, `httpStatus`, `auth`, and `source` in addition to the existing tool-call fields.
+
+### Changed
+- `packages/mcp-server` and `packages/extension` bump to `0.5.1`.
+- `appendAuditEntry` signature extended with optional `ip`, `userAgent`, `path`, `httpStatus`, `auth` fields (backward compatible — tool-call audit rows still work unchanged).
+
+### Security notes
+- Tunnel auto-disable is source-scoped: `x-perplexity-source: loopback` and true 127.0.0.1 traffic without `cf-connecting-ip` never triggers the tripwire.
+- Homepage + robots deliberately leak no runtime information (no version, uptime, tool list, or port). The dashboard remains the only authoritative source of that data.
+
 ## [0.5.0] — 2026-04-21 — Phase 4 history viewer
 
 ### Added

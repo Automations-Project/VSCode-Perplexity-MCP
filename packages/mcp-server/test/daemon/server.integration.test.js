@@ -87,11 +87,14 @@ describe("daemon server integration", () => {
     expect(result.content[0]?.type).toBe("text");
     expect(result.content[0]?.text).toMatch(/Account tier/i);
 
-    const auditTail = readAuditTail(5, { auditPath: daemon.auditPath });
-    expect(auditTail).toHaveLength(1);
-    expect(auditTail[0].tool).toBe("perplexity_models");
-    expect(auditTail[0].clientId).toBe("integration-client");
-    expect(auditTail[0].ok).toBe(true);
+    // Phase 6a: security middleware also writes HTTP-level audit lines per
+    // request (POST /mcp initialize, POST /mcp tools/call, GET /mcp SSE).
+    // Filter down to the tool-call audit entry written by the tool handler.
+    const auditTail = readAuditTail(10, { auditPath: daemon.auditPath });
+    const toolEntry = auditTail.find((entry) => entry.tool === "perplexity_models");
+    expect(toolEntry).toBeDefined();
+    expect(toolEntry.clientId).toBe("integration-client");
+    expect(toolEntry.ok).toBe(true);
 
     await client.close();
     await transport.close();
