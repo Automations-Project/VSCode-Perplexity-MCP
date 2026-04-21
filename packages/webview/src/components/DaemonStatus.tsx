@@ -1,4 +1,4 @@
-import { Copy, Globe2, KeyRound, RefreshCcw, ServerCog } from "lucide-react";
+import { Copy, Globe2, KeyRound, Power, RefreshCcw, ServerCog } from "lucide-react";
 import { useState } from "react";
 import type { DaemonAuditEntry, DaemonStatusState, WebviewMessage } from "@perplexity-user-mcp/shared";
 import { useDashboardStore } from "../store";
@@ -206,6 +206,10 @@ export function DaemonStatusView({
         <button className="ghost-button btn-sm" disabled={!status?.running} onClick={() => { console.log("[trace] DaemonStatus click", { button: "daemon:rotate-token" }); send({ type: "daemon:rotate-token" }); }}>
           <KeyRound size={11} />
           Rotate token
+        </button>
+        <button className="ghost-button btn-sm" onClick={() => { console.log("[trace] DaemonStatus click", { button: "daemon:restart" }); send({ type: "daemon:restart" }); }} title="Stop the current daemon and spawn a fresh one. Use after a VSIX upgrade if the daemon is out of sync.">
+          <Power size={11} />
+          Restart daemon
         </button>
         {status?.url ? (
           <span className="text-[var(--text-muted)]" style={{ fontSize: "0.68rem" }}>

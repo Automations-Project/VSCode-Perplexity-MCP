@@ -265,6 +265,10 @@ export type WebviewMessage =
       payload: { level: "log" | "warn" | "error" | "info" | "debug"; args: unknown[]; ts: string };
     }
   | {
+      type: "daemon:restart";
+      id: string;
+    }
+  | {
       type: "auth:login";
       id: string;
     }

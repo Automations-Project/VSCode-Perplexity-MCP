@@ -50,6 +50,11 @@ export interface EnsureDaemonOptions {
   pollIntervalMs?: number;
   healthTimeoutMs?: number;
   spawnDaemon?: (options: { configDir: string; host?: string; port?: number; tunnel?: boolean }) => void | Promise<void>;
+  // Forwarded to getDaemonStatus. Only the VS Code extension host opts in:
+  // a lockfile whose pid equals our process.pid indicates a zombie daemon
+  // left behind by a prior activation (the daemon is supposed to run in a
+  // detached child, never in the extension host itself).
+  treatSelfAsZombie?: boolean;
 }
 
 export interface StartDaemonOptions {
@@ -86,6 +91,13 @@ export async function getDaemonStatus(options: {
   configDir?: string;
   reclaimStale?: boolean;
   healthTimeoutMs?: number;
+  // When true, a lockfile whose pid matches our process.pid is treated as a
+  // zombie (the daemon was accidentally bound inside the caller's process).
+  // The extension host sets this so a stale in-process daemon left behind by
+  // a previous extension activation gets reclaimed. Off by default so that
+  // startDaemon's own bookkeeping (which legitimately runs in-process during
+  // tests and the CLI `daemon start` flow) isn't nuked.
+  treatSelfAsZombie?: boolean;
 } = {}): Promise<DaemonStatus> {
   const configDir = options.configDir ?? getConfigDir();
   const lockPath = getLockfilePath(configDir);
@@ -105,10 +117,7 @@ export async function getDaemonStatus(options: {
     };
   }
 
-  // Self-lockfile guard: if our own process owns the lockfile, that means the
-  // HTTP server is running in the current process (a bug — we always want a
-  // detached child). Release the lock; the caller will re-spawn cleanly.
-  if (record.pid === process.pid) {
+  if (options.treatSelfAsZombie && record.pid === process.pid) {
     if (options.reclaimStale) {
       release({ lockPath, expectedUuid: record.uuid });
     }
@@ -192,6 +201,7 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<D
       configDir,
       reclaimStale: true,
       healthTimeoutMs: options.healthTimeoutMs,
+      treatSelfAsZombie: options.treatSelfAsZombie,
     });
     if (status.running && status.healthy && status.record && status.health) {
       return toConnectionInfo(status.record, status.health);
@@ -492,6 +502,40 @@ export async function stopDaemon(options: {
   }
 
   throw new Error("Timed out waiting for daemon shutdown.");
+}
+
+export async function restartDaemon(options: {
+  configDir?: string;
+  waitTimeoutMs?: number;
+  pollIntervalMs?: number;
+  healthTimeoutMs?: number;
+  spawnDaemon?: EnsureDaemonOptions["spawnDaemon"];
+  startTimeoutMs?: number;
+  treatSelfAsZombie?: boolean;
+} = {}): Promise<{ stopped: boolean; reSpawned: boolean; connection: DaemonConnectionInfo | null }> {
+  let stopped = false;
+  try {
+    const result = await stopDaemon({
+      configDir: options.configDir,
+      waitTimeoutMs: options.waitTimeoutMs,
+      pollIntervalMs: options.pollIntervalMs,
+      healthTimeoutMs: options.healthTimeoutMs,
+    });
+    stopped = result.stopped;
+  } catch {
+    // Ignore — may already be down. We'll attempt to bring a fresh one up.
+  }
+
+  const connection = await ensureDaemon({
+    configDir: options.configDir,
+    healthTimeoutMs: options.healthTimeoutMs,
+    startTimeoutMs: options.startTimeoutMs,
+    pollIntervalMs: options.pollIntervalMs,
+    spawnDaemon: options.spawnDaemon,
+    treatSelfAsZombie: options.treatSelfAsZombie,
+  });
+
+  return { stopped, reSpawned: true, connection };
 }
 
 export async function rotateDaemonToken(options: {

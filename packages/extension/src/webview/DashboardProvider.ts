@@ -58,6 +58,7 @@ import {
   installBundledCloudflared,
   isCloudflaredInstalled,
   readBundledDaemonAuditTail,
+  restartBundledDaemon,
   rotateBundledDaemonToken,
 } from "../daemon/runtime.js";
 
@@ -503,6 +504,23 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
               await this.postDaemonState({ ensure: true, restartEvents: true });
               await this.postActionResult(message.id, true);
             } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "daemon:restart": {
+            try {
+              await this.postNotice("info", "Restarting daemon — this will drop any open tunnel for a few seconds.");
+              this.stopDaemonEventStream();
+              await restartBundledDaemon();
+              await this.postDaemonState({ ensure: false, restartEvents: true });
+              this.onMcpServerDefinitionsChanged?.();
+              await this.postNotice("info", "Daemon restarted.");
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
+              await this.postNotice("error", `Daemon restart failed: ${(err as Error).message}`);
+              debug(`[trace] daemon:restart FAILED: ${detail}`);
               await this.postActionResult(message.id, false, (err as Error).message);
             }
             break;

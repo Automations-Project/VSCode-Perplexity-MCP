@@ -12,6 +12,7 @@ import {
   hydrateCloudHistoryEntryViaDaemon,
   installCloudflared,
   readAuditTail,
+  restartDaemon,
   rotateDaemonToken,
   syncCloudHistoryViaDaemon,
   type DaemonCloudSyncProgress,
@@ -39,6 +40,7 @@ export async function ensureBundledDaemon() {
   return ensureDaemon({
     configDir: config.configDir,
     spawnDaemon: spawnBundledDaemon,
+    treatSelfAsZombie: true,
   });
 }
 
@@ -82,6 +84,15 @@ export async function getBundledDaemonStatus() {
 export async function rotateBundledDaemonToken() {
   const config = requireRuntimeConfig();
   return rotateDaemonToken({ configDir: config.configDir });
+}
+
+export async function restartBundledDaemon() {
+  const config = requireRuntimeConfig();
+  return restartDaemon({
+    configDir: config.configDir,
+    spawnDaemon: spawnBundledDaemon,
+    treatSelfAsZombie: true,
+  });
 }
 
 export async function enableBundledDaemonTunnel() {

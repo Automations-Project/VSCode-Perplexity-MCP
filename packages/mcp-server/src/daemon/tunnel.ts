@@ -17,13 +17,21 @@ const execFile = promisify(execFileCallback);
 const NEUTRAL_CONFIG_FILENAME = "quick-tunnel.yml";
 const NEUTRAL_CONFIG_BODY = "# perplexity-user-mcp Quick Tunnel — routing handled by --url flag.\nno-autoupdate: true\n";
 
-function ensureNeutralConfig(binaryPath: string): string {
-  const configPath = join(dirname(binaryPath), NEUTRAL_CONFIG_FILENAME);
-  if (!existsSync(configPath)) {
-    mkdirSync(dirname(configPath), { recursive: true });
-    writeFileSync(configPath, NEUTRAL_CONFIG_BODY, { encoding: "utf8" });
+function ensureNeutralConfig(binaryPath: string): string | null {
+  try {
+    const configPath = join(dirname(binaryPath), NEUTRAL_CONFIG_FILENAME);
+    if (!existsSync(configPath)) {
+      mkdirSync(dirname(configPath), { recursive: true });
+      writeFileSync(configPath, NEUTRAL_CONFIG_BODY, { encoding: "utf8" });
+    }
+    return configPath;
+  } catch {
+    // Binary may live in a read-only path (e.g. test fixture using node.exe
+    // from Program Files). Fall back to spawning without --config; cloudflared
+    // may load the user's default config but that's still better than
+    // refusing to start.
+    return null;
   }
-  return configPath;
 }
 
 export interface TunnelState {
@@ -50,15 +58,16 @@ export interface StartedTunnel {
 
 export function startTunnel(options: StartTunnelOptions): StartedTunnel {
   const neutralConfigPath = ensureNeutralConfig(options.command);
+  const spawnArgs = [
+    ...(options.args ?? []),
+    "tunnel",
+    "--no-autoupdate",
+    ...(neutralConfigPath ? ["--config", neutralConfigPath] : []),
+    "--url", `http://127.0.0.1:${options.port}`,
+  ];
   const child = spawn(
     options.command,
-    [
-      ...(options.args ?? []),
-      "tunnel",
-      "--no-autoupdate",
-      "--config", neutralConfigPath,
-      "--url", `http://127.0.0.1:${options.port}`,
-    ],
+    spawnArgs,
     {
       stdio: ["ignore", "pipe", "pipe"],
       detached: false,

@@ -11,6 +11,7 @@ export {
   ensureDaemon,
   enableDaemonTunnel,
   getDaemonStatus,
+  restartDaemon,
   rotateDaemonToken,
   startDaemon,
   stopDaemon,
