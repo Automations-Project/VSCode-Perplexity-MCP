@@ -27,8 +27,16 @@ export interface ToolAuditEvent {
   error?: string;
 }
 
+export interface ToolProgressEvent {
+  tool: string;
+  clientId: string;
+  source: "loopback" | "tunnel";
+  progress: Record<string, unknown>;
+}
+
 export interface ToolHooks {
   onToolSettled?: (event: ToolAuditEvent) => void;
+  onToolProgress?: (event: ToolProgressEvent) => void;
 }
 
 function success(text: string) {
@@ -685,11 +693,21 @@ export function registerTools(
           page_size: z.number().int().positive().optional().describe("Optional page size for cloud thread pagination."),
         },
       },
-      async ({ page_size }) => {
+      async ({ page_size }, extra) => {
         const client = await getClient();
+        const clientId = getClientId(extra);
+        const source = getRequestSource(extra);
         const result = await syncCloudHistory({
           client,
           pageSize: page_size,
+          onProgress: (progress) => {
+            hooks.onToolProgress?.({
+              tool: "perplexity_sync_cloud",
+              clientId,
+              source,
+              progress: { ...progress },
+            });
+          },
         });
         return success(
           `Cloud sync complete: fetched=${result.fetched} inserted=${result.inserted} updated=${result.updated} skipped=${result.skipped}`,

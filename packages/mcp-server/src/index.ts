@@ -65,11 +65,30 @@ export async function main() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch(async (error) => {
+  runEntrypoint().catch(async (error) => {
     console.error("[perplexity-mcp] Fatal error:", error);
     await client?.shutdown?.().catch(() => undefined);
     process.exit(1);
   });
+}
+
+async function runEntrypoint() {
+  if (process.argv.length > 2) {
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore - cli.js is a plain JS module; types inferred at runtime.
+    const { parseArgs, routeCommand } = await import("./cli.js");
+    const result = await routeCommand(parseArgs(process.argv.slice(2)));
+    if (result.stdout) {
+      process.stdout.write(result.stdout);
+    }
+    if (result.stderr) {
+      process.stderr.write(result.stderr);
+    }
+    process.exitCode = result.code;
+    return;
+  }
+
+  await main();
 }
 
 // Re-export public API for library consumers

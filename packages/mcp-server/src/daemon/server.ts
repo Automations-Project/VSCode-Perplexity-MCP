@@ -220,6 +220,9 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
             ...(event.error ? { error: event.error } : {}),
           }, { auditPath });
         },
+        onToolProgress: (event) => {
+          publishEvent("daemon:tool-progress", { ...event });
+        },
       });
       await mcpServer.connect(transport);
 

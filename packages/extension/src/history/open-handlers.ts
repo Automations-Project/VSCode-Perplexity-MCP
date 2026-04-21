@@ -1,21 +1,20 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import * as vscode from "vscode";
 import type { ExportFormat, ExtensionMessage, ExternalViewer } from "@perplexity-user-mcp/shared";
 import {
-  PerplexityClient,
   deleteEntry,
   get,
-  getAttachmentsDir,
   pin,
   rebuildIndex,
   readHistory,
   tag,
-  syncCloudHistory,
-  hydrateCloudHistoryEntry,
 } from "perplexity-user-mcp";
 import { buildViewerUrl, listViewers, saveViewerConfig } from "perplexity-user-mcp/viewers";
 import { detectAllViewers } from "perplexity-user-mcp/viewer-detect";
+import {
+  exportHistoryFromDaemon,
+  hydrateCloudEntryFromDaemon,
+  syncCloudHistoryFromDaemon,
+} from "../daemon/runtime.js";
 
 function requireEntry(historyId: string) {
   const entry = get(historyId);
@@ -73,40 +72,8 @@ export async function runExport(historyId: string, format: ExportFormat): Promis
   bytes: number;
   contentType: string;
 }> {
-  const entry = requireEntry(historyId);
-  const attachmentsDir = getAttachmentsDir(historyId) ?? entry.attachmentsDir;
-  mkdirSync(attachmentsDir, { recursive: true });
-
-  if (format === "markdown") {
-    const savedPath = join(attachmentsDir, entry.mdPath.split(/[\\/]/).pop() || `${entry.id}.md`);
-    const contents = readFileSync(entry.mdPath, "utf8");
-    writeFileSync(savedPath, contents, "utf8");
-    return {
-      savedPath,
-      bytes: Buffer.byteLength(contents),
-      contentType: "text/markdown; charset=utf-8",
-    };
-  }
-
-  if (!entry.threadSlug) {
-    throw new Error("This history entry has no Perplexity thread slug, so only local markdown export is available.");
-  }
-
-  const client = new PerplexityClient();
-  try {
-    await client.init();
-    const exported = await client.exportThread({ threadSlug: entry.threadSlug, format });
-    const savedPath = join(attachmentsDir, exported.filename);
-    mkdirSync(dirname(savedPath), { recursive: true });
-    writeFileSync(savedPath, exported.buffer);
-    return {
-      savedPath,
-      bytes: exported.buffer.length,
-      contentType: exported.contentType,
-    };
-  } finally {
-    await client.shutdown().catch(() => undefined);
-  }
+  requireEntry(historyId);
+  return exportHistoryFromDaemon(historyId, format);
 }
 
 export function pinHistoryEntry(historyId: string, pinned: boolean) {
@@ -143,32 +110,9 @@ export async function runCloudSync(
   onProgress: (evt: CloudSyncProgressPayload) => void,
   opts: { pageSize?: number } = {},
 ): Promise<{ fetched: number; inserted: number; updated: number; skipped: number }> {
-  const client = new PerplexityClient();
-  try {
-    await client.init();
-    const result = await syncCloudHistory({
-      client,
-      pageSize: opts.pageSize,
-      onProgress,
-    });
-    return {
-      fetched: result.fetched,
-      inserted: result.inserted,
-      updated: result.updated,
-      skipped: result.skipped,
-    };
-  } finally {
-    await client.shutdown().catch(() => undefined);
-  }
+  return syncCloudHistoryFromDaemon(onProgress, opts);
 }
 
 export async function hydrateCloudEntry(historyId: string): Promise<{ action: "hydrated" | "skipped-local" | "skipped-hydrated" }> {
-  const client = new PerplexityClient();
-  try {
-    await client.init();
-    const res = await hydrateCloudHistoryEntry(historyId, { client });
-    return { action: res.action };
-  } finally {
-    await client.shutdown().catch(() => undefined);
-  }
+  return hydrateCloudEntryFromDaemon(historyId);
 }

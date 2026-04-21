@@ -21,6 +21,10 @@
     "onCommand:Perplexity.generateConfigs",
     "onCommand:Perplexity.refreshDashboard",
     "onCommand:Perplexity.refreshModels",
+    "onCommand:Perplexity.daemon.status",
+    "onCommand:Perplexity.daemon.rotateToken",
+    "onCommand:Perplexity.daemon.enableTunnel",
+    "onCommand:Perplexity.daemon.disableTunnel",
     "onCommand:Perplexity.openRichView",
     "onCommand:Perplexity.exportHistory",
     "onCommand:Perplexity.rebuildHistoryIndex",
@@ -55,6 +59,26 @@
       {
         "command": "Perplexity.refreshModels",
         "title": "Perplexity: Refresh Models (Live Fetch)",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.daemon.status",
+        "title": "Perplexity: Daemon Status",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.daemon.rotateToken",
+        "title": "Perplexity: Rotate Daemon Token",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.daemon.enableTunnel",
+        "title": "Perplexity: Enable Daemon Tunnel",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.daemon.disableTunnel",
+        "title": "Perplexity: Disable Daemon Tunnel",
         "category": "Perplexity"
       },
       {

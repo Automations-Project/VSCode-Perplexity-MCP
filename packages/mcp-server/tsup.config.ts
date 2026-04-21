@@ -26,6 +26,7 @@ export default defineConfig({
     "daemon/index": "src/daemon/index.ts",
     "daemon/attach": "src/daemon/attach.ts",
     "daemon/audit": "src/daemon/audit.ts",
+    "daemon/client-http": "src/daemon/client-http.ts",
     "daemon/install-tunnel": "src/daemon/install-tunnel.ts",
     "daemon/launcher": "src/daemon/launcher.ts",
     "daemon/lockfile": "src/daemon/lockfile.ts",

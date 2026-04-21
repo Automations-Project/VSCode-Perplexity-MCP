@@ -6,6 +6,14 @@ import { hasStoredLogin } from "./auth/session.js";
 import { getSettingsSnapshot } from "./settings.js";
 import { DashboardProvider } from "./webview/DashboardProvider.js";
 import { ensureLauncher } from "./launcher/write-launcher.js";
+import {
+  configureDaemonRuntime,
+  disableBundledDaemonTunnel,
+  ensureBundledDaemon,
+  getBundledDaemonConfigDir,
+  getBundledDaemonStatus,
+  rotateBundledDaemonToken,
+} from "./daemon/runtime.js";
 import { DebugCollector } from "./debug/collector.js";
 import { traceConfigChanges } from "./debug/instrumentation.js";
 import { exportDebugLog } from "./debug/exporter.js";
@@ -46,15 +54,36 @@ function createStdioDefinition(
   }
 }
 
+function createHttpDefinition(
+  label: string,
+  uri: vscode.Uri,
+  headers: Record<string, string>,
+  version: string
+): unknown {
+  const ctor = (vscode as unknown as { McpHttpServerDefinition?: new (...args: unknown[]) => unknown })
+    .McpHttpServerDefinition;
+
+  if (!ctor) {
+    throw new Error("VS Code does not expose McpHttpServerDefinition in this build.");
+  }
+
+  try {
+    return new ctor(label, uri, headers, version);
+  } catch {
+    return new ctor({ label, uri, headers, version });
+  }
+}
+
 function getBundledServerPath(context: vscode.ExtensionContext): string {
   return vscode.Uri.joinPath(context.extensionUri, "dist", "mcp", "server.mjs").fsPath;
 }
 
-function getServerEnvironment(settings: ReturnType<typeof getSettingsSnapshot>): Record<string, string> {
+function getServerEnvironment(settings: ReturnType<typeof getSettingsSnapshot>, configDir: string): Record<string, string> {
   const env: Record<string, string> = {
     ...Object.fromEntries(
       Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string")
     ),
+    PERPLEXITY_CONFIG_DIR: configDir,
     PERPLEXITY_HEADLESS_ONLY: "1"
   };
 
@@ -180,7 +209,8 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
   dashboard.setOnMcpServerDefinitionsChanged(() => { serverDefinitionsChanged.fire(); });
 
   const bundledServerPath = getBundledServerPath(context);
-  const { launcherPath } = ensureLauncher(bundledServerPath);
+  const { launcherPath, configDir } = ensureLauncher(bundledServerPath);
+  configureDaemonRuntime({ serverPath: bundledServerPath, configDir });
   log("Stable launcher: " + launcherPath);
 
   async function promptEmailForAutoLogin(profile: string): Promise<string | undefined> {
@@ -415,6 +445,61 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand("Perplexity.daemon.status", async () => {
+      try {
+        const status = await getBundledDaemonStatus();
+        const tunnel = status.health?.tunnel?.url ? ` tunnel=${status.health.tunnel.url}` : "";
+        void vscode.window.showInformationMessage(
+          status.running && status.health
+            ? `Perplexity daemon pid=${status.health.pid} port=${status.health.port}${tunnel}`
+            : `Perplexity daemon is not running (${status.lockPath}).`,
+        );
+        return true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        void vscode.window.showErrorMessage(`Could not read daemon status: ${message}`);
+        return false;
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("Perplexity.daemon.rotateToken", async () => {
+      try {
+        const daemon = await rotateBundledDaemonToken();
+        void vscode.window.showInformationMessage(`Perplexity daemon token rotated for pid=${daemon.pid} port=${daemon.port}.`);
+        return true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        void vscode.window.showErrorMessage(`Daemon token rotation failed: ${message}`);
+        return false;
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("Perplexity.daemon.enableTunnel", async () => {
+      await vscode.commands.executeCommand("Perplexity.openDashboard");
+      void vscode.window.showInformationMessage("Enable the daemon tunnel from the dashboard after confirming the security prompt.");
+      return false;
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("Perplexity.daemon.disableTunnel", async () => {
+      try {
+        await disableBundledDaemonTunnel();
+        void vscode.window.showInformationMessage("Perplexity daemon tunnel disabled.");
+        return true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        void vscode.window.showErrorMessage(`Daemon tunnel disable failed: ${message}`);
+        return false;
+      }
+    })
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand("Perplexity.installSpeedBoost", async () => {
       await dashboard.installSpeedBoost();
     })
@@ -533,13 +618,29 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
         provideMcpServerDefinitions: async () => {
           try {
             const settings = getSettingsSnapshot();
+            const daemon = await ensureBundledDaemon();
+            const version = String((context.extension.packageJSON as { version?: string }).version ?? "0.1.0");
+            const httpCtor = (vscode as unknown as { McpHttpServerDefinition?: new (...args: unknown[]) => unknown })
+              .McpHttpServerDefinition;
+            if (httpCtor) {
+              return [
+                createHttpDefinition(
+                  MCP_SERVER_LABEL,
+                  vscode.Uri.parse(`${daemon.url}/mcp`),
+                  {
+                    Authorization: `Bearer ${daemon.bearerToken}`,
+                  },
+                  version,
+                ),
+              ];
+            }
             return [
               createStdioDefinition(
                 MCP_SERVER_LABEL,
                 process.execPath,
-                [getBundledServerPath(context)],
-                getServerEnvironment(settings),
-                String((context.extension.packageJSON as { version?: string }).version ?? "0.1.0")
+                [getBundledServerPath(context), "daemon", "attach"],
+                getServerEnvironment(settings, getBundledDaemonConfigDir()),
+                version
               )
             ];
           } catch (err) {
@@ -606,6 +707,14 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
     debugMode: settings.debugMode,
     bufferSize: settings.debugBufferSize,
   });
+
+  void ensureBundledDaemon()
+    .then((daemon) => {
+      log(`Daemon warm: pid=${daemon.pid} port=${daemon.port}`);
+    })
+    .catch((error) => {
+      log(`Daemon warm skipped: ${error instanceof Error ? error.message : String(error)}`);
+    });
 
   log("Extension activation complete.");
   await dashboard.refresh();

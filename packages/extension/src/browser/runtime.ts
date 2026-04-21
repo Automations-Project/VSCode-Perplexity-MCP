@@ -1,4 +1,3 @@
-export { PerplexityClient } from "perplexity-user-mcp/client";
 export {
   BROWSER_DATA_DIR,
   CONFIG_DIR,

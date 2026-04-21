@@ -1,5 +1,10 @@
 export { attachToDaemon } from "./attach.js";
 export { appendAuditEntry, getAuditLogPath, readAuditTail } from "./audit.js";
+export {
+  exportHistoryViaDaemon,
+  hydrateCloudHistoryEntryViaDaemon,
+  syncCloudHistoryViaDaemon,
+} from "./client-http.js";
 export { getPinnedCloudflaredVersion, getTunnelBinaryPath, installCloudflared, resolvePinnedAssetKey } from "./install-tunnel.js";
 export {
   disableDaemonTunnel,
@@ -20,3 +25,10 @@ export type { StartedDaemonServer } from "./server.js";
 export type { DaemonTokenRecord } from "./token.js";
 export type { InstallTunnelResult } from "./install-tunnel.js";
 export type { TunnelState } from "./tunnel.js";
+export type {
+  DaemonClientRequestOptions,
+  DaemonCloudSyncProgress,
+  DaemonCloudSyncResult,
+  DaemonExportResult,
+  DaemonHydrateResult,
+} from "./client-http.js";
