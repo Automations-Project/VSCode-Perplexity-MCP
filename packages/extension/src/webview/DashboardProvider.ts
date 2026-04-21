@@ -55,6 +55,8 @@ import {
   enableBundledDaemonTunnel,
   ensureBundledDaemon,
   getBundledDaemonStatus,
+  installBundledCloudflared,
+  isCloudflaredInstalled,
   readBundledDaemonAuditTail,
   rotateBundledDaemonToken,
 } from "../daemon/runtime.js";
@@ -540,12 +542,35 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             }
 
             try {
+              if (!isCloudflaredInstalled()) {
+                const installChoice = await vscode.window.showInformationMessage(
+                  "Cloudflare Tunnel requires the cloudflared binary (~25 MB). Download it now from github.com/cloudflare/cloudflared?",
+                  { modal: true },
+                  "Download and enable",
+                );
+                if (installChoice !== "Download and enable") {
+                  await this.postActionResult(message.id, false, "cancelled");
+                  break;
+                }
+                await vscode.window.withProgress(
+                  {
+                    location: vscode.ProgressLocation.Notification,
+                    title: "Downloading cloudflared…",
+                    cancellable: false,
+                  },
+                  async () => {
+                    await installBundledCloudflared();
+                  },
+                );
+              }
               await enableBundledDaemonTunnel();
               await this.postDaemonState({ ensure: true, restartEvents: true });
               await this.postNotice("info", "Cloudflare Quick Tunnel enabled for the daemon.");
               await this.postActionResult(message.id, true);
             } catch (err) {
-              await this.postActionResult(message.id, false, (err as Error).message);
+              const message_ = (err as Error).message;
+              await this.postNotice("error", `Tunnel enable failed: ${message_}`);
+              await this.postActionResult(message.id, false, message_);
             }
             break;
           }

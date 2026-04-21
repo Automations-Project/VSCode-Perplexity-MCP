@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { closeSync, mkdirSync, openSync, statSync, renameSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, statSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import {
   disableDaemonTunnel,
@@ -8,7 +8,9 @@ import {
   exportHistoryViaDaemon,
   getDaemonStatus,
   getAuditLogPath,
+  getTunnelBinaryPath,
   hydrateCloudHistoryEntryViaDaemon,
+  installCloudflared,
   readAuditTail,
   rotateDaemonToken,
   syncCloudHistoryViaDaemon,
@@ -16,6 +18,7 @@ import {
   type DaemonCloudSyncResult,
   type DaemonExportResult,
   type DaemonHydrateResult,
+  type InstallTunnelResult,
 } from "perplexity-user-mcp/daemon";
 
 const DAEMON_LOG_MAX_BYTES = 2 * 1024 * 1024;
@@ -89,6 +92,16 @@ export async function enableBundledDaemonTunnel() {
 export async function disableBundledDaemonTunnel() {
   const config = requireRuntimeConfig();
   return disableDaemonTunnel({ configDir: config.configDir });
+}
+
+export function isCloudflaredInstalled(): boolean {
+  const config = requireRuntimeConfig();
+  return existsSync(getTunnelBinaryPath(config.configDir));
+}
+
+export async function installBundledCloudflared(): Promise<InstallTunnelResult> {
+  const config = requireRuntimeConfig();
+  return installCloudflared({ configDir: config.configDir });
 }
 
 export function readBundledDaemonAuditTail(limit = 50) {
