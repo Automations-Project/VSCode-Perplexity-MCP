@@ -24,16 +24,59 @@ export function DaemonStatusView({
   send: SendFn;
 }) {
   const [revealed, setRevealed] = useState(false);
+  const [tokenRevealed, setTokenRevealed] = useState(false);
+  const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const tunnel = status?.tunnel ?? { status: "disabled", url: null, pid: null, error: null };
   const tunnelActive = tunnel.status === "enabled" || tunnel.status === "starting";
   const tunnelUrl = tunnel.url ?? null;
+  const bearerToken = status?.bearerToken ?? null;
+  const loopbackUrl = status?.url ?? null;
+
+  const flashFeedback = (msg: string) => {
+    setCopyFeedback(msg);
+    window.setTimeout(() => setCopyFeedback((prev) => (prev === msg ? null : prev)), 1500);
+  };
+
+  const copyText = async (value: string, label: string) => {
+    if (!navigator.clipboard) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      flashFeedback(`Copied ${label}`);
+    } catch {
+      flashFeedback(`Copy ${label} failed`);
+    }
+  };
 
   const copyTunnelUrl = () => {
-    if (!tunnelUrl || !revealed || !navigator.clipboard) {
-      return;
-    }
-    void navigator.clipboard.writeText(tunnelUrl).catch(() => undefined);
+    if (!tunnelUrl || !revealed) return;
+    void copyText(tunnelUrl, "tunnel URL");
   };
+
+  const copyBearer = () => {
+    if (!bearerToken) return;
+    void copyText(bearerToken, "bearer token");
+  };
+
+  const copyMcpConfig = (flavor: "remote" | "loopback") => {
+    if (!bearerToken) return;
+    const url = flavor === "remote" ? tunnelUrl : loopbackUrl;
+    if (!url) return;
+    const snippet = JSON.stringify(
+      {
+        mcpServers: {
+          [flavor === "remote" ? "perplexity-tunnel" : "perplexity-local"]: {
+            url: `${url}/mcp`,
+            headers: { Authorization: `Bearer ${bearerToken}` },
+          },
+        },
+      },
+      null,
+      2,
+    );
+    void copyText(snippet, flavor === "remote" ? "remote MCP config" : "local MCP config");
+  };
+
+  const maskedToken = bearerToken ? `${bearerToken.slice(0, 4)}…${bearerToken.slice(-4)}` : "";
 
   return (
     <div className="glass-panel section-panel" data-testid="daemon-status-card">
@@ -100,6 +143,60 @@ export function DaemonStatusView({
           </button>
         </div>
       </div>
+
+      {bearerToken ? (
+        <div className="list-row" style={{ marginTop: 8, alignItems: "flex-start" }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: "0.72rem", fontWeight: 600 }} className="text-[var(--text-primary)]">
+              Bearer token
+            </div>
+            <div style={{ fontSize: "0.7rem", marginTop: 3, fontFamily: "var(--font-mono, monospace)" }} className="text-[var(--text-muted)] break-all">
+              {tokenRevealed ? bearerToken : maskedToken}
+            </div>
+            <div style={{ fontSize: "0.66rem", marginTop: 4 }} className="text-[var(--text-muted)]">
+              Required in an <code>Authorization: Bearer …</code> header for every MCP request (loopback or tunnel).
+            </div>
+          </div>
+          <div className="flex items-center gap-1 flex-wrap" style={{ justifyContent: "flex-end" }}>
+            <button className="ghost-button btn-sm" onClick={() => setTokenRevealed((v) => !v)}>
+              {tokenRevealed ? "Hide token" : "Reveal token"}
+            </button>
+            <button className="ghost-button btn-sm" disabled={!tokenRevealed} onClick={copyBearer}>
+              <Copy size={11} />
+              Copy
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {bearerToken && (loopbackUrl || tunnelUrl) ? (
+        <div className="list-row" style={{ marginTop: 8, alignItems: "flex-start" }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: "0.72rem", fontWeight: 600 }} className="text-[var(--text-primary)]">
+              MCP client config
+            </div>
+            <div style={{ fontSize: "0.66rem", marginTop: 3 }} className="text-[var(--text-muted)]">
+              Copy a ready-to-paste <code>mcpServers</code> snippet for Claude Desktop, Cursor, or any client that accepts custom HTTP MCP servers.
+            </div>
+          </div>
+          <div className="flex items-center gap-1 flex-wrap" style={{ justifyContent: "flex-end" }}>
+            <button className="ghost-button btn-sm" disabled={!loopbackUrl} onClick={() => copyMcpConfig("loopback")}>
+              <Copy size={11} />
+              Loopback
+            </button>
+            <button className="ghost-button btn-sm" disabled={!tunnelUrl} onClick={() => copyMcpConfig("remote")}>
+              <Copy size={11} />
+              Remote
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {copyFeedback ? (
+        <div style={{ fontSize: "0.68rem", marginTop: 6 }} className="text-[var(--text-muted)]">
+          {copyFeedback}
+        </div>
+      ) : null}
 
       <div className="flex items-center gap-2 flex-wrap" style={{ marginTop: 10 }}>
         <button className="ghost-button btn-sm" onClick={() => { console.log("[trace] DaemonStatus click", { button: "daemon:status" }); send({ type: "daemon:status" }); }}>

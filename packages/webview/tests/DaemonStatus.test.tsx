@@ -25,6 +25,7 @@ const daemonStatus: DaemonStatusState = {
     pid: 5151,
     error: null,
   },
+  bearerToken: "test-bearer-token-1234",
 };
 
 describe("DaemonStatus", () => {

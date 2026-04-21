@@ -79,6 +79,11 @@ export interface DaemonStatusState {
   uptimeMs: number | null;
   heartbeatCount: number | null;
   tunnel: DaemonTunnelState;
+  // Bearer for loopback + tunnel MCP clients. Shown in the UI behind a
+  // reveal click so the user can paste it into remote MCP configs. Treat
+  // this as sensitive — anyone with (tunnelUrl, bearerToken) can use the
+  // user's Perplexity session.
+  bearerToken: string | null;
 }
 
 export interface DaemonAuditEntry {

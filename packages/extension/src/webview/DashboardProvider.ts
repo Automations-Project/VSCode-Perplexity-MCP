@@ -1092,6 +1092,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
         pid: health?.tunnel?.pid ?? record?.cloudflaredPid ?? null,
         error: health?.tunnel?.error ?? null,
       }),
+      bearerToken: record?.bearerToken ?? null,
     };
   }
 
