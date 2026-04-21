@@ -2,8 +2,29 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 const execFile = promisify(execFileCallback);
+
+/**
+ * cloudflared auto-loads ~/.cloudflared/config.yml if present. A pre-existing
+ * config (e.g. from another named tunnel) can inject ingress rules that
+ * hijack our Quick Tunnel and return http_status:404 for every subdomain.
+ * Writing a neutral config next to the binary and passing it via --config
+ * prevents cloudflared from reading the user's config.yml.
+ */
+const NEUTRAL_CONFIG_FILENAME = "quick-tunnel.yml";
+const NEUTRAL_CONFIG_BODY = "# perplexity-user-mcp Quick Tunnel — routing handled by --url flag.\nno-autoupdate: true\n";
+
+function ensureNeutralConfig(binaryPath: string): string {
+  const configPath = join(dirname(binaryPath), NEUTRAL_CONFIG_FILENAME);
+  if (!existsSync(configPath)) {
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(configPath, NEUTRAL_CONFIG_BODY, { encoding: "utf8" });
+  }
+  return configPath;
+}
 
 export interface TunnelState {
   status: "starting" | "enabled" | "disabled" | "crashed";
@@ -28,9 +49,16 @@ export interface StartedTunnel {
 }
 
 export function startTunnel(options: StartTunnelOptions): StartedTunnel {
+  const neutralConfigPath = ensureNeutralConfig(options.command);
   const child = spawn(
     options.command,
-    [...(options.args ?? []), "tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${options.port}`],
+    [
+      ...(options.args ?? []),
+      "tunnel",
+      "--no-autoupdate",
+      "--config", neutralConfigPath,
+      "--url", `http://127.0.0.1:${options.port}`,
+    ],
     {
       stdio: ["ignore", "pipe", "pipe"],
       detached: false,
