@@ -1,9 +1,11 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { AnySchema, ZodRawShapeCompat } from "@modelcontextprotocol/sdk/server/zod-compat.js";
 import { z } from "zod";
 import type { PerplexityClient } from "./client.js";
 import type { SearchResult } from "./config.js";
+import { hydrateCloudHistoryEntry, syncCloudHistory } from "./cloud-sync.js";
 import { buildStoredHistoryEntry, formatResponse } from "./format.js";
 import {
   append,
@@ -15,6 +17,19 @@ import {
 } from "./history-store.js";
 
 type GetClient = () => Promise<PerplexityClient>;
+
+export interface ToolAuditEvent {
+  tool: string;
+  clientId: string;
+  source: "loopback" | "tunnel";
+  durationMs: number;
+  ok: boolean;
+  error?: string;
+}
+
+export interface ToolHooks {
+  onToolSettled?: (event: ToolAuditEvent) => void;
+}
 
 function success(text: string) {
   return { content: [{ type: "text" as const, text }] };
@@ -135,9 +150,79 @@ export function registerTools(
   server: McpServer,
   getClient: GetClient,
   enabledTools?: Set<string>,
+  hooks: ToolHooks = {},
 ): void {
+  type ToolConfigBase = {
+    title?: string;
+    description?: string;
+    annotations?: Record<string, unknown>;
+    outputSchema?: ZodRawShapeCompat | AnySchema;
+    _meta?: Record<string, unknown>;
+  };
+
+  type ToolConfigWithInput<InputArgs extends ZodRawShapeCompat | AnySchema> = ToolConfigBase & {
+    inputSchema: InputArgs;
+  };
+
+  type ToolConfigWithoutInput = ToolConfigBase & {
+    inputSchema?: undefined;
+  };
+
+  function registerDaemonTool<InputArgs extends ZodRawShapeCompat | AnySchema>(
+    name: string,
+    config: ToolConfigWithInput<InputArgs>,
+    handler: (args: any, extra: any) => Promise<any>,
+  ): void;
+  function registerDaemonTool(
+    name: string,
+    config: ToolConfigWithoutInput,
+    handler: (extra: any) => Promise<any>,
+  ): void;
+  function registerDaemonTool(
+    name: string,
+    config: ToolConfigWithInput<ZodRawShapeCompat | AnySchema> | ToolConfigWithoutInput,
+    handler: ((args: any, extra: any) => Promise<any>) | ((extra: any) => Promise<any>),
+  ): void {
+    const runWithAudit = async (extra: any, invoke: () => Promise<any>) => {
+      const startedAt = Date.now();
+      try {
+        const result = await invoke();
+        hooks.onToolSettled?.({
+          tool: name,
+          clientId: getClientId(extra),
+          source: getRequestSource(extra),
+          durationMs: Date.now() - startedAt,
+          ok: !Boolean(result?.isError),
+          ...(result?.isError ? { error: extractToolError(result) } : {}),
+        });
+        return result;
+      } catch (error) {
+        hooks.onToolSettled?.({
+          tool: name,
+          clientId: getClientId(extra),
+          source: getRequestSource(extra),
+          durationMs: Date.now() - startedAt,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+    };
+
+    if (config.inputSchema) {
+      server.registerTool(name, config, async (args: any, extra: any) =>
+        runWithAudit(extra, () => (handler as (args: any, extra: any) => Promise<any>)(args, extra)),
+      );
+      return;
+    }
+
+    server.registerTool(name, config, async (extra: any) =>
+      runWithAudit(extra, () => (handler as (extra: any) => Promise<any>)(extra)),
+    );
+  }
+
   if (!enabledTools || enabledTools.has("perplexity_search")) {
-    server.registerTool(
+    registerDaemonTool(
       "perplexity_search",
       {
         title: "Perplexity Search",
@@ -192,7 +277,7 @@ export function registerTools(
   }
 
   if (!enabledTools || enabledTools.has("perplexity_reason")) {
-    server.registerTool(
+    registerDaemonTool(
       "perplexity_reason",
       {
         title: "Perplexity Reason",
@@ -252,7 +337,7 @@ export function registerTools(
   }
 
   if (!enabledTools || enabledTools.has("perplexity_research")) {
-    server.registerTool(
+    registerDaemonTool(
       "perplexity_research",
       {
         title: "Perplexity Research",
@@ -313,7 +398,7 @@ export function registerTools(
   }
 
   if (!enabledTools || enabledTools.has("perplexity_ask")) {
-    server.registerTool(
+    registerDaemonTool(
       "perplexity_ask",
       {
         title: "Perplexity Ask",
@@ -388,7 +473,7 @@ export function registerTools(
   }
 
   if (!enabledTools || enabledTools.has("perplexity_models")) {
-    server.registerTool(
+    registerDaemonTool(
       "perplexity_models",
       {
         title: "Perplexity Models",
@@ -405,7 +490,7 @@ export function registerTools(
   }
 
   if (!enabledTools || enabledTools.has("perplexity_compute")) {
-    server.registerTool(
+    registerDaemonTool(
       "perplexity_compute",
       {
         title: "Perplexity Compute",
@@ -477,7 +562,7 @@ export function registerTools(
   }
 
   if (!enabledTools || enabledTools.has("perplexity_retrieve")) {
-    server.registerTool(
+    registerDaemonTool(
       "perplexity_retrieve",
       {
         title: "Perplexity Retrieve",
@@ -551,7 +636,7 @@ export function registerTools(
   }
 
   if (!enabledTools || enabledTools.has("perplexity_export")) {
-    server.registerTool(
+    registerDaemonTool(
       "perplexity_export",
       {
         title: "Perplexity Export",
@@ -590,8 +675,49 @@ export function registerTools(
     );
   }
 
+  if (!enabledTools || enabledTools.has("perplexity_sync_cloud")) {
+    registerDaemonTool(
+      "perplexity_sync_cloud",
+      {
+        title: "Perplexity Sync Cloud",
+        description: "Sync Perplexity cloud history into the local history store using the daemon singleton client.",
+        inputSchema: {
+          page_size: z.number().int().positive().optional().describe("Optional page size for cloud thread pagination."),
+        },
+      },
+      async ({ page_size }) => {
+        const client = await getClient();
+        const result = await syncCloudHistory({
+          client,
+          pageSize: page_size,
+        });
+        return success(
+          `Cloud sync complete: fetched=${result.fetched} inserted=${result.inserted} updated=${result.updated} skipped=${result.skipped}`,
+        );
+      },
+    );
+  }
+
+  if (!enabledTools || enabledTools.has("perplexity_hydrate_cloud_entry")) {
+    registerDaemonTool(
+      "perplexity_hydrate_cloud_entry",
+      {
+        title: "Perplexity Hydrate Cloud Entry",
+        description: "Hydrate a single cloud-backed history entry using the daemon singleton client.",
+        inputSchema: {
+          history_id: z.string().describe("Cloud-backed history entry id to hydrate."),
+        },
+      },
+      async ({ history_id }) => {
+        const client = await getClient();
+        const result = await hydrateCloudHistoryEntry(history_id, { client });
+        return success(`Cloud hydrate ${result.action}: ${result.id ?? history_id}`);
+      },
+    );
+  }
+
   if (!enabledTools || enabledTools.has("perplexity_list_researches")) {
-    server.registerTool(
+    registerDaemonTool(
       "perplexity_list_researches",
       {
         title: "Perplexity List Researches",
@@ -632,7 +758,7 @@ export function registerTools(
   }
 
   if (!enabledTools || enabledTools.has("perplexity_get_research")) {
-    server.registerTool(
+    registerDaemonTool(
       "perplexity_get_research",
       {
         title: "Perplexity Get Research",
@@ -683,7 +809,7 @@ export function registerTools(
   }
 
   if (!enabledTools || enabledTools.has("perplexity_login")) {
-    server.registerTool(
+    registerDaemonTool(
       "perplexity_login",
       {
         title: "Perplexity Login",
@@ -705,7 +831,7 @@ export function registerTools(
   }
 
   if (!enabledTools || enabledTools.has("perplexity_doctor")) {
-    server.registerTool(
+    registerDaemonTool(
       "perplexity_doctor",
       {
         title: "Perplexity Doctor",
@@ -725,4 +851,19 @@ export function registerTools(
       },
     );
   }
+}
+
+function getClientId(extra: any): string {
+  return typeof extra?.authInfo?.clientId === "string" && extra.authInfo.clientId.length > 0
+    ? extra.authInfo.clientId
+    : "daemon-client";
+}
+
+function getRequestSource(extra: any): "loopback" | "tunnel" {
+  return extra?.authInfo?.extra?.source === "tunnel" ? "tunnel" : "loopback";
+}
+
+function extractToolError(result: any): string {
+  const firstText = result?.content?.find?.((item: any) => item?.type === "text" && typeof item.text === "string");
+  return typeof firstText?.text === "string" ? firstText.text : "Tool returned an error result.";
 }

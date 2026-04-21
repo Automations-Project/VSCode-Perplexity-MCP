@@ -19,7 +19,13 @@ const CATEGORIES: Record<string, string[]> = {
     "perplexity_list_researches", "perplexity_get_research",
     "perplexity_doctor",
   ],
-  write: ["perplexity_compute", "perplexity_login"],
+  write: [
+    "perplexity_compute",
+    "perplexity_login",
+    "perplexity_export",
+    "perplexity_sync_cloud",
+    "perplexity_hydrate_cloud_entry",
+  ],
 };
 
 const PROFILES: Record<string, string[]> = {
