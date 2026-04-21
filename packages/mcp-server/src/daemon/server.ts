@@ -164,7 +164,12 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
     const ctx = req._pplx ?? {};
     res.on("finish", () => {
       const durationMs = Date.now() - startedAtReq;
-      const path = typeof req.path === "string" ? req.path : (req.url ?? "");
+      // originalUrl preserves the full client-visible path even after sub-routers
+      // (mcpAuthRouter) strip their mount prefix from req.url / req.path.
+      const rawPath = typeof req.originalUrl === "string" && req.originalUrl.length > 0
+        ? req.originalUrl
+        : (typeof req.path === "string" ? req.path : (req.url ?? ""));
+      const path = rawPath.split("?")[0] ?? rawPath;
       const status = res.statusCode;
       const hasAuth = typeof req.headers?.authorization === "string";
       console.error(`[trace] http ${req.method} ${path} auth=${hasAuth ? "yes" : "no"} status=${status} dur=${durationMs}ms ip=${ctx.ip ?? "?"} ua=${(ctx.userAgent ?? "").slice(0, 40)}`);
@@ -301,7 +306,28 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
 
   // Unauthenticated public pages — homepage, robots.txt, favicon. These go
   // through the security middleware (rate limit, UA block) but bypass bearer.
-  app.get("/", (_req: any, res: any) => {
+  //
+  // Root path is a fork: MCP clients (Accept: application/json or text/
+  // event-stream) may end up POSTing / GETting at / if the user pasted the
+  // bare tunnel URL into their client config. We detect that by content type
+  // / accept and forward to the /mcp handler. Browsers get the homepage.
+  const looksLikeMcpClient = (req: any): boolean => {
+    const accept = String(req.headers?.accept ?? "").toLowerCase();
+    const contentType = String(req.headers?.["content-type"] ?? "").toLowerCase();
+    if (req.method === "POST") return true;
+    if (accept.includes("text/event-stream")) return true;
+    if (accept.includes("application/json") && !accept.includes("text/html")) return true;
+    if (contentType.includes("application/json")) return true;
+    return false;
+  };
+  app.all("/", (req: any, res: any, next: any) => {
+    if (looksLikeMcpClient(req)) {
+      return next();
+    }
+    if (req.method !== "GET") {
+      res.status(405).setHeader("Allow", "GET").end();
+      return;
+    }
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Cache-Control", "public, max-age=3600");
     res.setHeader("X-Robots-Tag", "noindex, nofollow");
@@ -388,7 +414,43 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
   // the static daemon token, callers can still tag themselves via the
   // x-perplexity-client-id header (used by the extension host, cli, and
   // client-http helpers) so audit + progress-event filters stay meaningful.
-  const requireMcpAuth: any = requireBearerAuth({ verifier: oauthProvider });
+  //
+  // We DON'T use SDK's requireBearerAuth directly because its
+  // resourceMetadataUrl is fixed at middleware-creation time, but our PRM
+  // URL is tunnel-host-dependent (different for loopback vs trycloudflare).
+  // Instead we call verifyAccessToken ourselves and emit a tunnel-aware
+  // WWW-Authenticate header on 401 so Claude Desktop can discover PRM.
+  const requireMcpAuth = async (req: any, res: any, next: any) => {
+    const sendUnauthorized = (error: string, description: string) => {
+      const issuer = resolveIssuer(req, oauthIssuer);
+      const prm = new URL("/.well-known/oauth-protected-resource", issuer).href;
+      res.setHeader(
+        "WWW-Authenticate",
+        `Bearer error="${error}", error_description="${description}", resource_metadata="${prm}"`,
+      );
+      res.status(401).json({ error, error_description: description });
+    };
+
+    try {
+      const authHeader = typeof req.headers?.authorization === "string" ? req.headers.authorization : null;
+      if (!authHeader) {
+        return sendUnauthorized("invalid_token", "Missing Authorization header");
+      }
+      const [type, token] = authHeader.split(/\s+/, 2);
+      if (!token || type.toLowerCase() !== "bearer") {
+        return sendUnauthorized("invalid_token", "Expected 'Bearer TOKEN'");
+      }
+      const info = await oauthProvider.verifyAccessToken(token);
+      if (typeof info.expiresAt === "number" && info.expiresAt < Date.now() / 1000) {
+        return sendUnauthorized("invalid_token", "Token expired");
+      }
+      req.auth = info;
+      next();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Invalid token";
+      sendUnauthorized("invalid_token", message);
+    }
+  };
   const promoteCallerClientId = (req: any, _res: any, next: any) => {
     try {
       const auth = (req as any).auth;
@@ -404,7 +466,10 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
     }
     next();
   };
-  app.all("/mcp", requireMcpAuth, promoteCallerClientId, async (req: any, res: any, next: any) => {
+  // Mount MCP handler at BOTH /mcp and / so a user who pasted the bare tunnel
+  // URL into their client config still works. The homepage route above
+  // forwards matching MCP-shaped requests here via next().
+  app.all(["/mcp", "/"], requireMcpAuth, promoteCallerClientId, async (req: any, res: any, next: any) => {
     try {
       const mcpServer = new McpServer({
         name: "perplexity",

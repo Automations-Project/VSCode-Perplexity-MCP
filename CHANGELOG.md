@@ -4,6 +4,16 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [0.6.1] — 2026-04-22 — OAuth flow hotfix: dynamic WWW-Authenticate + root path MCP
+
+### Fixed
+- **Claude Desktop OAuth flow now completes.** 0.6.0's `/mcp` bearer middleware did not emit a `resource_metadata` parameter in the `WWW-Authenticate` 401 header (the SDK's `requireBearerAuth` captures `resourceMetadataUrl` at construction time, but our PRM URL is tunnel-host-dependent). Claude Desktop couldn't discover PRM and fell back to POSTing at the bare tunnel URL, which 404'd, producing `Authorization with the MCP server failed` after a successful consent. Replaced with a custom bearer wrapper that reads `req.headers.host` on each 401 and emits `resource_metadata="https://<tunnel>/.well-known/oauth-protected-resource"` dynamically.
+- **Bare-URL forgiveness.** The `/mcp` MCP handler is now mounted at `/` as well. Users who paste the tunnel URL into their client config without `/mcp` suffix still work. A sniffer on the root route forwards `POST /` + JSON/SSE `Accept` to the MCP handler and keeps the branded homepage for browser `GET /`.
+- **Audit log paths were wrong.** Every request going through `mcpAuthRouter`'s sub-routers was logged as `POST /` or `GET /` because `req.path` is mount-relative. Switched to `req.originalUrl` so `/register`, `/token`, `/authorize`, `/revoke`, `/.well-known/*` appear correctly in `audit.log`.
+
+### Changed
+- `packages/mcp-server` and `packages/extension` bump to `0.6.1`.
+
 ## [0.6.0] — 2026-04-22 — Phase 6b: OAuth 2.1 authorization server
 
 ### Added
