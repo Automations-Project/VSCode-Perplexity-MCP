@@ -87,8 +87,12 @@ export function DaemonStatusView({
           ) : null}
           <button
             className={tunnelActive ? "danger-button btn-sm" : "primary-button btn-sm"}
-            onClick={() => send({ type: tunnelActive ? "daemon:disable-tunnel" : "daemon:enable-tunnel" })}
-            disabled={!status?.healthy || tunnel.status === "starting"}
+            onClick={() => {
+              const msgType = tunnelActive ? "daemon:disable-tunnel" : "daemon:enable-tunnel";
+              console.log("[trace] DaemonStatus click", { button: msgType, status: status ?? null, tunnel });
+              send({ type: msgType });
+            }}
+            disabled={tunnel.status === "starting"}
             title="Tunnel enablement is confirmed by the extension host before any public URL is created."
           >
             <Globe2 size={11} />
@@ -98,11 +102,11 @@ export function DaemonStatusView({
       </div>
 
       <div className="flex items-center gap-2 flex-wrap" style={{ marginTop: 10 }}>
-        <button className="ghost-button btn-sm" onClick={() => send({ type: "daemon:status" })}>
+        <button className="ghost-button btn-sm" onClick={() => { console.log("[trace] DaemonStatus click", { button: "daemon:status" }); send({ type: "daemon:status" }); }}>
           <RefreshCcw size={11} />
           Refresh
         </button>
-        <button className="ghost-button btn-sm" disabled={!status?.healthy} onClick={() => send({ type: "daemon:rotate-token" })}>
+        <button className="ghost-button btn-sm" disabled={!status?.running} onClick={() => { console.log("[trace] DaemonStatus click", { button: "daemon:rotate-token" }); send({ type: "daemon:rotate-token" }); }}>
           <KeyRound size={11} />
           Rotate token
         </button>

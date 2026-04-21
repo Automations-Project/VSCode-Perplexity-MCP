@@ -136,10 +136,25 @@ async function spawnBundledDaemon(options: { configDir: string; host?: string; p
     stdio: ["ignore", logFd, logFd],
     env: {
       ...process.env,
+      // Critical: process.execPath inside a VS Code extension host points at
+      // Electron, not Node. Without this flag Electron ignores the JS script
+      // and starts a GUI session. ELECTRON_RUN_AS_NODE=1 tells the same
+      // binary to behave as a pure Node runtime for this child.
+      ELECTRON_RUN_AS_NODE: "1",
       PERPLEXITY_CONFIG_DIR: options.configDir,
     },
   });
   closeSync(logFd);
+  child.on("error", (err) => {
+    try {
+      const extraFd = openDaemonLogFd(options.configDir);
+      const message = `\n[trace] spawnBundledDaemon error: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`;
+      require("node:fs").writeSync(extraFd, message);
+      closeSync(extraFd);
+    } catch {
+      // logging best-effort
+    }
+  });
   child.unref();
 }
 

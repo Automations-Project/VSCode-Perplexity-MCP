@@ -87,6 +87,17 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
 
   app.use(expressFactory.json({ limit: "1mb" }));
 
+  // Trace every admin/mcp request for diagnostics.
+  app.use((req: any, res: any, next: any) => {
+    const startedAtReq = Date.now();
+    const hasAuth = typeof req.headers?.authorization === "string";
+    res.on("finish", () => {
+      const durationMs = Date.now() - startedAtReq;
+      console.error(`[trace] http ${req.method} ${req.url ?? req.path} auth=${hasAuth ? "yes" : "no"} status=${res.statusCode} dur=${durationMs}ms`);
+    });
+    next();
+  });
+
   const requireBearer = (req: any, res: any, next: any) => {
     const header = readAuthorizationHeader(req.headers?.authorization);
     if (header !== currentToken.bearerToken) {

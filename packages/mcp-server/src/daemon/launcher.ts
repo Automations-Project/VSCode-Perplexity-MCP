@@ -105,6 +105,25 @@ export async function getDaemonStatus(options: {
     };
   }
 
+  // Self-lockfile guard: if our own process owns the lockfile, that means the
+  // HTTP server is running in the current process (a bug — we always want a
+  // detached child). Release the lock; the caller will re-spawn cleanly.
+  if (record.pid === process.pid) {
+    if (options.reclaimStale) {
+      release({ lockPath, expectedUuid: record.uuid });
+    }
+    return {
+      running: false,
+      healthy: false,
+      stale: true,
+      configDir,
+      lockPath,
+      tokenPath,
+      record,
+      health: null,
+    };
+  }
+
   const health = await probeHealth(record, { timeoutMs: options.healthTimeoutMs });
   const healthy = Boolean(health?.ok && health.uuid === record.uuid);
   const stale = !healthy && isStale(record, { echoedUuid: health?.uuid ?? null });
@@ -545,10 +564,17 @@ async function probeHealth(
       signal: controller.signal,
     });
     if (!response.ok) {
+      if (process.env.PERPLEXITY_DEBUG === "1") {
+        console.error(`[trace] probeHealth non-ok status=${response.status} port=${record.port}`);
+      }
       return null;
     }
     return await response.json() as DaemonHealthStatus;
-  } catch {
+  } catch (err) {
+    if (process.env.PERPLEXITY_DEBUG === "1") {
+      const stack = err instanceof Error ? (err.stack ?? err.message) : String(err);
+      console.error(`[trace] probeHealth threw port=${record.port}: ${stack}`);
+    }
     return null;
   } finally {
     clearTimeout(timeout);

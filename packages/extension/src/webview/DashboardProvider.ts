@@ -162,6 +162,12 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
     void this.postDaemonState({ ensure: true, restartEvents: true });
 
     webviewView.webview.onDidReceiveMessage(async (message: WebviewMessage) => {
+      if (message.type === "log:webview") {
+        const { level, args, ts } = message.payload;
+        const serialized = args.map((a) => typeof a === "string" ? a : (() => { try { return JSON.stringify(a); } catch { return String(a); } })()).join(" ");
+        debug(`[webview/${level}] ${ts} ${serialized}`);
+        return;
+      }
       debug(`Webview message received: ${JSON.stringify(message)}`);
       try {
         switch (message.type) {
@@ -924,22 +930,40 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    if (options.ensure) {
-      await ensureBundledDaemon();
-    }
+    debug(`[trace] postDaemonState enter options=${JSON.stringify(options)}`);
+    try {
+      if (options.ensure) {
+        try {
+          const daemon = await ensureBundledDaemon();
+          debug(`[trace] ensureBundledDaemon OK pid=${daemon.pid} port=${daemon.port} url=${daemon.url}`);
+        } catch (err) {
+          const stack = err instanceof Error ? (err.stack ?? err.message) : String(err);
+          debug(`[trace] ensureBundledDaemon FAILED: ${stack}`);
+          // fall through so we still post whatever status we can
+        }
+      }
 
-    const status = await getBundledDaemonStatus();
-    await this.view.webview.postMessage({
-      type: "daemon:status-updated",
-      payload: this.toDaemonStatusPayload(status),
-    } satisfies ExtensionMessage);
-    await this.view.webview.postMessage({
-      type: "daemon:audit-tail",
-      payload: { items: readBundledDaemonAuditTail(50) as DaemonAuditEntry[] },
-    } satisfies ExtensionMessage);
+      const status = await getBundledDaemonStatus();
+      const payload = this.toDaemonStatusPayload(status);
+      debug(`[trace] postDaemonState status running=${status.running} healthy=${status.healthy} stale=${status.stale} pid=${payload.pid} port=${payload.port} tunnel=${payload.tunnel?.status}`);
 
-    if (options.restartEvents && status.running && status.healthy) {
-      await this.startDaemonEventStream();
+      await this.view.webview.postMessage({
+        type: "daemon:status-updated",
+        payload,
+      } satisfies ExtensionMessage);
+      await this.view.webview.postMessage({
+        type: "daemon:audit-tail",
+        payload: { items: readBundledDaemonAuditTail(50) as DaemonAuditEntry[] },
+      } satisfies ExtensionMessage);
+
+      if (options.restartEvents && status.running && status.healthy) {
+        await this.startDaemonEventStream();
+      }
+      debug("[trace] postDaemonState exit OK");
+    } catch (err) {
+      const stack = err instanceof Error ? (err.stack ?? err.message) : String(err);
+      debug(`[trace] postDaemonState THREW: ${stack}`);
+      throw err;
     }
   }
 

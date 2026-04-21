@@ -256,6 +256,10 @@ export type WebviewMessage =
       type: "ready";
     }
   | {
+      type: "log:webview";
+      payload: { level: "log" | "warn" | "error" | "info" | "debug"; args: unknown[]; ts: string };
+    }
+  | {
       type: "auth:login";
       id: string;
     }
