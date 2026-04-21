@@ -8,8 +8,10 @@ import { getActiveName, getConfigDir } from "../profiles.js";
 import { watchReinit } from "../reinit-watcher.js";
 import type { StartedDaemonServer } from "./server.js";
 import { startDaemonServer } from "./server.js";
+import { getTunnelBinaryPath } from "./install-tunnel.js";
 import { acquire, getLockfilePath, isStale, read, release, replace, type DaemonLockRecord } from "./lockfile.js";
 import { ensureToken, getTokenPath } from "./token.js";
+import { startTunnel, type TunnelState } from "./tunnel.js";
 
 export interface DaemonHealthStatus {
   ok: boolean;
@@ -23,6 +25,8 @@ export interface DaemonHealthStatus {
   tunnel?: {
     status?: string;
     url?: string | null;
+    pid?: number | null;
+    error?: string | null;
   };
 }
 
@@ -220,10 +224,111 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Sta
 
     const profile = process.env.PERPLEXITY_PROFILE || getActiveName() || "default";
     const client = options.createClient ? options.createClient() : new PerplexityClient();
+    let tunnelState: TunnelState = {
+      status: "disabled",
+      url: null,
+      pid: null,
+      error: null,
+    };
+    let tunnelController: ReturnType<typeof startTunnel> | null = null;
+    let tunnelStartPromise: Promise<void> | null = null;
+
+    const buildRecord = (bearerToken = server?.bearerToken ?? token.bearerToken): DaemonLockRecord => ({
+      pid: process.pid,
+      uuid,
+      port: server?.port ?? provisional.port,
+      bearerToken,
+      version,
+      startedAt,
+      cloudflaredPid: tunnelState.pid ?? null,
+      tunnelUrl: tunnelState.url ?? null,
+    });
+
+    const syncLockfile = (bearerToken = server?.bearerToken ?? token.bearerToken) => {
+      replace(buildRecord(bearerToken), { lockPath, expectedUuid: uuid });
+    };
+
+    const publishTunnelState = () => {
+      if (!server) {
+        return;
+      }
+      syncLockfile(server.bearerToken);
+      server.publishEvent("daemon:tunnel-url", {
+        status: tunnelState.status,
+        url: tunnelState.url,
+        pid: tunnelState.pid,
+        error: tunnelState.error ?? null,
+      });
+    };
+
+    const enableTunnelRuntime = async () => {
+      if (!server) {
+        throw new Error("Daemon server is not ready yet.");
+      }
+      if (tunnelState.status === "enabled") {
+        return;
+      }
+      if (tunnelStartPromise) {
+        await tunnelStartPromise;
+        return;
+      }
+
+      const binaryPath = getTunnelBinaryPath(configDir);
+      if (!existsSync(binaryPath)) {
+        throw new Error("cloudflared is not installed. Run `npx perplexity-user-mcp daemon install-tunnel` first.");
+      }
+
+      tunnelController = startTunnel({
+        command: binaryPath,
+        port: server.port,
+        onStateChange: (nextState) => {
+          tunnelState = nextState;
+          if (nextState.status === "crashed" || nextState.status === "disabled") {
+            tunnelController = null;
+          }
+          publishTunnelState();
+        },
+      });
+
+      tunnelStartPromise = tunnelController.waitUntilReady
+        .then(() => undefined)
+        .finally(() => {
+          tunnelStartPromise = null;
+        });
+
+      await tunnelStartPromise;
+    };
+
+    const disableTunnelRuntime = async () => {
+      const controller = tunnelController;
+      tunnelController = null;
+      if (!controller) {
+        if (tunnelState.status !== "disabled") {
+          tunnelState = {
+            status: "disabled",
+            url: null,
+            pid: null,
+            error: null,
+          };
+          publishTunnelState();
+        }
+        return;
+      }
+
+      await controller.stop();
+      tunnelState = {
+        status: "disabled",
+        url: null,
+        pid: null,
+        error: null,
+      };
+      publishTunnelState();
+    };
 
     const finalize = async () => {
       if (!finalizePromise) {
         finalizePromise = (async () => {
+          await disableTunnelRuntime().catch(() => undefined);
           watcher?.dispose();
           if (options.signal && abortHandler) {
             options.signal.removeEventListener("abort", abortHandler);
@@ -265,40 +370,23 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Sta
         bearerToken: token.bearerToken,
         createClient: () => client,
         onShutdown: finalize,
+        getTunnelState: () => tunnelState,
+        onEnableTunnel: enableTunnelRuntime,
+        onDisableTunnel: disableTunnelRuntime,
         onTokenRotated: async (nextToken) => {
-          replace(
-            {
-              pid: process.pid,
-              uuid,
-              port: server!.port,
-              bearerToken: nextToken.bearerToken,
-              version,
-              startedAt,
-              cloudflaredPid: null,
-              tunnelUrl: null,
-            },
-            { lockPath, expectedUuid: uuid },
-          );
+          syncLockfile(nextToken.bearerToken);
         },
       });
 
-      replace(
-        {
-          pid: process.pid,
-          uuid,
-          port: server.port,
-          bearerToken: server.bearerToken,
-          version,
-          startedAt,
-          cloudflaredPid: null,
-          tunnelUrl: null,
-        },
-        { lockPath, expectedUuid: uuid },
-      );
+      syncLockfile(server.bearerToken);
 
       process.on("SIGINT", signalHandler);
       process.on("SIGTERM", signalHandler);
       options.signal?.addEventListener("abort", abortHandler);
+
+      if (options.tunnel) {
+        await enableTunnelRuntime();
+      }
 
       return {
         attached: false,
@@ -309,7 +397,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Sta
         bearerToken: server.bearerToken,
         version,
         startedAt,
-        tunnelUrl: null,
+        tunnelUrl: tunnelState.url,
         close,
         closed,
       };
@@ -389,6 +477,54 @@ export async function rotateDaemonToken(options: {
   return toConnectionInfo(updated.record, updated.health);
 }
 
+export async function enableDaemonTunnel(options: {
+  configDir?: string;
+  healthTimeoutMs?: number;
+} = {}): Promise<DaemonStatus> {
+  const configDir = options.configDir ?? getConfigDir();
+  const status = await getDaemonStatus({
+    configDir,
+    reclaimStale: true,
+    healthTimeoutMs: options.healthTimeoutMs,
+  });
+
+  if (!status.running || !status.healthy || !status.record) {
+    throw new Error("Daemon is not running.");
+  }
+
+  await adminRequest(status.record, "/daemon/enable-tunnel", { method: "POST" });
+  await delay(100);
+  return await getDaemonStatus({
+    configDir,
+    reclaimStale: false,
+    healthTimeoutMs: options.healthTimeoutMs,
+  });
+}
+
+export async function disableDaemonTunnel(options: {
+  configDir?: string;
+  healthTimeoutMs?: number;
+} = {}): Promise<DaemonStatus> {
+  const configDir = options.configDir ?? getConfigDir();
+  const status = await getDaemonStatus({
+    configDir,
+    reclaimStale: true,
+    healthTimeoutMs: options.healthTimeoutMs,
+  });
+
+  if (!status.running || !status.healthy || !status.record) {
+    throw new Error("Daemon is not running.");
+  }
+
+  await adminRequest(status.record, "/daemon/disable-tunnel", { method: "POST" });
+  await delay(100);
+  return await getDaemonStatus({
+    configDir,
+    reclaimStale: false,
+    healthTimeoutMs: options.healthTimeoutMs,
+  });
+}
+
 async function probeHealth(
   record: DaemonLockRecord,
   options: { timeoutMs?: number } = {},
@@ -423,7 +559,7 @@ async function adminRequest(
   record: DaemonLockRecord,
   path: string,
   options: { method: string; body?: unknown },
-): Promise<void> {
+): Promise<unknown> {
   const response = await fetch(`http://127.0.0.1:${record.port}${path}`, {
     method: options.method,
     headers: {
@@ -437,6 +573,15 @@ async function adminRequest(
     const detail = await response.text().catch(() => "");
     throw new Error(`Daemon admin request failed (${response.status}): ${detail || response.statusText}`);
   }
+
+  if (response.status === 204) {
+    return null;
+  }
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    return await response.json();
+  }
+  return await response.text().catch(() => null);
 }
 
 function toConnectionInfo(record: DaemonLockRecord, health: DaemonHealthStatus): DaemonConnectionInfo {

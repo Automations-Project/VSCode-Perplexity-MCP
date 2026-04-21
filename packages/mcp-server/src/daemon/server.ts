@@ -12,6 +12,13 @@ import { ensureToken, getTokenPath, rotateToken, type DaemonTokenRecord } from "
 
 type EventPayload = Record<string, unknown>;
 
+export interface DaemonTunnelHealth {
+  status: "disabled" | "starting" | "enabled" | "crashed";
+  url: string | null;
+  pid?: number | null;
+  error?: string | null;
+}
+
 export interface StartDaemonServerOptions {
   host?: string;
   port?: number;
@@ -22,6 +29,9 @@ export interface StartDaemonServerOptions {
   createClient?: () => PerplexityClient;
   onShutdown?: () => Promise<void> | void;
   onTokenRotated?: (token: DaemonTokenRecord) => Promise<void> | void;
+  getTunnelState?: () => DaemonTunnelHealth;
+  onEnableTunnel?: () => Promise<void> | void;
+  onDisableTunnel?: () => Promise<void> | void;
 }
 
 export interface StartedDaemonServer {
@@ -104,9 +114,11 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
     uptimeMs: Date.now() - startedAt,
     startedAt: new Date(startedAt).toISOString(),
     heartbeatCount: heartbeatMap.size,
-    tunnel: {
+    tunnel: options.getTunnelState?.() ?? {
       status: "disabled",
       url: null,
+      pid: null,
+      error: null,
     },
   });
 
@@ -164,6 +176,24 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
     setImmediate(() => {
       close().catch(next);
     });
+  });
+
+  app.post("/daemon/enable-tunnel", requireBearer, async (_req: any, res: any, next: any) => {
+    try {
+      await options.onEnableTunnel?.();
+      res.json({ ok: true, tunnel: getHealth().tunnel });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/daemon/disable-tunnel", requireBearer, async (_req: any, res: any, next: any) => {
+    try {
+      await options.onDisableTunnel?.();
+      res.json({ ok: true, tunnel: getHealth().tunnel });
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.all("/mcp", requireBearer, async (req: any, res: any, next: any) => {

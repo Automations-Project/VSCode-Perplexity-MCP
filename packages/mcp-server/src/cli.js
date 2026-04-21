@@ -186,15 +186,43 @@ export async function routeCommand(parsed) {
     return { code: 0, stdout: "", stderr: "" };
   }
 
-  if (
-    command === "daemon:install-tunnel"
-    || command === "daemon:enable-tunnel"
-    || command === "daemon:disable-tunnel"
-  ) {
-    const message = flags.json
-      ? JSON.stringify({ ok: false, error: "not-yet-implemented", command })
-      : `'${command.replace("daemon:", "daemon ")}' is not yet implemented (arrives in Task 4).`;
-    return { code: 0, stdout: message + "\n", stderr: "" };
+  if (command === "daemon:install-tunnel") {
+    const { installCloudflared } = await import("./daemon/install-tunnel.js");
+    const result = await installCloudflared({ configDir: process.env.PERPLEXITY_CONFIG_DIR });
+    const body = flags.json
+      ? JSON.stringify({ ok: true, ...result })
+      : `Installed cloudflared ${result.version} to ${result.binaryPath}`;
+    return { code: 0, stdout: body + "\n", stderr: "" };
+  }
+
+  if (command === "daemon:enable-tunnel") {
+    try {
+      const { enableDaemonTunnel } = await import("./daemon/launcher.js");
+      const status = await enableDaemonTunnel({ configDir: process.env.PERPLEXITY_CONFIG_DIR });
+      const body = flags.json
+        ? JSON.stringify({ ok: true, ...serializeDaemonStatus(status) })
+        : status.health?.tunnel?.url
+          ? `Tunnel enabled: ${status.health.tunnel.url}`
+          : "Tunnel enable requested.";
+      return { code: 0, stdout: body + "\n", stderr: "" };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { code: 1, stdout: "", stderr: message + "\n" };
+    }
+  }
+
+  if (command === "daemon:disable-tunnel") {
+    try {
+      const { disableDaemonTunnel } = await import("./daemon/launcher.js");
+      const status = await disableDaemonTunnel({ configDir: process.env.PERPLEXITY_CONFIG_DIR });
+      const body = flags.json
+        ? JSON.stringify({ ok: true, ...serializeDaemonStatus(status) })
+        : "Tunnel disabled.";
+      return { code: 0, stdout: body + "\n", stderr: "" };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { code: 1, stdout: "", stderr: message + "\n" };
+    }
   }
 
   if (command === "list-accounts") {
