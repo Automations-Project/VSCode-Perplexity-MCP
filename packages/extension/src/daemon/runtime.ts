@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { closeSync, mkdirSync, openSync, statSync, renameSync } from "node:fs";
+import { join } from "node:path";
 import {
   disableDaemonTunnel,
   enableDaemonTunnel,
@@ -15,6 +17,8 @@ import {
   type DaemonExportResult,
   type DaemonHydrateResult,
 } from "perplexity-user-mcp/daemon";
+
+const DAEMON_LOG_MAX_BYTES = 2 * 1024 * 1024;
 
 interface RuntimeConfig {
   configDir: string;
@@ -113,13 +117,29 @@ async function spawnBundledDaemon(options: { configDir: string; host?: string; p
     args.push("--tunnel");
   }
 
+  const logFd = openDaemonLogFd(options.configDir);
   const child = spawn(process.execPath, args, {
     detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", logFd, logFd],
     env: {
       ...process.env,
       PERPLEXITY_CONFIG_DIR: options.configDir,
     },
   });
+  closeSync(logFd);
   child.unref();
+}
+
+function openDaemonLogFd(configDir: string): number {
+  mkdirSync(configDir, { recursive: true });
+  const logPath = join(configDir, "daemon.log");
+  try {
+    const stat = statSync(logPath);
+    if (stat.size > DAEMON_LOG_MAX_BYTES) {
+      renameSync(logPath, logPath + ".1");
+    }
+  } catch {
+    // fresh log
+  }
+  return openSync(logPath, "a");
 }

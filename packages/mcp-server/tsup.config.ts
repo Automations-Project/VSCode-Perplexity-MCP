@@ -67,6 +67,10 @@ export default defineConfig({
     // throws "Dynamic require of fs is not supported". Load it from
     // node_modules instead so Node's native CJS interop handles it.
     "gray-matter",
+    // express and its CJS transitive deps (body-parser, depd, ...) use
+    // top-level `require("path")` / `require("fs")`. Same __require shim
+    // failure as gray-matter above — must resolve from node_modules at runtime.
+    "express",
   ],
   // Shebang is NOT emitted into source files — it tripped vitest/esbuild
   // during test imports of cli.js. npm's `bin` linker wraps the entry with
