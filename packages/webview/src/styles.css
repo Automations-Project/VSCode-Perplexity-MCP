@@ -643,8 +643,16 @@ a {
 /* ── History Card (Rich) ─────────────────── */
 .hist-card {
   padding: 0;
-  overflow: hidden;
+  overflow: visible;
+  position: relative;
+  z-index: 0;
   transition: border-color 200ms ease, box-shadow 200ms ease;
+  /* IMPORTANT: cancel the backdrop-filter inherited from .glass-panel.
+     Any CSS filter/backdrop-filter forms a stacking context that traps
+     descendants (including `position: fixed` popovers). Cards still get
+     the subtle gradient + border + shadow from .glass-panel above. */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .hist-card:hover {
@@ -654,6 +662,15 @@ a {
 .hist-card-expanded {
   border-color: rgba(125, 211, 252, 0.2);
   box-shadow: 0 0 16px rgba(125, 211, 252, 0.06);
+  overflow: visible;
+}
+
+/* When any dropdown inside the card is open, raise its stacking context
+   above all following card siblings so the popover isn't painted behind
+   the next card. Requires :has() — VS Code webview runs current Chromium. */
+.hist-card:has(.hist-menu[open]) {
+  z-index: 50;
+  overflow: visible;
 }
 
 .hist-card-error {
@@ -771,6 +788,22 @@ a {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+  align-items: center;
+  row-gap: 6px;
+}
+
+.hist-actions-divider {
+  display: inline-block;
+  width: 1px;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 0 2px;
+}
+
+.hist-tag-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .hist-action-btn {
@@ -816,6 +849,90 @@ a {
 .hist-action-link:hover {
   background: rgba(34, 197, 94, 0.1);
   border-color: rgba(34, 197, 94, 0.35);
+}
+
+.hist-menu {
+  position: relative;
+  display: inline-block;
+}
+
+/* The clickable <summary> doubles as a button — strip default disclosure
+   triangle and make it a flex target so caret lines up with label. */
+.hist-menu summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.hist-menu summary::-webkit-details-marker,
+.hist-menu summary::marker {
+  display: none;
+  content: "";
+}
+
+.hist-action-menu {
+  gap: 6px;
+}
+
+.hist-action-caret {
+  font-size: 0.7rem;
+  line-height: 1;
+  opacity: 0.7;
+  transition: transform 150ms ease;
+}
+
+.hist-menu[open] .hist-action-caret {
+  transform: rotate(180deg);
+}
+
+.hist-menu[open] > summary {
+  background: rgba(125, 211, 252, 0.12);
+  border-color: rgba(125, 211, 252, 0.35);
+  color: #bae6fd;
+}
+
+.hist-menu-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  /* Very high so it beats any ambient stacking contexts from cards below. */
+  z-index: 9999;
+  min-width: 180px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--surface-elevated);
+  box-shadow: 0 14px 36px rgba(2, 6, 23, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* For menus near the right edge of the card, flip anchor so the popover
+   doesn't clip off-screen. Apply by adding `hist-menu-right` on the
+   <details> element. */
+.hist-menu-right .hist-menu-popover {
+  left: auto;
+  right: 0;
+}
+
+.hist-menu-item {
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 7px 9px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hist-menu-item:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.hist-menu-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* ── Footer (collapsed state) ────────────── */
@@ -866,6 +983,76 @@ a {
   font-size: 0.72rem;
   color: #fca5a5;
   line-height: 1.4;
+}
+
+.hist-source-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #7dd3fc;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.hist-source-link:hover {
+  text-decoration: underline;
+}
+
+.rich-view-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(2, 6, 23, 0.72);
+  backdrop-filter: blur(10px);
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 14px;
+}
+
+.rich-view-panel {
+  width: min(1180px, 100%);
+  max-height: 100%;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.rich-view-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.rich-view-grid {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(260px, 0.9fr);
+  gap: 12px;
+}
+
+.rich-view-body,
+.rich-view-sidebar {
+  min-height: 0;
+}
+
+.rich-view-body {
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 14px;
+  overflow: auto;
+}
+
+.rich-view-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: auto;
 }
 
 /* ── Models: Tool Config Rows ────────────── */
@@ -1329,6 +1516,16 @@ a {
   }
 
   .metric-column {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 920px) {
+  .rich-view-overlay {
+    padding: 8px;
+  }
+
+  .rich-view-grid {
     grid-template-columns: 1fr;
   }
 }

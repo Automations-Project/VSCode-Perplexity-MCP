@@ -44,5 +44,29 @@ export async function run(opts = {}) {
     results.push({ category: CATEGORY, name: id, status: "pass", message: `${s.displayName} configured` });
   }
 
+  try {
+    const { detectAllViewers } = await import("../viewer-detect.js");
+    const viewers = await detectAllViewers();
+    const detected = Object.entries(viewers)
+      .filter(([, present]) => present)
+      .map(([id]) => id);
+    results.push({
+      category: CATEGORY,
+      name: "mdViewers",
+      status: "pass",
+      message: detected.length > 0
+        ? `Detected MD viewers: ${detected.join(", ")}`
+        : "No external MD viewers detected (VS Code preview and Rich View remain available).",
+      detail: { viewers },
+    });
+  } catch (err) {
+    results.push({
+      category: CATEGORY,
+      name: "mdViewers",
+      status: "warn",
+      message: `Viewer detection failed: ${(err instanceof Error ? err.message : String(err))}`,
+    });
+  }
+
   return results;
 }

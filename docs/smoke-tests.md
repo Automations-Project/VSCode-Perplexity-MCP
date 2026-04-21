@@ -41,3 +41,16 @@ Run these on Windows 11 after `npm run package:vsix` in `packages/extension/` pr
 - [ ] **Doctor: patchright + got-scraping-chain both pass.** Open the Doctor tab -> click **Run**. The `native-deps` category's `patchright` check should be `pass` (no "not resolvable" error) and `got-scraping-chain` should be `pass` (no warn). The carry-over #5 detector remains, but the false positive is gone.
 - [ ] **Doctor report timestamp is readable.** In the Doctor tab, click **Report issue** on any failing check -> the preview modal shows `Generated: <real ISO timestamp>` -- NOT `Generated: <ip>.278Z`.
 - [ ] **Tab order.** The tab strip reads: Home -> IDEs -> Rules -> Models -> Doctor -> History. Doctor is second-to-last, not second.
+
+## Phase 4 — History Viewer (0.5.0)
+
+Run these before tagging `v0.5.0`.
+
+- [ ] **History writes as Markdown.** Run a new `perplexity_search` or `perplexity_research`, then confirm a new `~/.perplexity-mcp/profiles/<name>/history/*.md` file exists with YAML frontmatter and readable Markdown body.
+- [ ] **Rich View renders.** Open the dashboard -> History -> Rich View for an entry. Confirm the overlay shows the Markdown body, metadata, sources, and attachments sidebar. Press `Esc` and confirm it closes.
+- [ ] **Markdown export fallback works.** From the dashboard or `Perplexity: Export History Entry`, export an entry as Markdown. Confirm a `.md` copy is written under that entry's attachments directory.
+- [ ] **Native PDF or DOCX export works for an authenticated entry.** Export a logged-in entry as PDF or DOCX and confirm the saved file opens correctly from the attachments directory.
+- [ ] **Preview and external open flows work.** Use **Open with** -> `VS Code preview` and at least one detected external viewer or `System default`.
+- [ ] **Pin and tag changes round-trip.** Pin an entry in Rich View, add/update tags, refresh the dashboard, and confirm the card and Rich View metadata stay in sync.
+- [ ] **Rebuild index recovers history.** Run `Perplexity: Rebuild History Index` or `npx perplexity-user-mcp rebuild-history-index --json` and confirm it reports scan counts and the History tab still loads.
+- [ ] **Doctor reports viewer detection.** Run `npx perplexity-user-mcp doctor` and confirm the `ide.mdViewers` check reports detected viewers without failing when none are installed.

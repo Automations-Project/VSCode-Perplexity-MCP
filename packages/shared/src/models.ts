@@ -80,6 +80,21 @@ export interface SavedResearchSummary {
   error?: string;
 }
 
+export interface HistorySource {
+  n: number;
+  title: string;
+  url: string;
+  snippet?: string;
+}
+
+export interface HistoryAttachment {
+  filename: string;
+  relPath: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  kind?: "image" | "file";
+}
+
 export interface HistoryItem {
   id: string;
   tool: string;
@@ -91,5 +106,17 @@ export interface HistoryItem {
   answerPreview: string;
   sourceCount: number;
   threadUrl?: string;
+  status?: "completed" | "pending" | "failed";
+  completedAt?: string;
+  tier?: "Max" | "Pro" | "Enterprise" | "Authenticated" | "Anonymous";
+  threadSlug?: string | null;
+  backendUuid?: string | null;
+  readWriteToken?: string | null;
+  sources?: HistorySource[];
+  attachments?: HistoryAttachment[];
+  tags?: string[];
+  pinned?: boolean;
+  source?: "mcp" | "cloud";
+  cloudHydratedAt?: string;
   error?: string;
 }

@@ -1,6 +1,6 @@
 {
   "name": "perplexity-user-mcp",
-  "version": "0.4.7",
+  "version": "0.5.0",
   "type": "module",
   "description": "Perplexity AI MCP server — browser automation for search, reasoning, research, and compute",
   "author": "A.R.",
@@ -32,6 +32,26 @@
       "types": "./dist/client.d.ts",
       "import": "./dist/client.mjs"
     },
+    "./history-store": {
+      "types": "./dist/history-store.d.ts",
+      "import": "./dist/history-store.mjs"
+    },
+    "./attachments": {
+      "types": "./dist/attachments.d.ts",
+      "import": "./dist/attachments.mjs"
+    },
+    "./export": {
+      "types": "./dist/export.d.ts",
+      "import": "./dist/export.mjs"
+    },
+    "./viewers": {
+      "types": "./dist/viewers.d.ts",
+      "import": "./dist/viewers.mjs"
+    },
+    "./viewer-detect": {
+      "types": "./dist/viewer-detect.d.ts",
+      "import": "./dist/viewer-detect.mjs"
+    },
     "./config": {
       "types": "./dist/config.d.ts",
       "import": "./dist/config.mjs"
@@ -39,10 +59,6 @@
     "./refresh": {
       "types": "./dist/refresh.d.ts",
       "import": "./dist/refresh.mjs"
-    },
-    "./research-store": {
-      "types": "./dist/research-store.d.ts",
-      "import": "./dist/research-store.mjs"
     },
     "./logout": {
       "types": "./dist/logout.d.ts",
@@ -72,6 +88,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
+    "gray-matter": "^4.0.3",
     "got-scraping": "^4.2.1",
     "patchright": "^1.59.4",
     "zod": "^3.24.0"

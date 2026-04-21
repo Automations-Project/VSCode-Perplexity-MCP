@@ -18,6 +18,7 @@ import { ProfileSwitcher } from "./components/ProfileSwitcher";
 import { OtpModal } from "./components/OtpModal";
 import { ExpiredBanner } from "./components/ExpiredBanner";
 import { DoctorTab } from "./components/DoctorTab";
+import { RichView } from "./components/RichView";
 
 const tabs: Array<{ id: AppTab; label: string; icon: typeof Compass }> = [
   { id: "dashboard", label: "Home", icon: Compass },
@@ -44,6 +45,18 @@ const ACTION_TYPES = new Set<string>([
   "doctor:export",
   "doctor:report-issue",
   "doctor:action",
+  "history:request-entry",
+  "history:open-preview",
+  "history:open-rich",
+  "history:open-with",
+  "history:export",
+  "history:pin",
+  "history:tag",
+  "history:delete",
+  "history:rebuild-index",
+  "history:cloud-sync",
+  "history:cloud-hydrate",
+  "viewers:configure",
 ]);
 
 let actionSeq = 0;
@@ -76,7 +89,10 @@ function filterHistory(items: HistoryItem[], filter: string): HistoryItem[] {
     (item) =>
       item.query.toLowerCase().includes(needle) ||
       item.tool.toLowerCase().includes(needle) ||
-      item.answerPreview.toLowerCase().includes(needle),
+      item.answerPreview.toLowerCase().includes(needle) ||
+      (item.model ?? "").toLowerCase().includes(needle) ||
+      (item.status ?? "").toLowerCase().includes(needle) ||
+      (item.tags ?? []).some((tag) => tag.toLowerCase().includes(needle)),
   );
 }
 
@@ -96,6 +112,9 @@ function App() {
   const clearNotice = useDashboardStore((store) => store.clearNotice);
   const modelsRefresh = useDashboardStore((store) => store.modelsRefresh);
   const activeProfile = useDashboardStore((store) => store.activeProfile);
+  const richViewEntry = useDashboardStore((store) => store.richViewEntry);
+  const externalViewers = useDashboardStore((store) => store.externalViewers);
+  const setRichViewEntry = useDashboardStore((store) => store.setRichViewEntry);
 
   const [modelFilter, setModelFilter] = useState("");
   const [historyFilter, setHistoryFilter] = useState("");
@@ -149,6 +168,14 @@ function App() {
 
       <ExpiredBanner send={send} />
       <OtpModal send={send} />
+      {richViewEntry ? (
+        <RichView
+          entry={richViewEntry}
+          viewers={externalViewers}
+          send={send}
+          onClose={() => setRichViewEntry(null)}
+        />
+      ) : null}
 
       <header className="glass-panel sidebar-panel">
         <div className="flex items-center gap-2 min-w-0">
@@ -244,7 +271,7 @@ function App() {
               <ModelsView filter={modelFilter} setFilter={setModelFilter} groups={modelGroups} state={state} send={send} />
             ) : null}
             {state && activeTab === "history" ? (
-              <HistoryView filter={historyFilter} setFilter={setHistoryFilter} items={filteredHistory} />
+              <HistoryView filter={historyFilter} setFilter={setHistoryFilter} items={filteredHistory} send={send} />
             ) : null}
             {state && activeTab === "settings" ? <SettingsView state={state} send={send} /> : null}
             {state && activeTab === "rules" ? <RulesView state={state} send={send} /> : null}

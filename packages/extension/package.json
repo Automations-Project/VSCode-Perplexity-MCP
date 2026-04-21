@@ -1,7 +1,7 @@
 {
   "name": "perplexity-vscode",
   "displayName": "Perplexity Internal MCP",
-  "version": "0.4.7",
+  "version": "0.5.0",
   "publisher": "private",
   "private": true,
   "description": "Native VS Code extension for the Perplexity Internal MCP server with dashboard, auth, and multi-IDE config generation",
@@ -21,6 +21,10 @@
     "onCommand:Perplexity.generateConfigs",
     "onCommand:Perplexity.refreshDashboard",
     "onCommand:Perplexity.refreshModels",
+    "onCommand:Perplexity.openRichView",
+    "onCommand:Perplexity.exportHistory",
+    "onCommand:Perplexity.rebuildHistoryIndex",
+    "onCommand:Perplexity.syncCloudHistory",
     "onCommand:Perplexity.logout",
     "onCommand:Perplexity.switchAccount",
     "onCommand:Perplexity.addAccount"
@@ -51,6 +55,26 @@
       {
         "command": "Perplexity.refreshModels",
         "title": "Perplexity: Refresh Models (Live Fetch)",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.openRichView",
+        "title": "Perplexity: Open Rich View",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.exportHistory",
+        "title": "Perplexity: Export History Entry",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.rebuildHistoryIndex",
+        "title": "Perplexity: Rebuild History Index",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.syncCloudHistory",
+        "title": "Perplexity: Sync History from Cloud",
         "category": "Perplexity"
       },
       {
@@ -240,9 +264,9 @@
     "clean": "rimraf dist media/webview",
     "build": "npm run clean && npm run build -w @perplexity-user-mcp/shared && npm run build -w perplexity-user-mcp && npm run build:extension && npm run build:mcp && npm run build:webview && node ./scripts/emit-version.mjs && node ./scripts/prepare-webview.mjs",
     "build:webview": "cd ../webview && npx vite build",
-    "build:extension": "tsup src/extension.ts --format cjs --platform node --target node20 --outDir dist --external vscode --external patchright --external patchright-core --external got-scraping --external got --external tough-cookie --external header-generator --external got-scraping-v4 --external header-generator-v3 --external fingerprint-generator --external fingerprint-injector",
-    "build:mcp": "tsup ../mcp-server/src/index.ts ../mcp-server/src/manual-login-runner.js ../mcp-server/src/login-runner.js ../mcp-server/src/health-check.js --format esm --platform node --target node20 --outDir dist/mcp --external patchright --external patchright-core --external got-scraping --external got --external tough-cookie --external header-generator --external fingerprint-generator --external keytar && node -e \"require('fs').renameSync('dist/mcp/index.mjs','dist/mcp/server.mjs')\" && node -e \"require('fs').copyFileSync('../mcp-server/package.json','dist/mcp/package.json')\"",
-    "watch": "tsup src/extension.ts --format cjs --platform node --target node20 --outDir dist --external vscode --external patchright --external patchright-core --external got-scraping --external got --external tough-cookie --external header-generator --external fingerprint-generator --watch",
+    "build:extension": "tsup src/extension.ts --format cjs --platform node --target node20 --outDir dist --external vscode --external patchright --external patchright-core --external got-scraping --external got --external tough-cookie --external header-generator --external got-scraping-v4 --external header-generator-v3 --external fingerprint-generator --external fingerprint-injector --external keytar --external gray-matter",
+    "build:mcp": "tsup ../mcp-server/src/index.ts ../mcp-server/src/manual-login-runner.js ../mcp-server/src/login-runner.js ../mcp-server/src/health-check.js --format esm --platform node --target node20 --outDir dist/mcp --external patchright --external patchright-core --external got-scraping --external got --external tough-cookie --external header-generator --external fingerprint-generator --external keytar --external gray-matter && node -e \"require('fs').renameSync('dist/mcp/index.mjs','dist/mcp/server.mjs')\" && node -e \"require('fs').copyFileSync('../mcp-server/package.json','dist/mcp/package.json')\"",
+    "watch": "tsup src/extension.ts --format cjs --platform node --target node20 --outDir dist --external vscode --external patchright --external patchright-core --external got-scraping --external got --external tough-cookie --external header-generator --external fingerprint-generator --external keytar --external gray-matter --watch",
     "prepare:package-deps": "node ./scripts/prepare-package-deps.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "package:vsix": "npm run build && npm run prepare:package-deps && npx @vscode/vsce package --allow-missing-repository --no-dependencies"

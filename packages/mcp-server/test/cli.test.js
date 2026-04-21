@@ -79,17 +79,19 @@ describe("routeCommand — phase mapping (remaining stubs)", () => {
 
   it("export maps to Phase 4", async () => {
     const res = await routeCommand({ command: "export", flags: {} });
-    expect(res.stdout).toMatch(/Phase 4/);
+    expect(res.code).toBe(1);
+    expect(res.stderr).toMatch(/history id/i);
   });
 
   it("open maps to Phase 4", async () => {
     const res = await routeCommand({ command: "open", flags: {} });
-    expect(res.stdout).toMatch(/Phase 4/);
+    expect(res.code).toBe(1);
+    expect(res.stderr).toMatch(/history id/i);
   });
 
   it("rebuild-history-index maps to Phase 4", async () => {
     const res = await routeCommand({ command: "rebuild-history-index", flags: {} });
-    expect(res.stdout).toMatch(/Phase 4/);
+    expect(res.stdout).toMatch(/Rebuilt history index/);
   });
 });
 
@@ -140,17 +142,19 @@ describe("routeCommand — all phase-3 commands text mode", () => {
 describe("routeCommand — all phase-4 commands text mode", () => {
   it("export outputs Phase 4 text", async () => {
     const res = await routeCommand({ command: "export", flags: {} });
-    expect(res.stdout).toMatch(/Phase 4/);
+    expect(res.code).toBe(1);
+    expect(res.stderr).toMatch(/history id/i);
   });
 
   it("open outputs Phase 4 text", async () => {
     const res = await routeCommand({ command: "open", flags: {} });
-    expect(res.stdout).toMatch(/Phase 4/);
+    expect(res.code).toBe(1);
+    expect(res.stderr).toMatch(/history id/i);
   });
 
   it("rebuild-history-index outputs Phase 4 text", async () => {
     const res = await routeCommand({ command: "rebuild-history-index", flags: {} });
-    expect(res.stdout).toMatch(/Phase 4/);
+    expect(res.stdout).toMatch(/Rebuilt history index/);
   });
 });
 
@@ -311,6 +315,27 @@ describe("cli: account commands (stubs replaced)", () => {
     expect(res.code).toBe(0);
     const parsed = JSON.parse(res.stdout.trim());
     expect(parsed.purged).toBe(true);
+  });
+
+  it("rebuild-history-index --json reports scan counts", async () => {
+    await routeCommand(parseArgs(["add-account", "--name", "default", "--mode", "manual"]));
+    await routeCommand(parseArgs(["switch-account", "default"]));
+    const { append } = await import("../src/history-store.js");
+    append({
+      tool: "perplexity_search",
+      query: "hello",
+      model: "pplx_pro",
+      mode: "copilot",
+      language: "en-US",
+      body: "Hello world",
+    });
+
+    const res = await routeCommand(parseArgs(["rebuild-history-index", "--json"]));
+    expect(res.code).toBe(0);
+    const parsed = JSON.parse(res.stdout.trim());
+    expect(parsed.scanned).toBe(1);
+    expect(parsed.recovered).toBe(1);
+    expect(parsed.skipped).toBe(0);
   });
 });
 

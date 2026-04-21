@@ -12,6 +12,14 @@ export interface HistoryEntry {
   error?: string;
 }
 
+function getThreadSlug(result: SearchResult | undefined): string | null {
+  const slug = result?.followUp?.threadUrlSlug ?? null;
+  if (slug) return slug;
+  if (!result?.threadUrl) return null;
+  const match = result.threadUrl.match(/\/search\/([^/?#]+)/);
+  return match?.[1] ?? null;
+}
+
 export function formatResponse(result: SearchResult): string {
   const parts: string[] = [];
 
@@ -90,5 +98,70 @@ export function buildHistoryEntry(options: {
     sourceCount: options.result?.sources.length ?? 0,
     threadUrl: options.result?.threadUrl,
     error: options.error
+  };
+}
+
+export function buildHistoryBody(result: SearchResult | undefined, error?: string): string {
+  if (error && !result) {
+    return `# Request failed\n\n${error}`;
+  }
+
+  if (!result) {
+    return error ? `# Request failed\n\n${error}` : "";
+  }
+
+  return formatResponse(result);
+}
+
+export function buildStoredHistoryEntry(options: {
+  tool: string;
+  query: string;
+  model: string | null;
+  mode: string | null;
+  language: string | null;
+  tier?: "Max" | "Pro" | "Enterprise" | "Authenticated" | "Anonymous";
+  status?: "completed" | "pending" | "failed";
+  createdAt?: string;
+  completedAt?: string;
+  result?: SearchResult;
+  error?: string;
+}): HistoryEntry & {
+  createdAt: string;
+  body: string;
+  status?: "completed" | "pending" | "failed";
+  completedAt?: string;
+  tier?: "Max" | "Pro" | "Enterprise" | "Authenticated" | "Anonymous";
+  threadSlug?: string | null;
+  backendUuid?: string | null;
+  readWriteToken?: string | null;
+  sources?: Array<{ n: number; title: string; url: string; snippet?: string }>;
+} {
+  const base = buildHistoryEntry(options);
+  const createdAt = options.createdAt ?? new Date().toISOString();
+  const status = options.status ?? (options.error ? "failed" : "completed");
+  const sources = (options.result?.sources ?? []).map((source, index) => ({
+    n: index + 1,
+    title: source.title,
+    url: source.url,
+    ...(source.snippet ? { snippet: source.snippet } : {}),
+  }));
+
+  return {
+    ...base,
+    createdAt,
+    body: buildHistoryBody(options.result, options.error),
+    ...(status ? { status } : {}),
+    ...(options.completedAt
+      ? { completedAt: options.completedAt }
+      : status === "completed"
+        ? { completedAt: createdAt }
+        : {}),
+    ...(options.tier ? { tier: options.tier } : {}),
+    ...(getThreadSlug(options.result) !== null ? { threadSlug: getThreadSlug(options.result) } : {}),
+    ...(options.result?.followUp?.backendUuid ? { backendUuid: options.result.followUp.backendUuid } : {}),
+    ...(options.result?.followUp?.readWriteToken !== undefined
+      ? { readWriteToken: options.result.followUp.readWriteToken }
+      : {}),
+    ...(sources.length > 0 ? { sources } : {}),
   };
 }

@@ -5,7 +5,12 @@ export default defineConfig({
     client: "src/client.ts",
     config: "src/config.ts",
     refresh: "src/refresh.ts",
-    "research-store": "src/research-store.ts",
+    "history-store": "src/history-store.js",
+    "cloud-sync": "src/cloud-sync.js",
+    attachments: "src/attachments.js",
+    export: "src/export.js",
+    viewers: "src/viewers.js",
+    "viewer-detect": "src/viewer-detect.js",
     cli: "src/cli.js",
     profiles: "src/profiles.js",
     vault: "src/vault.js",
@@ -47,6 +52,11 @@ export default defineConfig({
     "header-generator",
     "fingerprint-generator",
     "keytar",
+    // gray-matter is CommonJS (uses top-level `require("fs")`). Inlining into
+    // an ESM bundle crashes at server startup because tsup's __require shim
+    // throws "Dynamic require of fs is not supported". Load it from
+    // node_modules instead so Node's native CJS interop handles it.
+    "gray-matter",
   ],
   // Shebang is NOT emitted into source files — it tripped vitest/esbuild
   // during test imports of cli.js. npm's `bin` linker wraps the entry with

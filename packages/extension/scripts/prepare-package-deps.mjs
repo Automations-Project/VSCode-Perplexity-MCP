@@ -24,7 +24,7 @@ const extensionNodeModules = join(__dirname, "..", "dist", "node_modules");
  *
  * See packages/mcp-server/src/checks/native-deps.js and docs/doctor.md.
  */
-const rootPackages = ["patchright", "patchright-core", "got-scraping", "keytar", "dot-prop", "is-obj"];
+const rootPackages = ["patchright", "patchright-core", "got-scraping", "keytar", "dot-prop", "is-obj", "gray-matter"];
 
 rmSync(extensionNodeModules, { recursive: true, force: true });
 mkdirSync(extensionNodeModules, { recursive: true });
@@ -34,21 +34,50 @@ mkdirSync(extensionNodeModules, { recursive: true });
  * runtime node_modules. Flat layout (npm 7+ hoist convention) — we look up
  * deps from the repo root's node_modules.
  */
-function copyRecursive(packageName, seen = new Set()) {
-  if (seen.has(packageName)) return;
-  seen.add(packageName);
+// Resolve a package by walking up from a starting directory looking for
+// node_modules/<pkg> (mirrors Node's own resolution). Falls back to the
+// workspace-package node_modules trees for packages pinned there by npm.
+function resolveFrom(startDir, packageName) {
+  let current = startDir;
+  while (true) {
+    const candidate = join(current, "node_modules", packageName);
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  const fallbacks = [
+    join(repoRoot, "node_modules", packageName),
+    join(repoRoot, "packages", "mcp-server", "node_modules", packageName),
+    join(repoRoot, "packages", "extension", "node_modules", packageName),
+  ];
+  for (const candidate of fallbacks) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
 
-  const source = join(repoRoot, "node_modules", packageName);
-  const target = join(extensionNodeModules, packageName);
+function resolvePackageSource(packageName) {
+  return resolveFrom(repoRoot, packageName);
+}
 
-  if (!existsSync(source)) {
-    throw new Error(`Required package "${packageName}" not found at ${source}`);
+// Copy a package and walk its deps. Transitive deps resolve relative to the
+// SOURCE package's location so a nested `gray-matter/node_modules/js-yaml`
+// wins over a hoisted root `js-yaml` of a different major version.
+function copyRecursive(packageName, fromDir = repoRoot, seen = new Set()) {
+  const source = resolveFrom(fromDir, packageName);
+  if (!source) {
+    throw new Error(`Required package "${packageName}" not found (searched from ${fromDir})`);
   }
 
-  if (existsSync(target)) return; // already copied (diamond dep)
-  cpSync(source, target, { recursive: true });
+  if (seen.has(source)) return;
+  seen.add(source);
 
-  // Pick up transitive deps from the package's own manifest.
+  const target = join(extensionNodeModules, packageName);
+  if (!existsSync(target)) {
+    cpSync(source, target, { recursive: true });
+  }
+
   const manifestPath = join(source, "package.json");
   if (!existsSync(manifestPath)) return;
   try {
@@ -58,10 +87,10 @@ function copyRecursive(packageName, seen = new Set()) {
       ...(manifest.optionalDependencies ?? {}),
     };
     for (const dep of Object.keys(deps)) {
-      // Skip optional deps that weren't actually installed (platform-gated, etc.)
-      const depDir = join(repoRoot, "node_modules", dep);
-      if (!existsSync(depDir)) continue;
-      copyRecursive(dep, seen);
+      if (!resolveFrom(source, dep)) continue;
+      // Transitive deps resolve from the source package's own dir so nested
+      // node_modules (correct version) wins over hoisted mismatches.
+      copyRecursive(dep, source, seen);
     }
   } catch {
     // malformed package.json — don't recurse further

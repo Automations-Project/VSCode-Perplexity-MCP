@@ -2,8 +2,13 @@
 // works as a CLI. Kept out of source so vitest/esbuild can parse this file
 // during tests.
 
-import { readFileSync } from "node:fs";
+import { execFile as execFileCallback } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+const execFile = promisify(execFileCallback);
 
 export function parseArgs(argv) {
   if (argv.length === 0) return { command: "server", flags: {} };
@@ -36,8 +41,27 @@ const KNOWN_COMMANDS = new Set([
   "server", "version", "help",
   "login", "logout", "status", "doctor", "install-browser",
   "add-account", "switch-account", "list-accounts",
-  "export", "open", "rebuild-history-index",
+  "export", "open", "rebuild-history-index", "sync-cloud",
 ]);
+
+function normalizeExportFormat(value) {
+  if (value === "md") return "markdown";
+  if (value === "markdown" || value === "pdf" || value === "docx") return value;
+  return null;
+}
+
+async function openTarget(target) {
+  if (process.platform === "win32") {
+    const escaped = String(target).replace(/'/g, "''");
+    await execFile("powershell", ["-NoProfile", "-Command", `Start-Process -FilePath '${escaped}'`]);
+    return;
+  }
+  if (process.platform === "darwin") {
+    await execFile("open", [String(target)]);
+    return;
+  }
+  await execFile("xdg-open", [String(target)]);
+}
 
 export async function routeCommand(parsed) {
   const { command, flags } = parsed;
@@ -179,6 +203,129 @@ export async function routeCommand(parsed) {
     return { code: exit, stdout: formatReportMarkdown(report) + "\n", stderr: "" };
   }
 
+  if (command === "export") {
+    const historyId = parsed.positional?.[0];
+    if (!historyId) return { code: 1, stdout: "", stderr: "export requires a history id.\n" };
+
+    const format = normalizeExportFormat(flags.format);
+    if (!format) return { code: 1, stdout: "", stderr: "export requires --format pdf|md|markdown|docx.\n" };
+
+    const { get } = await import("./history-store.js");
+    const entry = get(historyId);
+    if (!entry) return { code: 1, stdout: "", stderr: `History entry '${historyId}' not found.\n` };
+
+    if (format === "markdown") {
+      const targetPath = flags.out ? String(flags.out) : join(entry.attachmentsDir, entry.mdPath.split(/[\\/]/).pop() || `${entry.id}.md`);
+      mkdirSync(dirname(targetPath), { recursive: true });
+      writeFileSync(targetPath, readFileSync(entry.mdPath, "utf8"), "utf8");
+      const body = flags.json
+        ? JSON.stringify({ ok: true, format, savedPath: targetPath, historyId })
+        : `Saved markdown export to ${targetPath}`;
+      return { code: 0, stdout: body + "\n", stderr: "" };
+    }
+
+    if (!entry.threadSlug) {
+      return { code: 1, stdout: "", stderr: "This entry cannot be exported natively because it has no Perplexity thread slug.\n" };
+    }
+
+    const { PerplexityClient } = await import("./client.js");
+    const client = new PerplexityClient();
+    try {
+      await client.init();
+      const exported = await client.exportThread({ threadSlug: entry.threadSlug, format });
+      const targetPath = flags.out ? String(flags.out) : join(entry.attachmentsDir, exported.filename);
+      mkdirSync(dirname(targetPath), { recursive: true });
+      writeFileSync(targetPath, exported.buffer);
+      const body = flags.json
+        ? JSON.stringify({ ok: true, format, savedPath: targetPath, bytes: exported.buffer.length, contentType: exported.contentType, historyId })
+        : `Saved ${format} export to ${targetPath}`;
+      return { code: 0, stdout: body + "\n", stderr: "" };
+    } finally {
+      await client.shutdown().catch(() => undefined);
+    }
+  }
+
+  if (command === "sync-cloud") {
+    const previousProfile = process.env.PERPLEXITY_PROFILE;
+    try {
+      if (flags.profile) process.env.PERPLEXITY_PROFILE = String(flags.profile);
+      const { syncCloudHistory } = await import("./cloud-sync.js");
+      const pageSize = flags["page-size"] !== undefined ? Number(flags["page-size"]) : undefined;
+      const lines = [];
+      const result = await syncCloudHistory({
+        pageSize: Number.isFinite(pageSize) && pageSize > 0 ? pageSize : undefined,
+        onProgress: (evt) => {
+          if (flags.verbose) lines.push(`[sync] ${evt.phase} fetched=${evt.fetched ?? 0} inserted=${evt.inserted ?? 0} updated=${evt.updated ?? 0} skipped=${evt.skipped ?? 0}`);
+        },
+      });
+      const body = flags.json
+        ? JSON.stringify(result)
+        : `Cloud sync: fetched=${result.fetched} inserted=${result.inserted} updated=${result.updated} skipped=${result.skipped}`;
+      return { code: 0, stdout: body + "\n", stderr: flags.verbose ? lines.join("\n") + "\n" : "" };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { code: 10, stdout: "", stderr: `Cloud sync failed: ${message}\n` };
+    } finally {
+      if (flags.profile === undefined && previousProfile !== undefined) {
+        process.env.PERPLEXITY_PROFILE = previousProfile;
+      } else if (previousProfile === undefined) {
+        delete process.env.PERPLEXITY_PROFILE;
+      } else {
+        process.env.PERPLEXITY_PROFILE = previousProfile;
+      }
+    }
+  }
+
+  if (command === "rebuild-history-index") {
+    const previousProfile = process.env.PERPLEXITY_PROFILE;
+    try {
+      if (flags.profile) {
+        process.env.PERPLEXITY_PROFILE = String(flags.profile);
+      }
+      const { rebuildIndex } = await import("./history-store.js");
+      const result = rebuildIndex();
+      const body = flags.json
+        ? JSON.stringify(result)
+        : `Rebuilt history index: scanned=${result.scanned} recovered=${result.recovered} skipped=${result.skipped}`;
+      return { code: 0, stdout: body + "\n", stderr: "" };
+    } finally {
+      if (flags.profile === undefined && previousProfile !== undefined) {
+        process.env.PERPLEXITY_PROFILE = previousProfile;
+      } else if (previousProfile === undefined) {
+        delete process.env.PERPLEXITY_PROFILE;
+      } else {
+        process.env.PERPLEXITY_PROFILE = previousProfile;
+      }
+    }
+  }
+
+  if (command === "open") {
+    const historyId = parsed.positional?.[0];
+    if (!historyId) return { code: 1, stdout: "", stderr: "open requires a history id.\n" };
+
+    const { get } = await import("./history-store.js");
+    const entry = get(historyId);
+    if (!entry) return { code: 1, stdout: "", stderr: `History entry '${historyId}' not found.\n` };
+
+    const viewerId = String(flags.viewer ?? "system");
+    let target = entry.mdPath;
+
+    if (viewerId !== "system") {
+      const { buildViewerUrl, listViewers } = await import("./viewers.js");
+      const viewer = listViewers().find((item) => item.id === viewerId);
+      if (!viewer) {
+        return { code: 1, stdout: "", stderr: `Unknown viewer '${viewerId}'.\n` };
+      }
+      target = buildViewerUrl({ viewer, mdPath: entry.mdPath });
+    }
+
+    await openTarget(target);
+    const body = flags.json
+      ? JSON.stringify({ ok: true, viewer: viewerId, target, historyId })
+      : `Opened ${historyId} via ${viewerId}: ${target}`;
+    return { code: 0, stdout: body + "\n", stderr: "" };
+  }
+
   // Phase-1 stub: all real subcommands are placeholder until their phases land.
   const msg = flags.json
     ? JSON.stringify({ ok: false, error: "not-yet-implemented", command })
@@ -188,7 +335,7 @@ export async function routeCommand(parsed) {
 
 function phaseFor(cmd) {
   if (cmd === "install-browser") return 3;
-  if (cmd === "export" || cmd === "open" || cmd === "rebuild-history-index") return 4;
+  if (cmd === "export" || cmd === "open" || cmd === "rebuild-history-index" || cmd === "sync-cloud") return 4;
   /* v8 ignore next -- fallback for unmapped commands that shouldn't exist */
   return "?";
 }
@@ -208,6 +355,7 @@ Usage:
   npx perplexity-user-mcp export <id> --format pdf|md|docx [--out path]
   npx perplexity-user-mcp open <id> [--viewer obsidian|typora|logseq|system]
   npx perplexity-user-mcp rebuild-history-index [--profile X]
+  npx perplexity-user-mcp sync-cloud [--profile X] [--page-size N] [--verbose]
   npx perplexity-user-mcp --version
   npx perplexity-user-mcp --help
 

@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { MCP_PROVIDER_ID, MCP_SERVER_LABEL, type IdeTarget } from "@perplexity-user-mcp/shared";
+import { MCP_PROVIDER_ID, MCP_SERVER_LABEL, type ExportFormat, type IdeTarget } from "@perplexity-user-mcp/shared";
 import { getActiveName, getProfile, listProfiles, setActive, createProfile } from "perplexity-user-mcp/profiles";
 import { configureTargets, getIdeStatuses } from "./auto-config/index.js";
 import { hasStoredLogin } from "./auth/session.js";
@@ -9,6 +9,7 @@ import { ensureLauncher } from "./launcher/write-launcher.js";
 import { DebugCollector } from "./debug/collector.js";
 import { traceConfigChanges } from "./debug/instrumentation.js";
 import { exportDebugLog } from "./debug/exporter.js";
+import { listHistoryEntries, rebuildHistoryEntries, runCloudSync, runExport } from "./history/open-handlers.js";
 
 let outputChannel: vscode.OutputChannel;
 let debugEnabled = false;
@@ -271,6 +272,40 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
     return { name, mode: modePick.value, ...(email ? { email } : {}) };
   }
 
+  async function pickHistoryEntryId(placeHolder: string): Promise<string | undefined> {
+    const items = listHistoryEntries(100);
+    if (!items.length) {
+      void vscode.window.showInformationMessage("No history entries found.");
+      return undefined;
+    }
+
+    const pick = await vscode.window.showQuickPick(
+      items.map((item) => ({
+        label: item.query,
+        description: item.tool,
+        detail: `${item.createdAt} · ${item.status ?? "completed"}${item.model ? ` · ${item.model}` : ""}`,
+        id: item.id,
+      })),
+      { placeHolder, ignoreFocusOut: true, matchOnDescription: true, matchOnDetail: true },
+    );
+    return pick?.id;
+  }
+
+  async function pickExportFormat(initial?: ExportFormat): Promise<ExportFormat | undefined> {
+    if (initial) {
+      return initial;
+    }
+    const pick = await vscode.window.showQuickPick(
+      [
+        { label: "Markdown", value: "markdown" as const, detail: "Local markdown copy; always available." },
+        { label: "PDF", value: "pdf" as const, detail: "Perplexity-native export for authenticated entries." },
+        { label: "DOCX", value: "docx" as const, detail: "Perplexity-native export for authenticated entries." },
+      ],
+      { placeHolder: "Choose export format", ignoreFocusOut: true },
+    );
+    return pick?.value;
+  }
+
   log("Registering webview provider...");
 
   context.subscriptions.push(
@@ -291,6 +326,85 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
   context.subscriptions.push(
     vscode.commands.registerCommand("Perplexity.refreshDashboard", async () => {
       await dashboard.refresh();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("Perplexity.openRichView", async (historyId?: string) => {
+      const id = historyId ?? await pickHistoryEntryId("Choose a history entry to open in Rich View");
+      if (!id) return false;
+      await dashboard.reveal();
+      await dashboard.refresh();
+      await dashboard.postHistoryEntry(id);
+      return true;
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("Perplexity.exportHistory", async (historyId?: string, format?: ExportFormat) => {
+      const id = historyId ?? await pickHistoryEntryId("Choose a history entry to export");
+      if (!id) return false;
+      const chosenFormat = await pickExportFormat(format);
+      if (!chosenFormat) return false;
+      try {
+        const result = await runExport(id, chosenFormat);
+        await dashboard.refresh();
+        void vscode.window.showInformationMessage(`History export saved to ${result.savedPath}`);
+        return true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        void vscode.window.showErrorMessage(`History export failed: ${message}`);
+        return false;
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("Perplexity.rebuildHistoryIndex", async () => {
+      try {
+        const result = rebuildHistoryEntries();
+        await dashboard.refresh();
+        void vscode.window.showInformationMessage(
+          `History index rebuilt. Scanned ${result.scanned}, recovered ${result.recovered}, skipped ${result.skipped}.`,
+        );
+        return true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        void vscode.window.showErrorMessage(`History index rebuild failed: ${message}`);
+        return false;
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("Perplexity.syncCloudHistory", async () => {
+      const progress = vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: "Syncing Perplexity cloud history…", cancellable: false },
+        async (reporter) => {
+          const result = await runCloudSync((evt) => {
+            const pct = evt.total && evt.fetched ? Math.min(100, Math.round((evt.fetched / Math.max(evt.fetched, evt.total)) * 100)) : undefined;
+            reporter.report({
+              message: evt.phase === "syncing"
+                ? `Fetched ${evt.fetched ?? 0} (${evt.inserted ?? 0} new, ${evt.updated ?? 0} updated)`
+                : evt.phase,
+              ...(pct !== undefined ? { increment: 0 } : {}),
+            });
+          });
+          await dashboard.refresh();
+          return result;
+        },
+      );
+      try {
+        const result = await progress;
+        void vscode.window.showInformationMessage(
+          `Perplexity cloud sync done: ${result.inserted} new, ${result.updated} updated, ${result.skipped} unchanged.`,
+        );
+        return true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        void vscode.window.showErrorMessage(`Cloud sync failed: ${message}`);
+        return false;
+      }
     })
   );
 

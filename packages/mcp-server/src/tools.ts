@@ -1,15 +1,18 @@
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { PerplexityClient } from "./client.js";
 import type { SearchResult } from "./config.js";
-import { formatResponse, buildHistoryEntry } from "./format.js";
-import { appendHistory } from "./history.js";
+import { buildStoredHistoryEntry, formatResponse } from "./format.js";
 import {
-  saveResearch,
-  listResearches,
-  getResearch,
-  updateResearch,
-} from "./research-store.js";
+  append,
+  findPendingByThread,
+  get,
+  getAttachmentsDir,
+  list,
+  update,
+} from "./history-store.js";
 
 type GetClient = () => Promise<PerplexityClient>;
 
@@ -24,16 +27,38 @@ function failure(message: string) {
   };
 }
 
+function getClientTier(client: PerplexityClient): "Max" | "Pro" | "Enterprise" | "Authenticated" | "Anonymous" {
+  return client.accountInfo.isMax
+    ? "Max"
+    : client.accountInfo.isPro
+      ? "Pro"
+      : client.accountInfo.isEnterprise
+        ? "Enterprise"
+        : client.authenticated
+          ? "Authenticated"
+          : "Anonymous";
+}
+
 function recordToolRun(options: {
   tool: string;
   query: string;
   model: string | null;
   mode: string | null;
   language: string | null;
+  tier?: "Max" | "Pro" | "Enterprise" | "Authenticated" | "Anonymous";
+  status?: "completed" | "pending" | "failed";
   result?: SearchResult;
   error?: string;
 }) {
-  appendHistory(buildHistoryEntry(options));
+  try {
+    append(buildStoredHistoryEntry(options));
+  } catch {
+    // History persistence must never break the MCP response path.
+  }
+}
+
+function isResearchTool(tool: string): boolean {
+  return tool === "perplexity_compute" || tool === "perplexity_research";
 }
 
 function buildModelsResponse(client: PerplexityClient): string {
@@ -145,6 +170,7 @@ export function registerTools(
             model,
             mode,
             language: language ?? "en-US",
+            tier: getClientTier(client),
             result,
           });
           return success(formatResponse(result));
@@ -156,6 +182,7 @@ export function registerTools(
             model: process.env.PERPLEXITY_SEARCH_MODEL || null,
             mode: null,
             language: language ?? "en-US",
+            status: "failed",
             error: message,
           });
           return failure(message);
@@ -202,6 +229,7 @@ export function registerTools(
             model: resolvedModel,
             mode: "copilot",
             language: language ?? "en-US",
+            tier: getClientTier(client),
             result,
           });
           return success(formatResponse(result));
@@ -213,6 +241,8 @@ export function registerTools(
             model: model ?? process.env.PERPLEXITY_REASON_MODEL ?? null,
             mode: "copilot",
             language: language ?? "en-US",
+            tier: getClientTier(client),
+            status: "failed",
             error: message,
           });
           return failure(message);
@@ -260,6 +290,7 @@ export function registerTools(
             model,
             mode: "copilot",
             language: language ?? "en-US",
+            tier: getClientTier(client),
             result,
           });
           return success(formatResponse(result));
@@ -271,6 +302,8 @@ export function registerTools(
             model: process.env.PERPLEXITY_RESEARCH_MODEL ?? "pplx_alpha",
             mode: "copilot",
             language: language ?? "en-US",
+            tier: getClientTier(client),
+            status: "failed",
             error: message,
           });
           return failure(message);
@@ -327,6 +360,7 @@ export function registerTools(
             model: resolvedModel,
             mode: resolvedMode,
             language: language ?? "en-US",
+            tier: getClientTier(client),
             result,
           });
 
@@ -343,6 +377,8 @@ export function registerTools(
             model: model ?? process.env.PERPLEXITY_SEARCH_MODEL ?? null,
             mode: mode ?? "copilot",
             language: language ?? "en-US",
+            tier: getClientTier(client),
+            status: "failed",
             error: message,
           });
           return failure(message);
@@ -401,29 +437,19 @@ export function registerTools(
           });
           console.error("[perplexity-mcp] Compute task complete.");
 
-          recordToolRun({
-            tool: "perplexity_compute",
-            query,
-            model: resolvedModel,
-            mode: "asi",
-            language: language ?? "en-US",
-            result,
-          });
-
           // Auto-save research
           const isTimeout = result.answer.startsWith("ASI task timed out");
-          const saved = saveResearch({
+          const saved = append(buildStoredHistoryEntry({
             query,
             tool: "perplexity_compute",
             model: resolvedModel,
             mode: "asi",
             language: language ?? "en-US",
-            threadSlug: result.followUp?.threadUrlSlug ?? result.threadUrl?.split("/search/")[1] ?? null,
-            backendUuid: result.followUp?.backendUuid ?? null,
-            readWriteToken: result.followUp?.readWriteToken,
-            result: isTimeout ? undefined : result,
-            error: isTimeout ? result.answer : undefined,
-          });
+            tier: getClientTier(client),
+            result,
+            status: isTimeout ? "pending" : "completed",
+            ...(isTimeout ? { error: result.answer } : {}),
+          }));
 
           let response = formatResponse(result);
           if (isTimeout) {
@@ -440,6 +466,8 @@ export function registerTools(
             model: model ?? process.env.PERPLEXITY_COMPUTE_MODEL ?? null,
             mode: "asi",
             language: language ?? "en-US",
+            tier: getClientTier(client),
+            status: "failed",
             error: message,
           });
           return failure(message);
@@ -468,12 +496,19 @@ export function registerTools(
         let savedId: string | null = null;
 
         if (research_id) {
-          const saved = getResearch(research_id);
+          const saved = get(research_id);
           if (!saved) return failure(`Research '${research_id}' not found.`);
-          threadSlug = saved.threadSlug;
-          backendUuid = saved.backendUuid;
+          threadSlug = saved.threadSlug ?? null;
+          backendUuid = saved.backendUuid ?? null;
           readWriteToken = saved.readWriteToken ?? null;
           savedId = saved.id;
+        } else if (thread_slug) {
+          const pending = findPendingByThread(thread_slug);
+          if (pending) {
+            backendUuid = pending.backendUuid ?? null;
+            readWriteToken = pending.readWriteToken ?? null;
+            savedId = pending.id;
+          }
         }
 
         if (!threadSlug && !backendUuid) {
@@ -489,19 +524,21 @@ export function registerTools(
 
           if (savedId) {
             const isStillRunning = result.answer.includes("still running");
-            if (!isStillRunning) {
-              updateResearch(savedId, {
-                status: "completed",
-                completedAt: new Date().toISOString(),
-                answer: result.answer,
-                reasoning: result.reasoning,
-                sources: result.sources,
-                media: result.media,
-                files: result.files,
-                suggestedFollowups: result.suggestedFollowups,
-                threadUrl: result.threadUrl,
-                error: undefined,
-              });
+            const existing = get(savedId);
+            if (existing) {
+              update(savedId, buildStoredHistoryEntry({
+                tool: existing.tool,
+                query: existing.query,
+                model: existing.model,
+                mode: existing.mode,
+                language: existing.language,
+                tier: existing.tier,
+                createdAt: existing.createdAt,
+                status: isStillRunning ? "pending" : "completed",
+                completedAt: isStillRunning ? existing.completedAt : new Date().toISOString(),
+                result,
+                ...(isStillRunning ? { error: result.answer } : {}),
+              }));
             }
           }
 
@@ -509,6 +546,46 @@ export function registerTools(
         } catch (error) {
           return failure((error as Error).message);
         }
+      },
+    );
+  }
+
+  if (!enabledTools || enabledTools.has("perplexity_export")) {
+    server.registerTool(
+      "perplexity_export",
+      {
+        title: "Perplexity Export",
+        description: "Export a saved history entry using Perplexity's native export endpoint when available, with local markdown fallback.",
+        inputSchema: {
+          history_id: z.string().describe("Saved history entry id"),
+          format: z.enum(["pdf", "markdown", "docx"]).describe("Export format"),
+        },
+      },
+      async ({ history_id, format }) => {
+        const entry = get(history_id);
+        if (!entry) {
+          return failure(`History entry '${history_id}' not found.`);
+        }
+
+        const attachmentsDir = getAttachmentsDir(history_id) ?? entry.attachmentsDir;
+        mkdirSync(attachmentsDir, { recursive: true });
+
+        if (format === "markdown") {
+          const savedPath = join(attachmentsDir, entry.mdPath.split(/[\\/]/).pop() || `${entry.id}.md`);
+          writeFileSync(savedPath, readFileSync(entry.mdPath, "utf8"), "utf8");
+          return success(`Saved markdown export to \`${savedPath}\`.`);
+        }
+
+        if (!entry.threadSlug) {
+          return failure("This entry cannot be exported natively because it has no Perplexity thread slug.");
+        }
+
+        const client = await getClient();
+        const exported = await client.exportThread({ threadSlug: entry.threadSlug, format });
+        const savedPath = join(attachmentsDir, exported.filename);
+        mkdirSync(dirname(savedPath), { recursive: true });
+        writeFileSync(savedPath, exported.buffer);
+        return success(`Saved ${format} export to \`${savedPath}\` (${exported.buffer.length} bytes).`);
       },
     );
   }
@@ -528,7 +605,11 @@ export function registerTools(
         },
       },
       async ({ status, limit }) => {
-        const researches = listResearches({ status, limit: limit ?? 20 });
+        const researches = list({
+          status,
+          limit: limit ?? 20,
+          tools: ["perplexity_compute", "perplexity_research"],
+        }).filter((entry) => isResearchTool(entry.tool));
 
         if (researches.length === 0) {
           return success("No saved researches found.");
@@ -537,7 +618,7 @@ export function registerTools(
         const lines: string[] = [`**Saved Researches** (${researches.length}):\n`];
         for (const r of researches) {
           const statusIcon = r.status === "completed" ? "\u2705" : r.status === "pending" ? "\u23F3" : "\u274C";
-          const preview = r.answer ? r.answer.replace(/\s+/g, " ").slice(0, 120) + "..." : r.error || "(no content)";
+          const preview = r.answerPreview || r.error || "(no content)";
           lines.push(`${statusIcon} **${r.query.slice(0, 80)}**`);
           lines.push(`   ID: \`${r.id}\` | Tool: ${r.tool} | ${r.createdAt}`);
           lines.push(`   ${preview}`);
@@ -564,18 +645,17 @@ export function registerTools(
         },
       },
       async ({ research_id }) => {
-        const research = getResearch(research_id);
+        const research = get(research_id);
         if (!research) return failure(`Research '${research_id}' not found.`);
 
         const parts: string[] = [
           `# Research: ${research.query}`,
-          `**Status:** ${research.status} | **Tool:** ${research.tool} | **Model:** ${research.model || "default"}`,
+          `**Status:** ${research.status || "completed"} | **Tool:** ${research.tool} | **Model:** ${research.model || "default"}`,
           `**Created:** ${research.createdAt}${research.completedAt ? ` | **Completed:** ${research.completedAt}` : ""}`,
         ];
 
         if (research.threadUrl) parts.push(`**Thread:** ${research.threadUrl}`);
-        if (research.answer) parts.push("", "---", "", research.answer);
-        if (research.reasoning) parts.push("", "---", "**Reasoning:**", research.reasoning);
+        if (research.body) parts.push("", "---", "", research.body);
 
         if (research.sources?.length) {
           parts.push("", "**Sources:**");
@@ -584,14 +664,10 @@ export function registerTools(
           }
         }
 
-        if (research.files?.length) {
+        if (research.attachments?.length) {
           parts.push("", "**Files:**");
-          for (const f of research.files) {
-            if (f.localPath) {
-              parts.push(`- **${f.filename}** (${f.assetType}) -> \`${f.localPath}\``);
-            } else if (f.url) {
-              parts.push(`- **${f.filename}** (${f.assetType}) -> [Download](${f.url})`);
-            }
+          for (const file of research.attachments) {
+            parts.push(`- **${file.filename}** -> \`${file.relPath}\``);
           }
         }
 

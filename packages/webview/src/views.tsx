@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   BookOpen,
   Check,
@@ -22,6 +22,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { StatusDot } from "./components/StatusDot";
+import { DownloadMenu } from "./components/DownloadMenu";
+import { OpenWithMenu } from "./components/OpenWithMenu";
 import { getIdeIcon } from "./ide-icons";
 import { Markdown } from "./markdown";
 import {
@@ -724,14 +726,48 @@ function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
+function CloudSyncBar({ send }: { send: SendFn }) {
+  const cloudSync = useDashboardStore((s) => s.cloudSync);
+  const inFlight = cloudSync.phase === "starting" || cloudSync.phase === "syncing";
+  return (
+    <div className="flex items-center gap-2 mt-3" style={{ flexWrap: "wrap" }}>
+      <button
+        className="ghost-button btn-sm"
+        onClick={() => { if (!inFlight) send({ type: "history:cloud-sync" }); }}
+        disabled={inFlight}
+        title="Fetch all Perplexity.ai threads and merge into local history. Never deletes local-only entries."
+        style={{ padding: "6px 10px", fontSize: "0.7rem" }}
+      >
+        <RefreshCcw size={13} />
+        <span style={{ marginLeft: 4 }}>{inFlight ? "Syncing from cloud…" : "Sync from Cloud"}</span>
+      </button>
+      {inFlight ? (
+        <span className="muted" style={{ fontSize: "0.68rem" }}>
+          Fetched {cloudSync.fetched ?? 0}
+          {cloudSync.inserted ? ` · ${cloudSync.inserted} new` : ""}
+          {cloudSync.updated ? ` · ${cloudSync.updated} updated` : ""}
+        </span>
+      ) : cloudSync.phase === "done" ? (
+        <span className="muted" style={{ fontSize: "0.68rem" }}>
+          Last sync: {cloudSync.inserted ?? 0} new · {cloudSync.updated ?? 0} updated · {cloudSync.skipped ?? 0} unchanged
+        </span>
+      ) : cloudSync.phase === "error" ? (
+        <span className="text-error" style={{ fontSize: "0.68rem" }}>Error: {cloudSync.error}</span>
+      ) : null}
+    </div>
+  );
+}
+
 export function HistoryView({
   filter,
   setFilter,
   items,
+  send,
 }: {
   filter: string;
   setFilter: (value: string) => void;
   items: HistoryItem[];
+  send: SendFn;
 }) {
   const [sortNewest, setSortNewest] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -748,6 +784,11 @@ export function HistoryView({
     setExpandedId((prev) => (prev === id ? null : id));
   }, []);
 
+  useEffect(() => {
+    send({ type: "history:request-list" });
+    send({ type: "viewers:request-list" });
+  }, [send]);
+
   return (
     <div className="grid gap-3">
       {/* Stats bar */}
@@ -759,8 +800,8 @@ export function HistoryView({
             <span className="hist-stat-label">queries</span>
           </div>
           <div className="hist-stat">
-            <span className="hist-stat-value">{items.filter(i => i.threadUrl).length}</span>
-            <span className="hist-stat-label">threads</span>
+            <span className="hist-stat-value">{items.filter(i => i.source === "cloud").length}</span>
+            <span className="hist-stat-label">from cloud</span>
           </div>
           <div className="hist-stat">
             <span className="hist-stat-value">{items.reduce((s, i) => s + i.sourceCount, 0)}</span>
@@ -776,6 +817,7 @@ export function HistoryView({
             ))}
           </div>
         )}
+        <CloudSyncBar send={send} />
       </div>
 
       {/* Search + sort controls */}
@@ -785,6 +827,15 @@ export function HistoryView({
             <Search size={14} />
             <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Search queries, tools, answers..." />
           </div>
+          <button
+            className="ghost-button btn-sm"
+            onClick={() => send({ type: "history:rebuild-index" })}
+            title="Re-scan markdown entries and rebuild the history index"
+            style={{ flexShrink: 0, padding: "6px 8px" }}
+          >
+            <RefreshCcw size={13} />
+            <span style={{ fontSize: "0.68rem" }}>Rebuild</span>
+          </button>
           <button
             className="ghost-button btn-sm"
             onClick={() => setSortNewest((v) => !v)}
@@ -812,6 +863,7 @@ export function HistoryView({
               item={item}
               expanded={expandedId === item.id}
               onToggle={toggleExpand}
+              send={send}
             />
           ))
         )}
@@ -1327,12 +1379,15 @@ function HistoryCardRich({
   item,
   expanded,
   onToggle,
+  send,
 }: {
   item: HistoryItem;
   expanded: boolean;
   onToggle: (id: string) => void;
+  send: SendFn;
 }) {
   const [copied, setCopied] = useState<string | null>(null);
+  const viewers = useDashboardStore((store) => store.externalViewers);
 
   const copyToClipboard = useCallback((text: string, label: string) => {
     navigator.clipboard.writeText(text).then(() => {
@@ -1362,6 +1417,12 @@ function HistoryCardRich({
           {item.model && (
             <span className="chip chip-muted" style={{ fontSize: "0.62rem" }}>{item.model}</span>
           )}
+          {item.tier ? (
+            <span className="chip chip-accent" style={{ fontSize: "0.62rem" }}>{item.tier}</span>
+          ) : null}
+          {item.pinned ? (
+            <span className="chip chip-pro" style={{ fontSize: "0.62rem" }}>Pinned</span>
+          ) : null}
           <span className="hist-time">{relativeTime(item.createdAt)}</span>
           <span className="hist-expand-icon">
             {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
@@ -1398,6 +1459,11 @@ function HistoryCardRich({
                 mode: {item.mode}
               </span>
             )}
+            {item.status && (
+              <span className="hist-meta-item">
+                status: {item.status}
+              </span>
+            )}
             {item.language && item.language !== "en-US" && (
               <span className="hist-meta-item">
                 {item.language}
@@ -1410,7 +1476,7 @@ function HistoryCardRich({
 
           {/* Action buttons */}
           <div className="hist-actions">
-            {/* Copy recover prompt (if thread exists) */}
+            {/* Group 1: Clipboard */}
             {recoverPrompt && (
               <button
                 className="hist-action-btn hist-action-primary"
@@ -1418,33 +1484,69 @@ function HistoryCardRich({
                 title="Copy a prompt that tells AI to retrieve this thread's results"
               >
                 {copied === "recover" ? <ClipboardCheck size={12} /> : <RotateCcw size={12} />}
-                {copied === "recover" ? "Copied!" : "Copy Recover Prompt"}
+                {copied === "recover" ? "Copied!" : "Recover"}
               </button>
             )}
-
-            {/* Copy rerun prompt */}
             <button
               className="hist-action-btn"
               onClick={() => copyToClipboard(rerunPrompt, "rerun")}
               title="Copy a prompt that tells AI to re-run this exact query"
             >
               {copied === "rerun" ? <ClipboardCheck size={12} /> : <Copy size={12} />}
-              {copied === "rerun" ? "Copied!" : "Copy Re-run Prompt"}
+              {copied === "rerun" ? "Copied!" : "Re-run"}
             </button>
 
-            {/* Open thread in Perplexity */}
+            <span className="hist-actions-divider" aria-hidden="true" />
+
+            {/* Group 2: Open */}
+            <button
+              className="hist-action-btn"
+              onClick={() => send({ type: "history:open-rich", payload: { historyId: item.id } })}
+              title="Open in the built-in Rich View"
+            >
+              Rich View
+            </button>
+            <button
+              className="hist-action-btn"
+              onClick={() => send({ type: "history:open-preview", payload: { historyId: item.id } })}
+              title="Open the raw markdown in VS Code preview"
+            >
+              Preview
+            </button>
+            <OpenWithMenu item={item} viewers={viewers} send={send} />
             {item.threadUrl && (
               <a
                 href={item.threadUrl}
                 className="hist-action-btn hist-action-link"
                 target="_blank"
                 rel="noopener noreferrer"
+                title="Open this thread on perplexity.ai"
               >
                 <ExternalLink size={12} />
-                Open Thread
+                Thread
               </a>
             )}
+
+            <span className="hist-actions-divider" aria-hidden="true" />
+
+            {/* Group 3: Actions */}
+            <DownloadMenu item={item} send={send} />
+            <button
+              className="hist-action-btn"
+              onClick={() => send({ type: "history:pin", payload: { historyId: item.id, pinned: !item.pinned } })}
+              title={item.pinned ? "Unpin this entry" : "Pin to keep across retention prunes"}
+            >
+              {item.pinned ? "Unpin" : "Pin"}
+            </button>
           </div>
+
+          {item.tags?.length ? (
+            <div className="hist-tag-row">
+              {item.tags.map((tag) => (
+                <span key={tag} className="chip chip-muted">{tag}</span>
+              ))}
+            </div>
+          ) : null}
 
           {/* Error display */}
           {item.error && (

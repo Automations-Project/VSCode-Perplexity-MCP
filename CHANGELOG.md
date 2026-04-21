@@ -4,6 +4,23 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [0.5.0] — 2026-04-21 — Phase 4 history viewer
+
+### Added
+- Markdown-backed history storage under per-profile `history/*.md` with YAML frontmatter, sidecar attachments, and rebuildable `index.json`.
+- Native export support for PDF / Markdown / DOCX through the captured Perplexity `/rest/entry/export` flow, exposed via the MCP tool, CLI, and VS Code dashboard.
+- External Markdown viewer registry and detection for Obsidian, Typora, and Logseq, including an Obsidian bridge copy path and doctor visibility through `ide.mdViewers`.
+- VS Code Rich View overlay, History tab actions, export/download flows, preview/open-with actions, and command-palette entries for `Open Rich View`, `Export History Entry`, and `Rebuild History Index`.
+- Operator docs: [docs/export-endpoint-capture.md](docs/export-endpoint-capture.md) and [docs/history-migration.md](docs/history-migration.md).
+
+### Changed
+- `perplexity_list_researches` and `perplexity_get_research` now read from the unified Markdown history store instead of a separate JSON research store.
+- `packages/mcp-server` and `packages/extension` now ship as `0.5.0`.
+- Extension bundling now keeps `keytar` external again so VSIX/extension builds do not try to inline `keytar.node`.
+
+### Migration
+- Pre-0.5.0 flat `history.json` and `researches/*.json` files are not auto-converted. New entries populate the Markdown layout only. See [docs/history-migration.md](docs/history-migration.md).
+
 ## [0.4.7] — 2026-04-20 — doctor polish: inline fix actions + export parity
 
 ### Fixed

@@ -118,6 +118,26 @@ export interface DoctorReport {
   }>;
 }
 
+export type ExportFormat = "pdf" | "markdown" | "docx";
+
+export interface ExternalViewer {
+  id: string;
+  label: string;
+  urlTemplate: string;
+  needsVaultBridge: boolean;
+  vaultPath?: string;
+  vaultName?: string;
+  graphName?: string;
+  detected: boolean;
+  enabled: boolean;
+}
+
+export interface HistoryEntryDetail extends HistoryItem {
+  body: string;
+  mdPath: string;
+  attachmentsDir: string;
+}
+
 export type ExtensionMessage =
   | {
       type: "dashboard:state";
@@ -153,7 +173,42 @@ export type ExtensionMessage =
   | { type: "auth:otp-prompt"; payload: { profile: string; attempt: number; email: string } }
   | { type: "profile:list"; payload: { active: string | null; profiles: Profile[] } }
   | { type: "doctor:running"; payload: { probeRan: boolean } }
-  | { type: "doctor:report"; payload: DoctorReport };
+  | { type: "doctor:report"; payload: DoctorReport }
+  | { type: "history:list"; payload: { items: HistoryItem[] } }
+  | { type: "history:entry"; payload: HistoryEntryDetail }
+  | {
+      type: "history:export:progress";
+      payload: {
+        id: string;
+        phase: "starting" | "downloaded" | "saved" | "error";
+        bytes?: number;
+        error?: string;
+        savedPath?: string;
+      };
+    }
+  | { type: "viewers:list"; payload: { viewers: ExternalViewer[] } }
+  | {
+      type: "history:cloud-sync:progress";
+      payload: {
+        id: string;
+        phase: "starting" | "syncing" | "done" | "cancelled" | "error";
+        fetched?: number;
+        total?: number;
+        inserted?: number;
+        updated?: number;
+        skipped?: number;
+        error?: string;
+      };
+    }
+  | {
+      type: "history:cloud-hydrate:progress";
+      payload: {
+        id: string;
+        historyId: string;
+        phase: "starting" | "done" | "skipped-local" | "skipped-hydrated" | "error";
+        error?: string;
+      };
+    };
 
 export type WebviewMessage =
   | {
@@ -222,4 +277,18 @@ export type WebviewMessage =
   | { type: "doctor:probe"; id: string; payload: { profile?: string } }
   | { type: "doctor:export"; id: string; payload: { targetPath?: string } }
   | { type: "doctor:report-issue"; id: string; payload: { category: DoctorCategory; check: string } }
-  | { type: "doctor:action"; id: string; payload: { commandId: string; args?: unknown[] } };
+  | { type: "doctor:action"; id: string; payload: { commandId: string; args?: unknown[] } }
+  | { type: "history:request-list"; payload?: { filter?: string } }
+  | { type: "history:request-entry"; id: string; payload: { historyId: string } }
+  | { type: "history:open-preview"; id: string; payload: { historyId: string } }
+  | { type: "history:open-rich"; id: string; payload: { historyId: string } }
+  | { type: "history:open-with"; id: string; payload: { historyId: string; viewerId: string } }
+  | { type: "history:export"; id: string; payload: { historyId: string; format: ExportFormat } }
+  | { type: "history:pin"; id: string; payload: { historyId: string; pinned: boolean } }
+  | { type: "history:tag"; id: string; payload: { historyId: string; tags: string[] } }
+  | { type: "history:delete"; id: string; payload: { historyId: string } }
+  | { type: "history:rebuild-index"; id: string }
+  | { type: "viewers:request-list" }
+  | { type: "viewers:configure"; id: string; payload: { viewer: ExternalViewer } }
+  | { type: "history:cloud-sync"; id: string; payload?: { pageSize?: number } }
+  | { type: "history:cloud-hydrate"; id: string; payload: { historyId: string } };

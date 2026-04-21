@@ -24,7 +24,7 @@ async function main() {
 
   const server = new McpServer({
     name: "perplexity",
-    version: "0.4.7",
+    version: "0.5.0",
   });
 
   const toolConfig = loadToolConfig();
@@ -73,10 +73,32 @@ export { PerplexityClient } from "./client.js";
 export { registerTools } from "./tools.js";
 export { registerPrompts } from "./prompts.js";
 export { registerResources } from "./resources.js";
-export { formatResponse, buildHistoryEntry, buildAnswerPreview } from "./format.js";
-export { appendHistory, readHistory, getHistoryPath } from "./history.js";
+export { formatResponse, buildHistoryBody, buildHistoryEntry, buildStoredHistoryEntry, buildAnswerPreview } from "./format.js";
+export {
+  append as appendHistory,
+  deleteEntry,
+  findPendingByThread,
+  get,
+  getAttachmentsDir,
+  getAttachmentsRoot,
+  getHistoryDir,
+  getIndexPath as getHistoryPath,
+  getMdPath,
+  list as readHistory,
+  pin,
+  rebuildIndex,
+  tag,
+  update,
+  findByBackendUuid,
+  upsertFromCloud,
+  hydrateCloudEntry,
+} from "./history-store.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore – cloud-sync.js is a plain JS module; types inferred at call-site
+export { syncCloudHistory, hydrateCloudHistoryEntry } from "./cloud-sync.js";
+export { exportThread } from "./export.js";
 export type { HistoryEntry } from "./format.js";
-export type { HistoryItem } from "./history.js";
+export type { HistoryItem } from "@perplexity-user-mcp/shared";
 export { loadToolConfig, getEnabledTools, saveToolConfig, watchToolConfig } from "./tool-config.js";
 export type { ToolProfile } from "./tool-config.js";
 export { findBrowser } from "./config.js";

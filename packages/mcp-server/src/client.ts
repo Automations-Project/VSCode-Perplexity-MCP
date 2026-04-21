@@ -26,8 +26,9 @@ import {
   type RateLimitResponse,
   type AccountInfo,
 } from "./config.js";
+import { exportThread as exportEntry } from "./export.js";
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from "fs";
-import { join } from "path";
+import { dirname, join } from "path";
 import { getActiveName, getConfigDir, getProfilePaths } from "./profiles.js";
 
 function getActiveProfileName(): string {
@@ -1600,6 +1601,311 @@ export class PerplexityClient {
     this.page.off("response", handler);
 
     return captured;
+  }
+
+  async downloadAsset(url: string, targetPath: string): Promise<{ path: string; sizeBytes: number; contentType?: string }> {
+    if (!this.page) throw new Error("Client not initialized");
+
+    const payload = await this.page.evaluate(
+      async (assetUrl: string) => {
+        const response = await fetch(assetUrl, { credentials: "include" });
+        const buffer = await response.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = "";
+        for (let index = 0; index < bytes.length; index += 1) {
+          binary += String.fromCharCode(bytes[index]);
+        }
+        return {
+          ok: response.ok,
+          status: response.status,
+          contentType: response.headers.get("content-type") ?? undefined,
+          body64: btoa(binary),
+        };
+      },
+      url,
+    );
+
+    if (!payload.ok) {
+      throw new Error(`Asset download failed (${payload.status}) for ${url}`);
+    }
+
+    mkdirSync(dirname(targetPath), { recursive: true });
+    const buffer = Buffer.from(payload.body64, "base64");
+    writeFileSync(targetPath, buffer);
+    return {
+      path: targetPath,
+      sizeBytes: buffer.length,
+      ...(payload.contentType ? { contentType: payload.contentType } : {}),
+    };
+  }
+
+  private async resolveThreadEntryUuid(threadSlug: string): Promise<string | null> {
+    if (!this.page) throw new Error("Client not initialized");
+
+    const rawJson: string = await this.page.evaluate(
+      async (url: string) => {
+        const response = await fetch(url, { credentials: "include" });
+        return response.text();
+      },
+      THREAD_ENDPOINT(threadSlug),
+    );
+
+    const threadData = JSON.parse(rawJson);
+    if (threadData?.status !== "success") {
+      return null;
+    }
+
+    const entries = Array.isArray(threadData.entries) ? threadData.entries : [];
+    const lastEntry = entries[entries.length - 1] ?? null;
+    return lastEntry?.uuid ?? threadData?.last_entry_uuid ?? null;
+  }
+
+  async exportThread(opts: {
+    threadSlug?: string | null;
+    entryUuid?: string | null;
+    format: "pdf" | "markdown" | "docx";
+  }): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
+    if (!this.page) throw new Error("Client not initialized");
+
+    const entryUuid = opts.entryUuid ?? (opts.threadSlug ? await this.resolveThreadEntryUuid(opts.threadSlug) : null);
+    if (!entryUuid) {
+      throw new Error("Could not resolve the Perplexity entry UUID for export.");
+    }
+
+    return exportEntry({
+      entryUuid,
+      format: opts.format,
+      fetchImpl: async (url: string, init?: RequestInit) => {
+        const response = await this.page!.evaluate(
+          async ({ requestUrl, requestInit }) => {
+            const resp = await fetch(requestUrl, {
+              ...requestInit,
+              credentials: "include",
+            });
+            const text = await resp.text();
+            return {
+              status: resp.status,
+              headers: Object.fromEntries(resp.headers.entries()),
+              text,
+            };
+          },
+          {
+            requestUrl: url,
+            requestInit: {
+              method: init?.method,
+              headers: init?.headers,
+              body: typeof init?.body === "string" ? init.body : undefined,
+            },
+          },
+        );
+
+        return new Response(response.text, {
+          status: response.status,
+          headers: response.headers,
+        });
+      },
+    });
+  }
+
+  /**
+   * Authenticated fetch helper — routes through the persistent page so
+   * cookies (session-token + cf_clearance) ride along. Mirrors the
+   * exportThread() pattern but returns parsed JSON.
+   */
+  private async pageFetchJson(
+    url: string,
+    init?: { method?: string; body?: unknown; headers?: Record<string, string> },
+  ): Promise<{ status: number; data: unknown }> {
+    if (!this.page) throw new Error("Client not initialized");
+    const payload = init?.body != null ? JSON.stringify(init.body) : null;
+    return this.page.evaluate(
+      async ({ u, method, body, headers }) => {
+        const resp = await fetch(u, {
+          method: method ?? "GET",
+          credentials: "include",
+          headers: { "content-type": "application/json", ...(headers ?? {}) },
+          body,
+        });
+        const ct = resp.headers.get("content-type") ?? "";
+        const text = await resp.text();
+        let data: unknown = text;
+        if (ct.includes("application/json")) {
+          try { data = JSON.parse(text); } catch { /* leave as text */ }
+        }
+        return { status: resp.status, data };
+      },
+      { u: url, method: init?.method ?? "GET", body: payload, headers: init?.headers ?? null },
+    ) as Promise<{ status: number; data: unknown }>;
+  }
+
+  /**
+   * Fetch a page of the user's library via POST /rest/thread/list_ask_threads.
+   * Endpoint captured 2026-04-21 — body shape documented in
+   * docs/export-endpoint-capture.md (alongside export).
+   */
+  async listCloudThreads(opts: {
+    limit?: number;
+    offset?: number;
+    searchTerm?: string;
+    excludeAsi?: boolean;
+    ascending?: boolean;
+  } = {}): Promise<{
+    items: Array<{
+      backendUuid: string;
+      contextUuid: string;
+      slug: string;
+      title: string;
+      queryStr: string;
+      answerPreview: string;
+      firstAnswer: string | null;
+      createdAt: string;
+      mode: string | null;
+      displayModel: string | null;
+      searchFocus: string | null;
+      sources: string[];
+      queryCount: number;
+      threadStatus: string;
+      readWriteToken: string | null;
+    }>;
+    total: number;
+  }> {
+    if (!this.page) await this.init();
+    const url = `${PERPLEXITY_URL}/rest/thread/list_ask_threads?version=2.18&source=default`;
+    const { status, data } = await this.pageFetchJson(url, {
+      method: "POST",
+      body: {
+        limit: opts.limit ?? 20,
+        offset: opts.offset ?? 0,
+        ascending: opts.ascending ?? false,
+        search_term: opts.searchTerm ?? "",
+        exclude_asi: opts.excludeAsi ?? false,
+      },
+    });
+    if (status === 403 || status === 401) {
+      throw new Error(`Perplexity rejected list_ask_threads (status ${status}). Re-login and retry.`);
+    }
+    if (status !== 200 || !Array.isArray(data)) {
+      throw new Error(`list_ask_threads failed: status ${status}`);
+    }
+    const rows = data as Array<Record<string, unknown>>;
+    const total = typeof rows[0]?.total_threads === "number" ? rows[0].total_threads as number : rows.length;
+    return {
+      total,
+      items: rows.map((row) => ({
+        backendUuid: String(row.uuid ?? ""),
+        contextUuid: String(row.context_uuid ?? ""),
+        slug: String(row.slug ?? ""),
+        title: String(row.title ?? row.query_str ?? "(untitled)"),
+        queryStr: String(row.query_str ?? ""),
+        answerPreview: String(row.answer_preview ?? "").slice(0, 220),
+        firstAnswer: typeof row.first_answer === "string" ? row.first_answer : null,
+        createdAt: typeof row.last_query_datetime === "string"
+          ? /[Zz]$/.test(row.last_query_datetime) ? row.last_query_datetime : `${row.last_query_datetime}Z`
+          : new Date().toISOString(),
+        mode: typeof row.mode === "string" ? row.mode : null,
+        displayModel: typeof row.display_model === "string" ? row.display_model : null,
+        searchFocus: typeof row.search_focus === "string" ? row.search_focus : null,
+        sources: Array.isArray(row.sources) ? row.sources.map(String) : [],
+        queryCount: typeof row.query_count === "number" ? row.query_count : 1,
+        threadStatus: String(row.thread_status ?? row.status ?? "completed").toLowerCase(),
+        readWriteToken: typeof row.read_write_token === "string" ? row.read_write_token : null,
+      })),
+    };
+  }
+
+  /**
+   * Fetch full content of a single cloud thread by slug. Returns the raw
+   * entries — callers (cloud-sync) convert to markdown. Endpoint:
+   * GET /rest/thread/<slug>?from_first=true (captured 2026-04-21).
+   */
+  async getCloudThread(slug: string, { limit = 50 }: { limit?: number } = {}): Promise<{
+    entries: Array<{
+      backendUuid: string;
+      queryStr: string;
+      answer: string;
+      sources: Array<{ n: number; title: string; url: string; snippet?: string }>;
+      mediaItems: Array<{ url: string; name?: string; type?: string }>;
+      createdAt: string;
+      status: string;
+    }>;
+    thread: { slug: string; title: string | null; contextUuid: string | null };
+  }> {
+    if (!slug) throw new Error("getCloudThread: slug required");
+    if (!this.page) await this.init();
+    // NOTE: `with_schematized_response=true` causes Perplexity to return a
+    // structured shape that omits the raw `entries[].text` JSON we parse
+    // for answer + sources. Keep it off.
+    const url =
+      `${PERPLEXITY_URL}/rest/thread/${encodeURIComponent(slug)}` +
+      `?version=2.18&source=default&limit=${limit}&offset=0&from_first=true&with_parent_info=true`;
+    const { status, data } = await this.pageFetchJson(url);
+    if (status === 404) throw new Error(`Thread '${slug}' not found on Perplexity (404).`);
+    if (status !== 200 || typeof data !== "object" || data == null) {
+      throw new Error(`getCloudThread failed: status ${status}`);
+    }
+    const body = data as Record<string, unknown>;
+    const rawEntries = Array.isArray(body.entries) ? body.entries as Array<Record<string, unknown>> : [];
+
+    const parseAnswer = (text: unknown): { answer: string; sources: Array<{ n: number; title: string; url: string; snippet?: string }> } => {
+      if (typeof text !== "string") return { answer: "", sources: [] };
+      let steps: unknown;
+      try { steps = JSON.parse(text); } catch { return { answer: "", sources: [] }; }
+      if (!Array.isArray(steps)) return { answer: "", sources: [] };
+      const final = steps.find((s: any) => s?.step_type === "FINAL");
+      const answerRaw = final?.content?.answer;
+      if (typeof answerRaw !== "string") return { answer: "", sources: [] };
+      let parsed: Record<string, unknown> = {};
+      try { parsed = JSON.parse(answerRaw); } catch { return { answer: answerRaw, sources: [] }; }
+      const answer = typeof parsed.answer === "string" ? parsed.answer : "";
+      const webResults = Array.isArray(parsed.web_results) ? parsed.web_results as Array<Record<string, unknown>> : [];
+      const sources = webResults.map((wr, i) => ({
+        n: i + 1,
+        title: String(wr.name ?? ""),
+        url: String(wr.url ?? ""),
+        ...(typeof wr.snippet === "string" && wr.snippet ? { snippet: wr.snippet } : {}),
+      })).filter((s) => s.title || s.url);
+      return { answer, sources };
+    };
+
+    return {
+      thread: {
+        slug,
+        title: typeof rawEntries[0]?.thread_title === "string" ? rawEntries[0].thread_title as string : null,
+        contextUuid: typeof rawEntries[0]?.context_uuid === "string" ? rawEntries[0].context_uuid as string : null,
+      },
+      entries: rawEntries.map((e) => {
+        const { answer, sources: s } = parseAnswer(e.text);
+        const srcFromBlock = Array.isArray(e.sources)
+          ? (e.sources as Array<Record<string, unknown>>).map((wr, i) => ({
+              n: i + 1,
+              title: String(wr.name ?? wr.title ?? ""),
+              url: String(wr.url ?? ""),
+              ...(typeof wr.snippet === "string" ? { snippet: wr.snippet } : {}),
+            })).filter((src) => src.title || src.url)
+          : [];
+        const createdUs = typeof e.created_us === "number" ? e.created_us : 0;
+        const iso = typeof e.updated_datetime === "string"
+          ? /[Zz]$/.test(e.updated_datetime) ? e.updated_datetime : `${e.updated_datetime}Z`
+          : createdUs > 0
+            ? new Date(Math.floor(createdUs / 1000)).toISOString()
+            : new Date().toISOString();
+        return {
+          backendUuid: String(e.backend_uuid ?? ""),
+          queryStr: String(e.query_str ?? ""),
+          answer: answer || "",
+          sources: s.length ? s : srcFromBlock,
+          mediaItems: Array.isArray(e.media_items)
+            ? (e.media_items as Array<Record<string, unknown>>).map((m) => ({
+                url: String(m.url ?? m.image ?? ""),
+                name: typeof m.name === "string" ? m.name : undefined,
+                type: typeof m.type === "string" ? m.type : undefined,
+              })).filter((m) => m.url)
+            : [],
+          createdAt: iso,
+          status: String(e.status ?? "completed").toLowerCase(),
+        };
+      }),
+    };
   }
 
   async shutdown(): Promise<void> {

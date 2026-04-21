@@ -19,7 +19,7 @@ import type { IdeTarget } from "@perplexity-user-mcp/shared";
 import { getAccountSnapshot, setLastRefreshTier } from "../auth/session.js";
 import { log, debug } from "../extension.js";
 import type { DebugCollector } from "../debug/collector.js";
-import { readHistory, runDoctor } from "perplexity-user-mcp";
+import { runDoctor } from "perplexity-user-mcp";
 import {
   listProfiles,
   getActiveName,
@@ -32,6 +32,21 @@ import { installImpit, uninstallImpit } from "../native-deps.js";
 import { getSettingsSnapshot, updateSettings } from "../settings.js";
 import { renderWebviewHtml } from "./html.js";
 import { LAUNCHER_PATH } from "../launcher/write-launcher.js";
+import {
+  configureExternalViewer,
+  deleteHistoryEntry,
+  listExternalViewers,
+  listHistoryEntries,
+  openExternalViewer,
+  openPreview,
+  openRichView,
+  pinHistoryEntry,
+  rebuildHistoryEntries,
+  runCloudSync,
+  hydrateCloudEntry,
+  runExport,
+  tagHistoryEntry,
+} from "../history/open-handlers.js";
 
 export class DashboardProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
@@ -65,6 +80,21 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
   async postProfileList(): Promise<void> {
     if (!this.view) return;
     await this.view.webview.postMessage({ type: "profile:list", payload: { active: getActiveName(), profiles: listProfiles() } });
+  }
+
+  async postHistoryList(limit = 50): Promise<void> {
+    if (!this.view) return;
+    await this.view.webview.postMessage({ type: "history:list", payload: { items: listHistoryEntries(limit) } });
+  }
+
+  async postViewersList(): Promise<void> {
+    if (!this.view) return;
+    await this.view.webview.postMessage({ type: "viewers:list", payload: { viewers: await listExternalViewers() } });
+  }
+
+  async postHistoryEntry(historyId: string): Promise<void> {
+    if (!this.view) return;
+    await openRichView(historyId, (message) => this.view?.webview.postMessage(message));
   }
 
   async postDoctorRun(probe: boolean): Promise<void> {
@@ -440,6 +470,158 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             }
             break;
           }
+          case "history:request-list": {
+            await this.postHistoryList(100);
+            break;
+          }
+          case "history:request-entry":
+          case "history:open-rich": {
+            try {
+              await this.postHistoryEntry(message.payload.historyId);
+              await this.postActionResult("id" in message ? message.id : undefined, true);
+            } catch (err) {
+              await this.postActionResult("id" in message ? message.id : undefined, false, (err as Error).message);
+            }
+            break;
+          }
+          case "history:open-preview": {
+            try {
+              await openPreview(message.payload.historyId);
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "history:open-with": {
+            try {
+              await openExternalViewer(message.payload.historyId, message.payload.viewerId);
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "history:export": {
+            try {
+              await this.view?.webview.postMessage({ type: "history:export:progress", payload: { id: message.id, phase: "starting" } });
+              const result = await runExport(message.payload.historyId, message.payload.format);
+              await this.view?.webview.postMessage({
+                type: "history:export:progress",
+                payload: { id: message.id, phase: "saved", savedPath: result.savedPath, bytes: result.bytes },
+              });
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.view?.webview.postMessage({
+                type: "history:export:progress",
+                payload: { id: message.id, phase: "error", error: (err as Error).message },
+              });
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "history:pin": {
+            pinHistoryEntry(message.payload.historyId, message.payload.pinned);
+            await this.postHistoryList(100);
+            await this.postHistoryEntry(message.payload.historyId);
+            await this.postActionResult(message.id, true);
+            break;
+          }
+          case "history:tag": {
+            tagHistoryEntry(message.payload.historyId, message.payload.tags);
+            await this.postHistoryList(100);
+            await this.postHistoryEntry(message.payload.historyId);
+            await this.postActionResult(message.id, true);
+            break;
+          }
+          case "history:delete": {
+            deleteHistoryEntry(message.payload.historyId);
+            await this.postHistoryList(100);
+            await this.postActionResult(message.id, true);
+            break;
+          }
+          case "history:rebuild-index": {
+            rebuildHistoryEntries();
+            await this.postHistoryList(100);
+            await this.postActionResult(message.id, true);
+            break;
+          }
+          case "viewers:request-list": {
+            await this.postViewersList();
+            break;
+          }
+          case "viewers:configure": {
+            try {
+              const viewers = await configureExternalViewer(message.payload.viewer);
+              await this.view?.webview.postMessage({ type: "viewers:list", payload: { viewers } });
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "history:cloud-sync": {
+            try {
+              await this.view?.webview.postMessage({
+                type: "history:cloud-sync:progress",
+                payload: { id: message.id, phase: "starting", fetched: 0, inserted: 0, updated: 0, skipped: 0 },
+              });
+              const result = await runCloudSync((evt) => {
+                void this.view?.webview.postMessage({
+                  type: "history:cloud-sync:progress",
+                  payload: {
+                    id: message.id,
+                    phase: evt.phase,
+                    fetched: evt.fetched,
+                    total: evt.total,
+                    inserted: evt.inserted,
+                    updated: evt.updated,
+                    skipped: evt.skipped,
+                    error: evt.error,
+                  },
+                });
+              }, { pageSize: message.payload?.pageSize });
+              await this.postHistoryList(200);
+              await this.view?.webview.postMessage({
+                type: "history:cloud-sync:progress",
+                payload: { id: message.id, phase: "done", fetched: result.fetched, inserted: result.inserted, updated: result.updated, skipped: result.skipped },
+              });
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              const errMsg = (err as Error).message;
+              await this.view?.webview.postMessage({
+                type: "history:cloud-sync:progress",
+                payload: { id: message.id, phase: "error", error: errMsg },
+              });
+              await this.postActionResult(message.id, false, errMsg);
+            }
+            break;
+          }
+          case "history:cloud-hydrate": {
+            try {
+              await this.view?.webview.postMessage({
+                type: "history:cloud-hydrate:progress",
+                payload: { id: message.id, historyId: message.payload.historyId, phase: "starting" },
+              });
+              const res = await hydrateCloudEntry(message.payload.historyId);
+              // Re-post the (now-hydrated) entry so Rich View refreshes.
+              await this.postHistoryEntry(message.payload.historyId);
+              await this.postHistoryList(200);
+              await this.view?.webview.postMessage({
+                type: "history:cloud-hydrate:progress",
+                payload: { id: message.id, historyId: message.payload.historyId, phase: res.action === "hydrated" ? "done" : res.action },
+              });
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              const errMsg = (err as Error).message;
+              await this.view?.webview.postMessage({
+                type: "history:cloud-hydrate:progress",
+                payload: { id: message.id, historyId: message.payload.historyId, phase: "error", error: errMsg },
+              });
+              await this.postActionResult(message.id, false, errMsg);
+            }
+            break;
+          }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.stack ?? err.message : String(err);
@@ -458,7 +640,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
     debug(`buildState: wsRoot=${wsRoot ?? "(none)"}`);
     return {
       snapshot: getAccountSnapshot(),
-      history: readHistory(25),
+      history: listHistoryEntries(25),
       ideStatus,
       rulesStatus: wsRoot ? getRulesStatuses(wsRoot) : [],
       settings,
@@ -481,6 +663,8 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       payload: this.buildState()
     } satisfies ExtensionMessage);
     await this.postProfileList();
+    await this.postHistoryList(100);
+    await this.postViewersList();
   }
 
   async refreshModels(): Promise<void> {
