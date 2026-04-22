@@ -282,12 +282,18 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
       return;
     }
 
+    // H12 source-of-truth: read the computed source from req._pplx (stamped
+    // by attachRequestSource + preserved by security.middleware) rather than
+    // the self-reported `x-perplexity-source` header. A tunnel caller could
+    // otherwise forge `x-perplexity-source: loopback` to mark their request
+    // as trusted for downstream consumers.
+    const computedSource: "loopback" | "tunnel" = req._pplx?.source === "tunnel" ? "tunnel" : "loopback";
     req.auth = {
       token: currentToken.bearerToken,
       clientId: readSingleHeader(req.headers?.["x-perplexity-client-id"]) ?? "daemon-client",
       scopes: [],
       extra: {
-        source: readSingleHeader(req.headers?.["x-perplexity-source"]) === "tunnel" ? "tunnel" : "loopback",
+        source: computedSource,
       },
     };
     next();
@@ -346,8 +352,9 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
   });
   app.get("/.well-known/oauth-protected-resource", (req: any, res: any) => {
     const issuer = resolveIssuer(req, oauthIssuer);
+    const resource = resolveRequestResource(req, oauthIssuer);
     res.json({
-      resource: new URL("/mcp", issuer).href,
+      resource,
       authorization_servers: [issuer.href.replace(/\/$/, "")],
       scopes_supported: ["mcp"],
       resource_name: "Perplexity MCP",
@@ -556,7 +563,13 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
       if (!token || type.toLowerCase() !== "bearer") {
         return sendUnauthorized("invalid_token", "Expected 'Bearer TOKEN'");
       }
-      const info = await oauthProvider.verifyAccessToken(token);
+      // H12: pass the trustworthy computed source (from attachRequestSource,
+      // preserved by security.middleware) and the canonical expected resource
+      // so the provider can enforce RFC 8707 binding + tunnel-only static
+      // bearer rejection.
+      const source: "loopback" | "tunnel" = req._pplx?.source === "tunnel" ? "tunnel" : "loopback";
+      const expectedResource = resolveRequestResource(req, oauthIssuer);
+      const info = await oauthProvider.verifyAccessToken(token, source, expectedResource);
       if (typeof info.expiresAt === "number" && info.expiresAt < Date.now() / 1000) {
         return sendUnauthorized("invalid_token", "Token expired");
       }
@@ -742,7 +755,13 @@ function pathIsTunnelAllowed(path: string): boolean {
 
 /** Resolve the OAuth issuer from the request's Host header so tunnel + loopback clients both see a correct metadata doc. */
 function resolveIssuer(req: any, fallback: URL): URL {
-  const host = typeof req.headers?.host === "string" ? req.headers.host : null;
+  // Prefer X-Forwarded-Host when present — real cloudflared / ngrok front-
+  // ends set this to the public hostname while the underlying Host header
+  // stays 127.0.0.1 (local socket). Fall back to Host if the proxy only
+  // rewrote one of them.
+  const forwardedHostRaw = typeof req.headers?.["x-forwarded-host"] === "string" ? req.headers["x-forwarded-host"] : null;
+  const forwardedHost = forwardedHostRaw ? forwardedHostRaw.split(",")[0]!.trim() : null;
+  const host = forwardedHost ?? (typeof req.headers?.host === "string" ? req.headers.host : null);
   const forwardedProto = typeof req.headers?.["x-forwarded-proto"] === "string" ? req.headers["x-forwarded-proto"] : null;
   const cfConnecting = req.headers?.["cf-connecting-ip"];
   if (host) {
@@ -754,6 +773,17 @@ function resolveIssuer(req: any, fallback: URL): URL {
     }
   }
   return fallback;
+}
+
+/**
+ * Canonicalize the expected resource identifier (RFC 8707) for this
+ * request. Returns `<scheme>://<host>/mcp` with no trailing slash so the
+ * PRM endpoint, the /authorize→/token binding, and verifyAccessToken's
+ * expectedResource all agree on a single form.
+ */
+export function resolveRequestResource(req: any, fallback: URL = new URL("http://localhost")): string {
+  const issuer = resolveIssuer(req, fallback);
+  return new URL("/mcp", issuer).toString().replace(/\/$/, "");
 }
 
 function readAuthorizationHeader(value: string | string[] | undefined): string | null {

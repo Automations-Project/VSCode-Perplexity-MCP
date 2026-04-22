@@ -33,6 +33,19 @@ const CODE_TTL_MS = 2 * 60_000;
 const TOKEN_TTL_MS = 60 * 60_000;
 const STATIC_CLIENT_ID = "local-static";
 
+/**
+ * Normalize a `resource` parameter (RFC 8707) into a canonical string or
+ * `undefined`. URL → toString minus trailing slash; non-empty string kept
+ * verbatim; anything else → undefined. The canonical shape is
+ * `<scheme>://<host>/mcp`.
+ */
+function normalizeResource(input: unknown): string | undefined {
+  if (input === undefined || input === null) return undefined;
+  if (typeof input === "string" && input.length > 0) return input;
+  if (input instanceof URL) return input.toString().replace(/\/$/, "");
+  return undefined;
+}
+
 export interface OAuthProviderOptions {
   configDir: string;
   /**
@@ -70,6 +83,8 @@ interface AuthCode {
   codeChallenge: string;
   scopes: string[];
   exp: number;
+  /** RFC 8707 — captured at /authorize, validated at /token exchange. */
+  resource?: string;
 }
 
 interface AccessTokenRecord {
@@ -77,6 +92,8 @@ interface AccessTokenRecord {
   scopes: string[];
   exp: number;
   refreshToken?: string;
+  /** Preserved across refresh. `undefined` = legacy/unbound token. */
+  resource?: string;
 }
 
 export interface AuthorizedClientSummary {
@@ -169,12 +186,14 @@ export class PerplexityOAuthProvider implements OAuthServerProvider {
 
   private issueAuthorizationCode(client: OAuthClientInformationFull, params: AuthorizationParams, res: Response): void {
     const code = `pplx_ac_${crypto.randomBytes(24).toString("base64url")}`;
+    const resource = normalizeResource((params as AuthorizationParams & { resource?: unknown }).resource);
     this.codes.set(code, {
       clientId: client.client_id,
       redirectUri: params.redirectUri,
       codeChallenge: params.codeChallenge,
       scopes: params.scopes ?? [],
       exp: Date.now() + CODE_TTL_MS,
+      resource,
     });
 
     const stored = this.clients.get(client.client_id);
@@ -199,6 +218,9 @@ export class PerplexityOAuthProvider implements OAuthServerProvider {
   async exchangeAuthorizationCode(
     client: OAuthClientInformationFull,
     authorizationCode: string,
+    codeVerifier?: string,
+    redirectUri?: string,
+    resource?: URL | string,
   ): Promise<OAuthTokens> {
     const entry = this.codes.get(authorizationCode);
     if (!entry) throw new Error("Invalid authorization code.");
@@ -207,10 +229,18 @@ export class PerplexityOAuthProvider implements OAuthServerProvider {
       this.codes.delete(authorizationCode);
       throw new Error("Authorization code expired.");
     }
+    if (redirectUri && entry.redirectUri !== redirectUri) {
+      throw new Error("redirect_uri does not match the code's registered redirect.");
+    }
+    const requestedResource = normalizeResource(resource);
+    if (entry.resource && requestedResource && entry.resource !== requestedResource) {
+      throw new Error("Token exchange resource does not match authorized resource.");
+    }
+    void codeVerifier; // SDK validates via challengeForAuthorizationCode
 
     this.codes.delete(authorizationCode);
 
-    const tokens = this.issueTokenPair(client.client_id, entry.scopes);
+    const tokens = this.issueTokenPair(client.client_id, entry.scopes, entry.resource ?? requestedResource);
 
     const stored = this.clients.get(client.client_id);
     if (stored) {
@@ -224,6 +254,8 @@ export class PerplexityOAuthProvider implements OAuthServerProvider {
   async exchangeRefreshToken(
     client: OAuthClientInformationFull,
     refreshToken: string,
+    scopes?: string[],
+    resource?: URL | string,
   ): Promise<OAuthTokens> {
     let matched: [string, AccessTokenRecord] | null = null;
     for (const [at, rec] of this.tokens.entries()) {
@@ -234,8 +266,14 @@ export class PerplexityOAuthProvider implements OAuthServerProvider {
     }
     if (!matched) throw new Error("Invalid refresh token.");
 
+    const requestedResource = normalizeResource(resource);
+    if (matched[1].resource && requestedResource && matched[1].resource !== requestedResource) {
+      throw new Error("Refresh resource does not match token's bound resource.");
+    }
+    const effectiveResource = matched[1].resource ?? requestedResource;
+
     this.tokens.delete(matched[0]);
-    const tokens = this.issueTokenPair(client.client_id, matched[1].scopes);
+    const tokens = this.issueTokenPair(client.client_id, scopes ?? matched[1].scopes, effectiveResource);
 
     const stored = this.clients.get(client.client_id);
     if (stored) {
@@ -246,8 +284,17 @@ export class PerplexityOAuthProvider implements OAuthServerProvider {
     return tokens;
   }
 
-  async verifyAccessToken(token: string): Promise<AuthInfo> {
+  async verifyAccessToken(
+    token: string,
+    source: "loopback" | "tunnel" = "loopback",
+    expectedResource?: string,
+  ): Promise<AuthInfo> {
     if (token === this.options.getStaticBearer()) {
+      // H12: static daemon bearer is loopback-only. The tunnel-allowlist
+      // (H11) already blocks most admin paths over tunnel, but /mcp is
+      // allowed — so the bearer check here is the last line of defence
+      // against a tunnel caller who somehow obtained the static token.
+      if (source === "tunnel") throw new Error("static bearer not valid on tunnel");
       // Static bearer doesn't expire until it's rotated — set a rolling
       // 1h expiry so SDK middleware's expiration check is happy. The
       // middleware will call verifyAccessToken again on every request so
@@ -265,11 +312,28 @@ export class PerplexityOAuthProvider implements OAuthServerProvider {
       this.tokens.delete(token);
       throw new Error("Access token expired.");
     }
+    // H12 RFC 8707: if the token was bound to a resource at issuance, the
+    // caller's request MUST be for that same resource. Rejected on any
+    // source (loopback + tunnel) — mismatches are always an audience error.
+    if (rec.resource && expectedResource && rec.resource !== expectedResource) {
+      throw new Error(`Access token resource mismatch: token bound to ${rec.resource}, request expects ${expectedResource}.`);
+    }
+    // H12 RFC 8707: tokens without a resource binding pre-date this check
+    // (legacy). Over a tunnel that's non-negotiable — we reject to force
+    // the client to re-authorize with a `resource` param. Over loopback we
+    // accept but surface a visible flag so the audit trail can distinguish
+    // legacy from bound tokens.
+    if (!rec.resource && source === "tunnel") {
+      throw new Error("resource binding required over tunnel");
+    }
     return {
       token,
       clientId: rec.clientId,
       scopes: rec.scopes,
       expiresAt: Math.floor(rec.exp / 1000),
+      extra: {
+        ...(rec.resource ? { resource: rec.resource } : { unboundResource: true }),
+      },
     };
   }
 
@@ -324,7 +388,7 @@ export class PerplexityOAuthProvider implements OAuthServerProvider {
     return consentCache.revoke({ cachePath: this.consentCachePath, clientId, redirectUri });
   }
 
-  private issueTokenPair(clientId: string, scopes: string[]): OAuthTokens {
+  private issueTokenPair(clientId: string, scopes: string[], resource?: string): OAuthTokens {
     const accessToken = `pplx_at_${crypto.randomBytes(24).toString("base64url")}`;
     const refreshToken = `pplx_rt_${crypto.randomBytes(24).toString("base64url")}`;
     const exp = Date.now() + TOKEN_TTL_MS;
@@ -333,6 +397,7 @@ export class PerplexityOAuthProvider implements OAuthServerProvider {
       scopes,
       exp,
       refreshToken,
+      resource,
     });
     return {
       access_token: accessToken,

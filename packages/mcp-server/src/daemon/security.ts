@@ -81,10 +81,24 @@ export function createSecurity(options: SecurityOptions = {}): SecurityMiddlewar
   const middleware = (req: any, res: any, next: any) => {
     const ip = pickClientIp(req);
     const ua = typeof req.headers?.["user-agent"] === "string" ? req.headers["user-agent"] : "";
-    const source: "loopback" | "tunnel" = isLoopbackRequest(req, ip) ? "loopback" : "tunnel";
     const bearer = extractBearer(req.headers?.authorization);
 
+    // H11/H12 source-of-truth: if `attachRequestSource` already stamped a
+    // computed source on req._pplx, PRESERVE it. That upstream middleware
+    // derives the source strictly from network indicators (X-Forwarded-For,
+    // CF-Connecting-IP, socket IP) and MUST NOT be downgraded here — the
+    // legacy isLoopbackRequest() helper trusted a self-reported
+    // `x-perplexity-source: loopback` header, which a tunnel caller could
+    // forge to bypass H12's tunnel-rejects-static-bearer enforcement. We
+    // only fall back to computing source locally when the upstream
+    // middleware was bypassed (e.g. direct middleware unit tests).
+    const existing = req._pplx ?? {};
+    const source: "loopback" | "tunnel" = existing.source === "tunnel" || existing.source === "loopback"
+      ? existing.source
+      : (isLoopbackRequest(req, ip) ? "loopback" : "tunnel");
+
     req._pplx = {
+      ...existing,
       ip,
       userAgent: ua,
       source,
