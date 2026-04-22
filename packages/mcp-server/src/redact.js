@@ -14,6 +14,59 @@
 // If any of these assumptions changes (e.g., we start redacting user-supplied
 // payloads), the pattern set must be revisited.
 
+/**
+ * Canonical secret-shape regex list. Distinct from the legacy PATTERNS array
+ * below because every match emits a kind-tagged `<redacted:<kind>>` placeholder
+ * so the redactor's output is unambiguous for audit / test / grep-gate
+ * purposes. Applied BEFORE the legacy PATTERNS inside redactString so specific
+ * shapes win over the generic long-token catchall.
+ */
+export const SECRET_PATTERNS = Object.freeze([
+  // OAuth / local prefixes come FIRST so a value like `"bearer":"pplx_at_…"`
+  // gets the specific oauth-access tag instead of the generic daemon-bearer
+  // one from the bearer-json catchall below.
+  { name: "oauth-access",         kind: "oauth-access",       re: /pplx_at_[A-Za-z0-9_\-]{10,}/g },
+  { name: "oauth-refresh",        kind: "oauth-refresh",      re: /pplx_rt_[A-Za-z0-9_\-]{10,}/g },
+  { name: "oauth-code",           kind: "oauth-code",         re: /pplx_ac_[A-Za-z0-9_\-]{10,}/g },
+  { name: "local-bearer",         kind: "local-bearer",       re: /pplx_local_[a-z0-9-]+_[A-Za-z0-9_\-]{10,}/g },
+  { name: "daemon-bearer-json",   kind: "daemon-bearer",      re: /"bearerToken"\s*:\s*"[A-Za-z0-9_\-]{30,}"/g },
+  // Matches the `"bearer":"..."` shape used by daemon:bearer:reveal:response
+  // so reveal-payload logs stay leak-free. Value is only required to be
+  // 20+ safe-identifier chars — covers both raw daemon bearers and future
+  // short-lived tokens.
+  { name: "bearer-json",          kind: "daemon-bearer",      re: /"bearer"\s*:\s*"[A-Za-z0-9_\-]{20,}"/g },
+  { name: "authorization-header", kind: "bearer-header",      re: /[Aa]uthorization\s*:\s*Bearer\s+[A-Za-z0-9_\-\.]{20,}/g },
+  { name: "ngrok-authtoken",      kind: "ngrok-authtoken",    re: /"authtoken"\s*:\s*"\d+[A-Za-z0-9]{20,}"/g },
+  { name: "jwt",                  kind: "jwt",                re: /eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+/g },
+  { name: "cf-clearance",         kind: "cf-clearance",       re: /cf_clearance=[^;\s]+/g },
+  { name: "perplexity-session",   kind: "perplexity-session", re: /__Secure-next-auth\.session-token=[^;\s]+/g },
+]);
+
+/**
+ * String-only secret redactor. Applies SECRET_PATTERNS and returns a string
+ * with kind-tagged placeholders. Does NOT apply the legacy PATTERNS
+ * (emails / userIds / paths / IPs / generic long-token); call `redact()` for
+ * the full composite behavior.
+ * @param {string} input
+ * @returns {string}
+ */
+export function redactSecrets(input) {
+  if (typeof input !== "string") return input;
+  let out = input;
+  for (const { re, kind } of SECRET_PATTERNS) {
+    out = out.replace(re, (match) => {
+      if (match.startsWith('"bearerToken"')) return `"bearerToken":"<redacted:${kind}>"`;
+      if (match.startsWith('"bearer"')) return `"bearer":"<redacted:${kind}>"`;
+      if (/^[Aa]uthorization\s*:/i.test(match)) return match.replace(/Bearer\s+[A-Za-z0-9_\-\.]{20,}/, `Bearer <redacted:${kind}>`);
+      if (match.startsWith('"authtoken"')) return `"authtoken":"<redacted:${kind}>"`;
+      if (match.startsWith("cf_clearance=")) return `cf_clearance=<redacted:${kind}>`;
+      if (match.startsWith("__Secure-next-auth.session-token=")) return `__Secure-next-auth.session-token=<redacted:${kind}>`;
+      return `<redacted:${kind}>`;
+    });
+  }
+  return out;
+}
+
 const PATTERNS = [
   // Emails: RFC 5322 subset. Must come before generic token rules because
   // emails contain characters that other rules would catch.
@@ -27,8 +80,10 @@ const PATTERNS = [
     replace: "<userId>",
   },
   // Cookie name=value pairs we know are sensitive.
+  // Negative lookahead for `<redacted:` lets SECRET_PATTERNS tag cookies with
+  // a kind-tagged placeholder first without this rule clobbering the result.
   {
-    re: /(__Secure-next-auth\.session-token|cf_clearance)=[^;\s,'"]+/g,
+    re: /(__Secure-next-auth\.session-token|cf_clearance)=(?!<redacted:)[^;\s,'"]+/g,
     replace: (_m, name) => `${name}=<cookie>`,
   },
   // Home directory paths. Must replace before the "long opaque token" rule
@@ -71,6 +126,10 @@ const PATTERNS = [
  * Redact sensitive patterns from a string or object graph.
  * For objects: every string-valued leaf is redacted recursively.
  * Arrays are handled recursively too. Primitive non-strings are returned unchanged.
+ * @template T
+ * @param {T} value
+ * @param {WeakSet<object>} [_seen]
+ * @returns {T}
  */
 export function redact(value, _seen) {
   if (value == null) return value;
@@ -91,7 +150,13 @@ export function redact(value, _seen) {
 }
 
 function redactString(s) {
-  let out = s;
+  // SECRET_PATTERNS first: specific bearer / OAuth / JWT / ngrok / cookie
+  // shapes get tagged "<redacted:<kind>>" placeholders. Then the legacy
+  // PATTERNS handle everything else (emails / userIds / home paths / IPs /
+  // generic long-token catchall). Running secrets first prevents the generic
+  // `=(20+chars)` catchall from eating a bearer with a plain `<redacted>`
+  // label when we'd rather have `<redacted:oauth-access>`.
+  let out = redactSecrets(s);
   for (const { re, replace } of PATTERNS) {
     out = out.replace(re, replace);
   }

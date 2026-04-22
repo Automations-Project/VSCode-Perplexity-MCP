@@ -23,6 +23,8 @@
     "onCommand:Perplexity.refreshModels",
     "onCommand:Perplexity.daemon.status",
     "onCommand:Perplexity.daemon.rotateToken",
+    "onCommand:Perplexity.copyDaemonBearer",
+    "onCommand:Perplexity.showDaemonBearer",
     "onCommand:Perplexity.daemon.enableTunnel",
     "onCommand:Perplexity.daemon.disableTunnel",
     "onCommand:Perplexity.openRichView",
@@ -69,6 +71,16 @@
       {
         "command": "Perplexity.daemon.rotateToken",
         "title": "Perplexity: Rotate Daemon Token",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.copyDaemonBearer",
+        "title": "Perplexity: Copy Daemon Bearer",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.showDaemonBearer",
+        "title": "Perplexity: Show Daemon Bearer (30s)",
         "category": "Perplexity"
       },
       {

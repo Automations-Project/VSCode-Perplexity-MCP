@@ -1,6 +1,8 @@
+import * as crypto from "node:crypto";
 import * as vscode from "vscode";
 import { MCP_PROVIDER_ID, MCP_SERVER_LABEL, type ExportFormat, type IdeTarget } from "@perplexity-user-mcp/shared";
 import { getActiveName, getProfile, listProfiles, setActive, createProfile } from "perplexity-user-mcp/profiles";
+import { redactMessage } from "./redact.js";
 import { configureTargets, getIdeStatuses } from "./auto-config/index.js";
 import { hasStoredLogin } from "./auth/session.js";
 import { getSettingsSnapshot } from "./settings.js";
@@ -23,12 +25,12 @@ let outputChannel: vscode.OutputChannel;
 let debugEnabled = false;
 
 export function log(message: string): void {
-  outputChannel?.appendLine(`[${new Date().toISOString()}] ${message}`);
+  outputChannel?.appendLine(`[${new Date().toISOString()}] ${redactMessage(message)}`);
 }
 
 export function debug(message: string): void {
   if (debugEnabled) {
-    outputChannel?.appendLine(`[${new Date().toISOString()}] [DEBUG] ${message}`);
+    outputChannel?.appendLine(`[${new Date().toISOString()}] [DEBUG] ${redactMessage(message)}`);
   }
 }
 
@@ -475,6 +477,15 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
         return false;
       }
     })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("Perplexity.copyDaemonBearer", async () => {
+      await dashboard.dispatchFromCommand({ type: "daemon:bearer:copy", id: crypto.randomUUID() });
+    }),
+    vscode.commands.registerCommand("Perplexity.showDaemonBearer", async () => {
+      await dashboard.dispatchFromCommand({ type: "daemon:bearer:reveal", id: crypto.randomUUID() });
+    }),
   );
 
   context.subscriptions.push(

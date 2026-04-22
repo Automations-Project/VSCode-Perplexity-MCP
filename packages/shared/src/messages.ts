@@ -81,11 +81,8 @@ export interface DaemonStatusState {
   uptimeMs: number | null;
   heartbeatCount: number | null;
   tunnel: DaemonTunnelState;
-  // Bearer for loopback + tunnel MCP clients. Shown in the UI behind a
-  // reveal click so the user can paste it into remote MCP configs. Treat
-  // this as sensitive — anyone with (tunnelUrl, bearerToken) can use the
-  // user's Perplexity session.
-  bearerToken: string | null;
+  /** True iff a daemon token exists on disk. The raw bearer is NEVER sent over this channel. */
+  bearerAvailable: boolean;
 }
 
 export interface DaemonAuditEntry {
@@ -222,6 +219,24 @@ export type ExtensionMessage =
   | { type: "daemon:tunnel-url"; payload: DaemonTunnelState }
   | { type: "daemon:token-rotated"; payload: { rotatedAt: string } }
   | { type: "daemon:audit-tail"; payload: { items: DaemonAuditEntry[] } }
+  | {
+      type: "daemon:bearer:reveal:response";
+      id: string;
+      payload: { bearer: string; expiresInMs: number; nonce: string };
+    }
+  | {
+      type: "daemon:oauth-clients";
+      payload: {
+        clients: Array<{
+          clientId: string;
+          clientName?: string;
+          registeredAt: number;
+          lastUsedAt?: string;
+          consentLastApprovedAt?: string;
+          activeTokens: number;
+        }>;
+      };
+    }
   | {
       type: "daemon:oauth-consents";
       payload: {
@@ -397,6 +412,11 @@ export type WebviewMessage =
   | { type: "daemon:oauth-consents-list"; id: string }
   | { type: "daemon:oauth-consents-revoke"; id: string; payload: { clientId: string; redirectUri?: string } }
   | { type: "daemon:oauth-consents-revoke-all"; id: string }
+  | { type: "daemon:bearer:copy"; id: string }
+  | { type: "daemon:bearer:reveal"; id: string }
+  | { type: "oauth-clients:list"; id: string }
+  | { type: "oauth-clients:revoke"; id: string; payload: { clientId: string } }
+  | { type: "oauth-clients:revoke-all"; id: string }
   | { type: "history:request-list"; payload?: { filter?: string } }
   | { type: "history:request-entry"; id: string; payload: { historyId: string } }
   | { type: "history:open-preview"; id: string; payload: { historyId: string } }

@@ -21,6 +21,7 @@ import {
 import type { IdeTarget } from "@perplexity-user-mcp/shared";
 import { getAccountSnapshot, setLastRefreshTier } from "../auth/session.js";
 import { log, debug } from "../extension.js";
+import { redactMessage, redactObject } from "../redact.js";
 import type { DebugCollector } from "../debug/collector.js";
 import { runDoctor } from "perplexity-user-mcp";
 import {
@@ -176,11 +177,12 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage(async (message: WebviewMessage) => {
       if (message.type === "log:webview") {
         const { level, args, ts } = message.payload;
-        const serialized = args.map((a) => typeof a === "string" ? a : (() => { try { return JSON.stringify(a); } catch { return String(a); } })()).join(" ");
+        const safeArgs = redactObject(args);
+        const serialized = safeArgs.map((a) => typeof a === "string" ? a : (() => { try { return JSON.stringify(a); } catch { return String(a); } })()).join(" ");
         debug(`[webview/${level}] ${ts} ${serialized}`);
         return;
       }
-      debug(`Webview message received: ${JSON.stringify(message)}`);
+      debug(`Webview message received: ${redactMessage(JSON.stringify(message))}`);
       try {
         switch (message.type) {
           case "ready":
@@ -740,6 +742,60 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             } catch (err) {
               await this.postActionResult(message.id, false, (err as Error).message);
             }
+            break;
+          }
+          case "daemon:bearer:copy": {
+            const confirm = await vscode.window.showWarningMessage(
+              "Copy the daemon bearer to your clipboard?",
+              { modal: true, detail: "Anyone on this machine with clipboard access can read it while it sits there. The clipboard is not auto-cleared." },
+              "Copy to clipboard",
+            );
+            if (confirm !== "Copy to clipboard") {
+              await this.postActionResult(message.id, false, "cancelled");
+              break;
+            }
+            try {
+              const daemon = await getBundledDaemonStatus();
+              if (!daemon.record?.bearerToken) throw new Error("Daemon is not running.");
+              await vscode.env.clipboard.writeText(daemon.record.bearerToken);
+              await this.postNotice("info", "Daemon bearer copied to clipboard.");
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "daemon:bearer:reveal": {
+            const confirm = await vscode.window.showWarningMessage(
+              "Show the daemon bearer in the dashboard for 30 seconds?",
+              { modal: true, detail: "The token will auto-clear from the dashboard after 30 seconds. It is not persisted anywhere by the dashboard." },
+              "Show for 30 seconds",
+            );
+            if (confirm !== "Show for 30 seconds") {
+              await this.postActionResult(message.id, false, "cancelled");
+              break;
+            }
+            try {
+              const daemon = await getBundledDaemonStatus();
+              if (!daemon.record?.bearerToken) throw new Error("Daemon is not running.");
+              const nonce = crypto.randomUUID();
+              await this.view?.webview.postMessage({
+                type: "daemon:bearer:reveal:response",
+                id: message.id,
+                payload: { bearer: daemon.record.bearerToken, expiresInMs: 30_000, nonce },
+              } satisfies ExtensionMessage);
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "oauth-clients:list":
+          case "oauth-clients:revoke":
+          case "oauth-clients:revoke-all": {
+            // Handlers for these arrive in a later Phase 8.2 task; acknowledge
+            // here so the ID round-trips cleanly and the switch is exhaustive.
+            await this.postActionResult(message.id, false, "not-yet-implemented");
             break;
           }
           case "daemon:oauth-consents-revoke-all": {
@@ -1346,6 +1402,60 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  /**
+   * Dispatch a message from a VS Code command (no webview context). Today
+   * only `daemon:bearer:copy` and `daemon:bearer:reveal` are wired here —
+   * copy runs the same modal + clipboard write, reveal shows the bearer in
+   * a modal information message with a Copy button since the webview may
+   * not be open.
+   */
+  async dispatchFromCommand(message: { type: "daemon:bearer:copy" | "daemon:bearer:reveal"; id: string }): Promise<void> {
+    if (message.type === "daemon:bearer:copy") {
+      const confirm = await vscode.window.showWarningMessage(
+        "Copy the daemon bearer to your clipboard?",
+        { modal: true, detail: "Anyone on this machine with clipboard access can read it while it sits there. The clipboard is not auto-cleared." },
+        "Copy to clipboard",
+      );
+      if (confirm !== "Copy to clipboard") return;
+      try {
+        const daemon = await getBundledDaemonStatus();
+        if (!daemon.record?.bearerToken) throw new Error("Daemon is not running.");
+        await vscode.env.clipboard.writeText(daemon.record.bearerToken);
+        void vscode.window.showInformationMessage("Daemon bearer copied to clipboard.");
+      } catch (err) {
+        void vscode.window.showErrorMessage(`Copy daemon bearer failed: ${(err as Error).message}`);
+      }
+      return;
+    }
+    if (message.type === "daemon:bearer:reveal") {
+      // When invoked from a command we open the dashboard and route through
+      // the webview handler so the 30s-TTL UI can do the reveal properly.
+      await this.reveal();
+      await this.refresh();
+      await this.view?.webview.postMessage({
+        type: "action:result",
+        id: message.id,
+        ok: true,
+      } satisfies ExtensionMessage);
+      try {
+        const daemon = await getBundledDaemonStatus();
+        if (!daemon.record?.bearerToken) {
+          void vscode.window.showErrorMessage("Daemon is not running.");
+          return;
+        }
+        const nonce = crypto.randomUUID();
+        await this.view?.webview.postMessage({
+          type: "daemon:bearer:reveal:response",
+          id: message.id,
+          payload: { bearer: daemon.record.bearerToken, expiresInMs: 30_000, nonce },
+        } satisfies ExtensionMessage);
+      } catch (err) {
+        void vscode.window.showErrorMessage(`Reveal daemon bearer failed: ${(err as Error).message}`);
+      }
+      return;
+    }
+  }
+
   private toDaemonStatusPayload(status: Awaited<ReturnType<typeof getBundledDaemonStatus>>): DaemonStatusState {
     const health = status.health;
     const record = status.record;
@@ -1373,7 +1483,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
         pid: health?.tunnel?.pid ?? record?.cloudflaredPid ?? null,
         error: health?.tunnel?.error ?? null,
       }),
-      bearerToken: record?.bearerToken ?? null,
+      bearerAvailable: Boolean(record?.bearerToken),
     };
   }
 

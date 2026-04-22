@@ -34,13 +34,22 @@ describe("redact", () => {
   });
 
   describe("cookie values", () => {
+    // Phase 8.2 H0: cookies now get kind-tagged `<redacted:<kind>>`
+    // placeholders via SECRET_PATTERNS. Either the legacy `<cookie>` label
+    // or the new `<redacted:perplexity-session>` / `<redacted:cf-clearance>`
+    // is acceptable so long as the raw value is gone — so the assertions
+    // below accept both shapes.
     it("redacts __Secure-next-auth.session-token", () => {
       const input = '__Secure-next-auth.session-token=eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2R0NNIn0..abc';
-      expect(redact(input)).toMatch(/__Secure-next-auth\.session-token=<cookie>/);
+      const out = redact(input);
+      expect(out).toMatch(/__Secure-next-auth\.session-token=(<cookie>|<redacted:perplexity-session>)/);
+      expect(out).not.toContain("eyJhbGciOiJkaXIi");
     });
     it("redacts cf_clearance", () => {
       const input = 'cf_clearance=longrandomstring12345';
-      expect(redact(input)).toBe("cf_clearance=<cookie>");
+      const out = redact(input);
+      expect(out).toMatch(/^cf_clearance=(<cookie>|<redacted:cf-clearance>)$/);
+      expect(out).not.toContain("longrandomstring12345");
     });
   });
 

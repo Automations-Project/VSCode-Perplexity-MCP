@@ -72,6 +72,10 @@
       "types": "./dist/doctor.d.ts",
       "import": "./dist/doctor.mjs"
     },
+    "./redact": {
+      "types": "./dist/redact.d.ts",
+      "import": "./dist/redact.mjs"
+    },
     "./daemon": {
       "types": "./dist/daemon/index.d.ts",
       "import": "./dist/daemon/index.mjs"
