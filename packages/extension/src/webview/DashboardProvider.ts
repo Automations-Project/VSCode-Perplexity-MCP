@@ -51,15 +51,22 @@ import {
   tagHistoryEntry,
 } from "../history/open-handlers.js";
 import {
+  clearBundledNgrokSettings,
   disableBundledDaemonTunnel,
   enableBundledDaemonTunnel,
   ensureBundledDaemon,
+  getBundledActiveTunnelProvider,
   getBundledDaemonStatus,
+  getBundledNgrokSettings,
   installBundledCloudflared,
   isCloudflaredInstalled,
+  listBundledTunnelProviders,
   readBundledDaemonAuditTail,
   restartBundledDaemon,
   rotateBundledDaemonToken,
+  setBundledActiveTunnelProvider,
+  setBundledNgrokAuthtoken,
+  setBundledNgrokDomain,
 } from "../daemon/runtime.js";
 
 export class DashboardProvider implements vscode.WebviewViewProvider {
@@ -508,6 +515,69 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             }
             break;
           }
+          case "daemon:list-tunnel-providers": {
+            try {
+              await this.postTunnelProviders();
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "daemon:set-tunnel-provider": {
+            try {
+              const { providerId } = message.payload;
+              const wasRunning = (await getBundledDaemonStatus()).record?.tunnelUrl != null;
+              if (wasRunning) {
+                await disableBundledDaemonTunnel();
+              }
+              setBundledActiveTunnelProvider(providerId);
+              await this.postTunnelProviders();
+              await this.postNotice("info", `Active tunnel provider set to ${providerId === "ngrok" ? "ngrok" : "Cloudflare Quick"}. Click Enable to start it.`);
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "daemon:set-ngrok-authtoken": {
+            try {
+              const token = (message.payload.authtoken ?? "").trim();
+              if (token.length < 10) {
+                throw new Error("Authtoken looks invalid (too short). Paste the full token from dashboard.ngrok.com/get-started/your-authtoken.");
+              }
+              setBundledNgrokAuthtoken(token);
+              await this.postTunnelProviders();
+              await this.postNotice("info", "ngrok authtoken saved.");
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "daemon:set-ngrok-domain": {
+            try {
+              const domain = (message.payload.domain ?? "").trim();
+              setBundledNgrokDomain(domain.length > 0 ? domain : null);
+              await this.postTunnelProviders();
+              await this.postNotice("info", domain ? `ngrok reserved domain set to ${domain}.` : "ngrok reserved domain cleared.");
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "daemon:clear-ngrok-settings": {
+            try {
+              clearBundledNgrokSettings();
+              await this.postTunnelProviders();
+              await this.postNotice("info", "ngrok settings cleared. Paste your authtoken again to re-enable.");
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
           case "daemon:restart": {
             try {
               await this.postNotice("info", "Restarting daemon — this will drop any open tunnel for a few seconds.");
@@ -943,6 +1013,31 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private async postTunnelProviders(): Promise<void> {
+    if (!this.view) return;
+    try {
+      const providers = await listBundledTunnelProviders();
+      const activeProvider = getBundledActiveTunnelProvider();
+      const ngrok = getBundledNgrokSettings();
+      await this.view.webview.postMessage({
+        type: "daemon:tunnel-providers",
+        payload: {
+          activeProvider,
+          providers: providers.map((p) => ({
+            id: p.id,
+            displayName: p.displayName,
+            description: p.description,
+            isActive: p.isActive,
+            setup: p.setup,
+          })),
+          ngrok,
+        },
+      } satisfies ExtensionMessage);
+    } catch (err) {
+      debug(`[trace] postTunnelProviders failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   private async postDaemonState(options: { ensure?: boolean; restartEvents?: boolean } = {}): Promise<void> {
     if (!this.view) {
       return;
@@ -973,6 +1068,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
         type: "daemon:audit-tail",
         payload: { items: readBundledDaemonAuditTail(50) as DaemonAuditEntry[] },
       } satisfies ExtensionMessage);
+      await this.postTunnelProviders();
 
       if (options.restartEvents && status.running && status.healthy) {
         await this.startDaemonEventStream();

@@ -220,6 +220,24 @@ export type ExtensionMessage =
   | { type: "daemon:tunnel-url"; payload: DaemonTunnelState }
   | { type: "daemon:token-rotated"; payload: { rotatedAt: string } }
   | { type: "daemon:audit-tail"; payload: { items: DaemonAuditEntry[] } }
+  | {
+      type: "daemon:tunnel-providers";
+      payload: {
+        activeProvider: "cf-quick" | "ngrok";
+        providers: Array<{
+          id: "cf-quick" | "ngrok";
+          displayName: string;
+          description: string;
+          isActive: boolean;
+          setup: {
+            ready: boolean;
+            reason?: string;
+            action?: { label: string; kind: "open-url" | "input-authtoken" | "install-binary"; url?: string };
+          };
+        }>;
+        ngrok: { configured: boolean; domain?: string; updatedAt?: string };
+      };
+    }
   | { type: "history:list"; payload: { items: HistoryItem[] } }
   | { type: "history:entry"; payload: HistoryEntryDetail }
   | {
@@ -266,6 +284,29 @@ export type WebviewMessage =
     }
   | {
       type: "daemon:restart";
+      id: string;
+    }
+  | {
+      type: "daemon:list-tunnel-providers";
+      id: string;
+    }
+  | {
+      type: "daemon:set-tunnel-provider";
+      id: string;
+      payload: { providerId: "cf-quick" | "ngrok" };
+    }
+  | {
+      type: "daemon:set-ngrok-authtoken";
+      id: string;
+      payload: { authtoken: string };
+    }
+  | {
+      type: "daemon:set-ngrok-domain";
+      id: string;
+      payload: { domain: string | null };
+    }
+  | {
+      type: "daemon:clear-ngrok-settings";
       id: string;
     }
   | {

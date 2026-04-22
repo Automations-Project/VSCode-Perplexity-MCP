@@ -42,6 +42,21 @@ interface DashboardStore {
   daemonStatus: DaemonStatusState | null;
   daemonAuditTail: DaemonAuditEntry[];
   daemonTokenRotatedAt: string | null;
+  tunnelProviders: {
+    activeProvider: "cf-quick" | "ngrok";
+    providers: Array<{
+      id: "cf-quick" | "ngrok";
+      displayName: string;
+      description: string;
+      isActive: boolean;
+      setup: {
+        ready: boolean;
+        reason?: string;
+        action?: { label: string; kind: "open-url" | "input-authtoken" | "install-binary"; url?: string };
+      };
+    }>;
+    ngrok: { configured: boolean; domain?: string; updatedAt?: string };
+  } | null;
   historyExport: {
     id: string | null;
     phase: "idle" | "starting" | "downloaded" | "saved" | "error";
@@ -101,6 +116,7 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
   daemonStatus: null,
   daemonAuditTail: [],
   daemonTokenRotatedAt: null,
+  tunnelProviders: null,
   historyExport: { id: null, phase: "idle" },
   cloudSync: { phase: "idle" },
   cloudHydrate: { historyId: null, phase: "idle" },
@@ -162,6 +178,11 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
 
     if (message.type === "daemon:audit-tail") {
       set({ daemonAuditTail: message.payload.items });
+      return;
+    }
+
+    if (message.type === "daemon:tunnel-providers") {
+      set({ tunnelProviders: message.payload });
       return;
     }
 

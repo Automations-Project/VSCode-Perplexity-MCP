@@ -1,6 +1,6 @@
 {
   "name": "perplexity-user-mcp",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "type": "module",
   "description": "Perplexity AI MCP server — browser automation for search, reasoning, research, and compute",
   "author": "A.R.",
@@ -75,6 +75,10 @@
     "./daemon": {
       "types": "./dist/daemon/index.d.ts",
       "import": "./dist/daemon/index.mjs"
+    },
+    "./daemon/tunnel-providers": {
+      "types": "./dist/daemon/tunnel-providers/index.d.ts",
+      "import": "./dist/daemon/tunnel-providers/index.mjs"
     }
   },
   "files": [
@@ -92,9 +96,11 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
+    "@ngrok/ngrok": "^1.7.0",
     "express": "^4.21.0",
-    "gray-matter": "^4.0.3",
     "got-scraping": "^4.2.1",
+    "gray-matter": "^4.0.3",
+    "helmet": "^8.1.0",
     "patchright": "^1.59.4",
     "zod": "^3.24.0"
   },

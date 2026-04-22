@@ -4,6 +4,31 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [0.7.0] — 2026-04-22 — Phase 7: pluggable tunnel providers (ngrok) + public-surface hardening
+
+### Added
+- **Pluggable tunnel-provider registry** (`packages/mcp-server/src/daemon/tunnel-providers/`):
+  - `cf-quick` — existing Cloudflare Quick Tunnel, default, ephemeral `*.trycloudflare.com` URL.
+  - `ngrok` — persistent URL via the **official `@ngrok/ngrok` NAPI binding** (no binary download, no child-process management). Free-tier accounts get one reserved `*.ngrok-free.app` domain that persists across daemon restarts.
+- **Dashboard provider picker** — new dropdown in the daemon card swaps between providers. When ngrok is selected but unconfigured, an inline setup widget prompts for the authtoken with a direct link to the ngrok dashboard; optional reserved-domain input afterwards.
+- **CLI commands** for the same flows:
+  - `npx perplexity-user-mcp daemon list-providers [--json]`
+  - `npx perplexity-user-mcp daemon set-provider cf-quick|ngrok`
+  - `npx perplexity-user-mcp daemon set-ngrok-authtoken <token>`
+  - `npx perplexity-user-mcp daemon set-ngrok-domain <domain>`
+  - `npx perplexity-user-mcp daemon clear-ngrok`
+- **Persistence:** provider choice in `<configDir>/tunnel-settings.json`; ngrok credentials in `<configDir>/ngrok.json` (0600 POSIX / icacls ACL on Windows, mirroring daemon.token).
+
+### Hardening (bundled with Phase 7)
+- **`helmet` middleware** on every HTTP request — sets `X-Content-Type-Options`, `X-Frame-Options: DENY`, `X-Download-Options`, `Referrer-Policy`, etc. HSTS deliberately off (our origin is HTTP; the tunnel edge supplies TLS).
+- **`trust proxy=1`** set on the express app — resolves the `ValidationError: X-Forwarded-For` warnings the daemon emitted on every tunnel request and lets `express-rate-limit` correctly identify source IPs.
+- **Per-IP rate limit on the OAuth endpoints** (`/authorize`, `/register`, `/token`, `/revoke`). Tunnel traffic only; 30 req/min per source IP. Prevents bulk dynamic-client-registration abuse on a leaked tunnel URL.
+
+### Changed
+- `packages/mcp-server` + `packages/extension` bump to `0.7.0`.
+- New deps: `@ngrok/ngrok` ^1.7.0, `helmet` ^8.1.0. Both added to `prepare-package-deps.mjs` rootPackages so they ship in the VSIX's `dist/node_modules/`.
+- New subpath export: `perplexity-user-mcp/daemon/tunnel-providers`.
+
 ## [0.6.1] — 2026-04-22 — OAuth flow hotfix: dynamic WWW-Authenticate + root path MCP
 
 ### Fixed

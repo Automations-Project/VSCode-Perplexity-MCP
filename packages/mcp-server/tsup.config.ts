@@ -33,6 +33,7 @@ export default defineConfig({
     "daemon/server": "src/daemon/server.ts",
     "daemon/token": "src/daemon/token.ts",
     "daemon/tunnel": "src/daemon/tunnel.ts",
+    "daemon/tunnel-providers/index": "src/daemon/tunnel-providers/index.ts",
     "checks/runtime": "src/checks/runtime.js",
     "checks/config": "src/checks/config.js",
     "checks/profiles": "src/checks/profiles.js",
@@ -71,6 +72,11 @@ export default defineConfig({
     // top-level `require("path")` / `require("fs")`. Same __require shim
     // failure as gray-matter above — must resolve from node_modules at runtime.
     "express",
+    // @ngrok/ngrok is a NAPI native-addon binding; can't be bundled into ESM.
+    "@ngrok/ngrok",
+    // helmet is CJS with setter-based exports that tsup's __require shim
+    // handles poorly under ESM; external is the standard pattern.
+    "helmet",
   ],
   // Shebang is NOT emitted into source files — it tripped vitest/esbuild
   // during test imports of cli.js. npm's `bin` linker wraps the entry with

@@ -21,6 +21,19 @@ import {
   type DaemonHydrateResult,
   type InstallTunnelResult,
 } from "perplexity-user-mcp/daemon";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore — subpath export from mcp-server daemon bundle
+import {
+  listTunnelProviderStatuses,
+  readTunnelSettings,
+  writeTunnelSettings,
+  readNgrokSettings,
+  writeNgrokSettings,
+  clearNgrokSettings,
+  type TunnelProviderId,
+  type TunnelProviderStatus,
+  type NgrokSettings,
+} from "perplexity-user-mcp/daemon/tunnel-providers";
 
 const DAEMON_LOG_MAX_BYTES = 2 * 1024 * 1024;
 
@@ -113,6 +126,48 @@ export function isCloudflaredInstalled(): boolean {
 export async function installBundledCloudflared(): Promise<InstallTunnelResult> {
   const config = requireRuntimeConfig();
   return installCloudflared({ configDir: config.configDir });
+}
+
+export async function listBundledTunnelProviders(): Promise<TunnelProviderStatus[]> {
+  const config = requireRuntimeConfig();
+  return listTunnelProviderStatuses(config.configDir);
+}
+
+export function getBundledActiveTunnelProvider(): TunnelProviderId {
+  const config = requireRuntimeConfig();
+  return readTunnelSettings(config.configDir).activeProvider;
+}
+
+export function setBundledActiveTunnelProvider(id: TunnelProviderId): TunnelProviderId {
+  const config = requireRuntimeConfig();
+  const next = writeTunnelSettings(config.configDir, { activeProvider: id });
+  return next.activeProvider;
+}
+
+export function getBundledNgrokSettings(): { configured: boolean; domain?: string; updatedAt?: string } {
+  const config = requireRuntimeConfig();
+  const settings = readNgrokSettings(config.configDir);
+  if (!settings) return { configured: false };
+  return {
+    configured: true,
+    ...(settings.domain ? { domain: settings.domain } : {}),
+    updatedAt: settings.updatedAt,
+  };
+}
+
+export function setBundledNgrokAuthtoken(authtoken: string): NgrokSettings {
+  const config = requireRuntimeConfig();
+  return writeNgrokSettings(config.configDir, { authtoken });
+}
+
+export function setBundledNgrokDomain(domain: string | null): NgrokSettings {
+  const config = requireRuntimeConfig();
+  return writeNgrokSettings(config.configDir, { domain });
+}
+
+export function clearBundledNgrokSettings(): void {
+  const config = requireRuntimeConfig();
+  clearNgrokSettings(config.configDir);
 }
 
 export function readBundledDaemonAuditTail(limit = 50) {

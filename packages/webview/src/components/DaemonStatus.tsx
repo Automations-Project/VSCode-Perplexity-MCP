@@ -1,28 +1,53 @@
 import { Copy, Globe2, KeyRound, Power, RefreshCcw, ServerCog } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { DaemonAuditEntry, DaemonStatusState, WebviewMessage } from "@perplexity-user-mcp/shared";
 import { useDashboardStore } from "../store";
 
 type SendFn = (message: WebviewMessage | Omit<Extract<WebviewMessage, { id: string }>, "id">) => void;
 
+type TunnelProvidersState = NonNullable<ReturnType<typeof useDashboardStore.getState>["tunnelProviders"]>;
+
 export function DaemonStatus({ send }: { send: SendFn }) {
   const status = useDashboardStore((store) => store.daemonStatus);
   const auditTail = useDashboardStore((store) => store.daemonAuditTail);
   const tokenRotatedAt = useDashboardStore((store) => store.daemonTokenRotatedAt);
-  return <DaemonStatusView status={status} auditTail={auditTail} tokenRotatedAt={tokenRotatedAt} send={send} />;
+  const tunnelProviders = useDashboardStore((store) => store.tunnelProviders);
+  return (
+    <DaemonStatusView
+      status={status}
+      auditTail={auditTail}
+      tokenRotatedAt={tokenRotatedAt}
+      tunnelProviders={tunnelProviders}
+      send={send}
+    />
+  );
 }
 
 export function DaemonStatusView({
   status,
   auditTail,
   tokenRotatedAt,
+  tunnelProviders,
   send,
 }: {
   status: DaemonStatusState | null;
   auditTail: DaemonAuditEntry[];
   tokenRotatedAt: string | null;
+  tunnelProviders?: TunnelProvidersState | null;
   send: SendFn;
 }) {
+  const [authtokenInput, setAuthtokenInput] = useState("");
+  const [domainInput, setDomainInput] = useState("");
+  useEffect(() => {
+    if (!tunnelProviders) {
+      send({ type: "daemon:list-tunnel-providers" });
+    }
+  }, [tunnelProviders, send]);
+  const activeProvider = tunnelProviders?.activeProvider ?? "cf-quick";
+  const ngrokEntry = tunnelProviders?.providers.find((p) => p.id === "ngrok");
+  const ngrokConfigured = tunnelProviders?.ngrok.configured ?? false;
+  const ngrokDomain = tunnelProviders?.ngrok.domain;
+  const showNgrokSetup = activeProvider === "ngrok";
   const [revealed, setRevealed] = useState(false);
   const [tokenRevealed, setTokenRevealed] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
@@ -104,10 +129,130 @@ export function DaemonStatusView({
         <DaemonMetric label="Uptime" value={formatUptime(status?.uptimeMs ?? null)} />
       </div>
 
+      {tunnelProviders ? (
+        <div className="list-row" style={{ marginTop: 10, alignItems: "flex-start" }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: "0.72rem", fontWeight: 600 }} className="text-[var(--text-primary)]">
+              Tunnel provider
+            </div>
+            <div style={{ fontSize: "0.66rem", marginTop: 3 }} className="text-[var(--text-muted)]">
+              {tunnelProviders.providers.find((p) => p.id === activeProvider)?.description}
+            </div>
+          </div>
+          <div className="flex items-center gap-1 flex-wrap" style={{ justifyContent: "flex-end" }}>
+            <select
+              className="ghost-button btn-sm"
+              style={{ padding: "4px 8px", fontSize: "0.7rem" }}
+              value={activeProvider}
+              onChange={(event) => {
+                const next = event.target.value as "cf-quick" | "ngrok";
+                send({ type: "daemon:set-tunnel-provider", payload: { providerId: next } });
+              }}
+            >
+              {tunnelProviders.providers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.displayName}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      ) : null}
+
+      {showNgrokSetup && ngrokEntry && !ngrokEntry.setup.ready ? (
+        <div
+          className="glass-panel section-panel"
+          style={{ marginTop: 10, padding: 10, borderRadius: 8, borderColor: "rgba(255, 180, 80, 0.3)" }}
+        >
+          <div style={{ fontSize: "0.72rem", fontWeight: 600 }} className="text-[var(--text-primary)]">
+            ngrok setup
+          </div>
+          <div style={{ fontSize: "0.66rem", marginTop: 3 }} className="text-[var(--text-muted)]">
+            Paste the authtoken from{" "}
+            <a
+              href="https://dashboard.ngrok.com/get-started/your-authtoken"
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: "var(--text-accent, #a78bfa)" }}
+            >
+              dashboard.ngrok.com
+            </a>
+            . Required once per machine.
+          </div>
+          <div className="flex items-center gap-1 flex-wrap" style={{ marginTop: 6 }}>
+            <input
+              type="password"
+              autoComplete="off"
+              placeholder="2a1b3c4d…ngrokAuthToken"
+              value={authtokenInput}
+              onChange={(event) => setAuthtokenInput(event.target.value)}
+              style={{ flex: 1, minWidth: 180, fontSize: "0.7rem", padding: "4px 8px", borderRadius: 4 }}
+            />
+            <button
+              className="primary-button btn-sm"
+              disabled={authtokenInput.trim().length < 10}
+              onClick={() => {
+                send({ type: "daemon:set-ngrok-authtoken", payload: { authtoken: authtokenInput.trim() } });
+                setAuthtokenInput("");
+              }}
+            >
+              Save authtoken
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {showNgrokSetup && ngrokConfigured ? (
+        <div className="list-row" style={{ marginTop: 8, alignItems: "flex-start" }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: "0.72rem", fontWeight: 600 }} className="text-[var(--text-primary)]">
+              ngrok reserved domain <span className="text-[var(--text-muted)]">(optional)</span>
+            </div>
+            <div style={{ fontSize: "0.66rem", marginTop: 3 }} className="text-[var(--text-muted)]">
+              Without a reserved domain ngrok gives you a new random hostname each run. Reserve one free{" "}
+              <a
+                href="https://dashboard.ngrok.com/domains"
+                target="_blank"
+                rel="noreferrer"
+                style={{ color: "var(--text-accent, #a78bfa)" }}
+              >
+                here
+              </a>
+              .
+            </div>
+          </div>
+          <div className="flex items-center gap-1 flex-wrap" style={{ justifyContent: "flex-end" }}>
+            <input
+              type="text"
+              autoComplete="off"
+              placeholder={ngrokDomain ?? "yourname.ngrok-free.app"}
+              value={domainInput}
+              onChange={(event) => setDomainInput(event.target.value)}
+              style={{ width: 220, fontSize: "0.7rem", padding: "4px 8px", borderRadius: 4 }}
+            />
+            <button
+              className="ghost-button btn-sm"
+              onClick={() => {
+                send({ type: "daemon:set-ngrok-domain", payload: { domain: domainInput.trim() || null } });
+                setDomainInput("");
+              }}
+            >
+              Save
+            </button>
+            <button
+              className="ghost-button btn-sm"
+              onClick={() => send({ type: "daemon:clear-ngrok-settings" })}
+            >
+              Forget authtoken
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="list-row" style={{ marginTop: 10, alignItems: "flex-start" }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: "0.72rem", fontWeight: 600 }} className="text-[var(--text-primary)]">
-            Cloudflare Quick Tunnel
+            {activeProvider === "ngrok" ? "ngrok tunnel" : "Cloudflare Quick Tunnel"}
           </div>
           <div style={{ fontSize: "0.7rem", marginTop: 3 }} className="text-[var(--text-muted)] break-all">
             {tunnelUrl ? (revealed ? tunnelUrl : maskTunnelUrl(tunnelUrl)) : "No public tunnel URL."}

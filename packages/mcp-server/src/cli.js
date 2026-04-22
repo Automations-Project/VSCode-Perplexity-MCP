@@ -65,6 +65,8 @@ const KNOWN_COMMANDS = new Set([
   "export", "open", "rebuild-history-index", "sync-cloud",
   "daemon:help", "daemon:start", "daemon:stop", "daemon:status", "daemon:attach",
   "daemon:rotate-token", "daemon:install-tunnel", "daemon:enable-tunnel", "daemon:disable-tunnel",
+  "daemon:list-providers", "daemon:set-provider",
+  "daemon:set-ngrok-authtoken", "daemon:set-ngrok-domain", "daemon:clear-ngrok",
 ]);
 
 function normalizeExportFormat(value) {
@@ -222,6 +224,69 @@ export async function routeCommand(parsed) {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { code: 1, stdout: "", stderr: message + "\n" };
+    }
+  }
+
+  if (command === "daemon:list-providers") {
+    const providersModule = await import("./daemon/tunnel-providers/index.js");
+    const configDir = process.env.PERPLEXITY_CONFIG_DIR;
+    const statuses = await providersModule.listTunnelProviderStatuses(configDir);
+    const active = providersModule.readTunnelSettings(configDir).activeProvider;
+    const body = flags.json
+      ? JSON.stringify({ active, providers: statuses })
+      : statuses
+          .map((s) => `${s.isActive ? "*" : " "} ${s.id.padEnd(10)} ${s.displayName.padEnd(22)} ${s.setup.ready ? "ready" : s.setup.reason ?? "needs setup"}`)
+          .join("\n");
+    return { code: 0, stdout: body + "\n", stderr: "" };
+  }
+
+  if (command === "daemon:set-provider") {
+    const providerId = parsed.positional?.[0];
+    if (!providerId) {
+      return { code: 1, stdout: "", stderr: "set-provider requires a provider id (cf-quick | ngrok).\n" };
+    }
+    try {
+      const providersModule = await import("./daemon/tunnel-providers/index.js");
+      const configDir = process.env.PERPLEXITY_CONFIG_DIR;
+      providersModule.writeTunnelSettings(configDir, { activeProvider: providerId });
+      return { code: 0, stdout: `Active tunnel provider set to ${providerId}.\n`, stderr: "" };
+    } catch (error) {
+      return { code: 1, stdout: "", stderr: (error instanceof Error ? error.message : String(error)) + "\n" };
+    }
+  }
+
+  if (command === "daemon:set-ngrok-authtoken") {
+    const authtoken = parsed.positional?.[0] ?? flags.token;
+    if (!authtoken || typeof authtoken !== "string" || authtoken.length < 10) {
+      return { code: 1, stdout: "", stderr: "set-ngrok-authtoken requires an authtoken (see dashboard.ngrok.com/get-started/your-authtoken).\n" };
+    }
+    try {
+      const providersModule = await import("./daemon/tunnel-providers/index.js");
+      providersModule.writeNgrokSettings(process.env.PERPLEXITY_CONFIG_DIR, { authtoken });
+      return { code: 0, stdout: "ngrok authtoken saved.\n", stderr: "" };
+    } catch (error) {
+      return { code: 1, stdout: "", stderr: (error instanceof Error ? error.message : String(error)) + "\n" };
+    }
+  }
+
+  if (command === "daemon:set-ngrok-domain") {
+    const domain = parsed.positional?.[0] ?? flags.domain ?? null;
+    try {
+      const providersModule = await import("./daemon/tunnel-providers/index.js");
+      providersModule.writeNgrokSettings(process.env.PERPLEXITY_CONFIG_DIR, { domain: domain ?? null });
+      return { code: 0, stdout: (domain ? `ngrok domain set to ${domain}.\n` : "ngrok domain cleared.\n"), stderr: "" };
+    } catch (error) {
+      return { code: 1, stdout: "", stderr: (error instanceof Error ? error.message : String(error)) + "\n" };
+    }
+  }
+
+  if (command === "daemon:clear-ngrok") {
+    try {
+      const providersModule = await import("./daemon/tunnel-providers/index.js");
+      providersModule.clearNgrokSettings(process.env.PERPLEXITY_CONFIG_DIR);
+      return { code: 0, stdout: "ngrok settings cleared.\n", stderr: "" };
+    } catch (error) {
+      return { code: 1, stdout: "", stderr: (error instanceof Error ? error.message : String(error)) + "\n" };
     }
   }
 

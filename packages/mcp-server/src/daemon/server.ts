@@ -2,6 +2,9 @@ import { createServer, type Server as HttpServer } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore — helmet is CJS; express-shim.d.ts doesn't declare it
+import helmet from "helmet";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express from "express";
 import { PerplexityClient } from "../client.js";
@@ -137,6 +140,24 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
     return client;
   };
 
+  // trust proxy=1: when the daemon is tunneled, cloudflared/ngrok are
+  // reverse proxies adding X-Forwarded-For. Without this, express-rate-limit
+  // logs a ValidationError on every request and falls back to the loopback
+  // IP (which defeats per-source tracking). Safe because the daemon only
+  // ever listens on 127.0.0.1; no untrusted network can reach it directly.
+  (app as any).set?.("trust proxy", 1);
+
+  app.use(
+    helmet({
+      contentSecurityPolicy: false, // SDK's OAuth handlers + our homepage serve inline styles; CSP would need a full policy pass
+      crossOriginEmbedderPolicy: false,
+      crossOriginOpenerPolicy: false,
+      crossOriginResourcePolicy: false,
+      // Tunnel front (Cloudflare / ngrok) supplies TLS; our origin is HTTP.
+      // HSTS from the origin would be inaccurate; let the edge control it.
+      hsts: false,
+    }) as any,
+  );
   app.use(expressFactory.json({ limit: "1mb" }));
 
   // Security middleware: IP/UA capture, per-bearer rate limit (tunnel only),
@@ -279,6 +300,32 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
       resource_name: "Perplexity MCP",
     });
   });
+  // Rate-limit the unauthenticated OAuth endpoints (/authorize, /register,
+  // /token, /revoke). The global security middleware only rate-limits bearer-
+  // authenticated traffic; these endpoints are entered WITHOUT a bearer, so
+  // they'd otherwise be wide open. Per-IP cap is deliberately generous
+  // (fits any human-initiated client registration loop) but low enough to
+  // deter bulk-registration scripts from a leaked tunnel URL.
+  const oauthPathRe = /^\/(authorize|register|token|revoke)\b/;
+  const oauthIpHits = new Map<string, number[]>();
+  app.use((req: any, res: any, next: any) => {
+    if (!oauthPathRe.test(req.path ?? "")) {
+      return next();
+    }
+    const ctx = (req as any)._pplx ?? {};
+    if (ctx.source === "loopback") return next();
+    const key = ctx.ip ?? "?";
+    const now = Date.now();
+    const bucket = (oauthIpHits.get(key) ?? []).filter((ts) => ts >= now - 60_000);
+    bucket.push(now);
+    oauthIpHits.set(key, bucket);
+    if (bucket.length > 30) {
+      res.setHeader("Retry-After", "60");
+      return res.status(429).json({ error: "Too Many Requests" });
+    }
+    return next();
+  });
+
   try {
     app.use(
       mcpAuthRouter({

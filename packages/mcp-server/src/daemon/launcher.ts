@@ -11,7 +11,8 @@ import { startDaemonServer } from "./server.js";
 import { getTunnelBinaryPath } from "./install-tunnel.js";
 import { acquire, getLockfilePath, isStale, read, release, replace, type DaemonLockRecord } from "./lockfile.js";
 import { ensureToken, getTokenPath, readToken } from "./token.js";
-import { startTunnel, type TunnelState } from "./tunnel.js";
+import type { StartedTunnel, TunnelState } from "./tunnel.js";
+import { getTunnelProvider, readTunnelSettings } from "./tunnel-providers/index.js";
 
 export interface DaemonHealthStatus {
   ok: boolean;
@@ -287,7 +288,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Sta
       pid: null,
       error: null,
     };
-    let tunnelController: ReturnType<typeof startTunnel> | null = null;
+    let tunnelController: StartedTunnel | null = null;
     let tunnelStartPromise: Promise<void> | null = null;
 
     const buildRecord = (bearerToken = server?.bearerToken ?? token.bearerToken): DaemonLockRecord => ({
@@ -330,14 +331,16 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Sta
         return;
       }
 
-      const binaryPath = getTunnelBinaryPath(configDir);
-      if (!existsSync(binaryPath)) {
-        throw new Error("cloudflared is not installed. Run `npx perplexity-user-mcp daemon install-tunnel` first.");
+      const settings = readTunnelSettings(configDir);
+      const provider = getTunnelProvider(settings.activeProvider);
+      const setup = await provider.isSetupComplete(configDir);
+      if (!setup.ready) {
+        throw new Error(setup.reason ?? `${provider.displayName} setup incomplete.`);
       }
 
-      tunnelController = startTunnel({
-        command: binaryPath,
+      tunnelController = await provider.start({
         port: server.port,
+        configDir,
         onStateChange: (nextState) => {
           tunnelState = nextState;
           if (nextState.status === "crashed" || nextState.status === "disabled") {

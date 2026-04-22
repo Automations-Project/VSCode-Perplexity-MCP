@@ -24,7 +24,7 @@ const extensionNodeModules = join(__dirname, "..", "dist", "node_modules");
  *
  * See packages/mcp-server/src/checks/native-deps.js and docs/doctor.md.
  */
-const rootPackages = ["patchright", "patchright-core", "got-scraping", "keytar", "dot-prop", "is-obj", "gray-matter", "express"];
+const rootPackages = ["patchright", "patchright-core", "got-scraping", "keytar", "dot-prop", "is-obj", "gray-matter", "express", "@ngrok/ngrok", "helmet"];
 
 rmSync(extensionNodeModules, { recursive: true, force: true });
 mkdirSync(extensionNodeModules, { recursive: true });
