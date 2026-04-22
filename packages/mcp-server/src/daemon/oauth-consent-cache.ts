@@ -1,13 +1,22 @@
 /**
- * OAuth consent cache — remembers per-(clientId, redirectUri) consents so
- * the user isn't prompted every time Claude Desktop / Cursor / Cline
- * refreshes an access token (which happens on a ~1h cycle).
+ * OAuth consent cache — remembers per-(clientId, redirectUri, resource)
+ * consents so the user isn't prompted every time Claude Desktop / Cursor /
+ * Cline refreshes an access token (which happens on a ~1h cycle).
  *
  * Storage: <configDir>/oauth-consent.json, 0600.
  * Entries carry an absolute `expiresAt` (ms since epoch). On each check
  * we lazily prune expired entries. Deleting a record is synchronous and
  * best-effort (if the file is locked we lose the mutation; next write
  * will overwrite it).
+ *
+ * Key structure: `(clientId, redirectUri, resource)`. After Phase 8.2 H12
+ * the OAuth `resource` parameter (RFC 8707) is part of the audience binding,
+ * so a consent granted for `https://tunnel-a.example/mcp` must NOT
+ * auto-approve a new authorize request for `https://tunnel-b.example/mcp`
+ * even though the clientId + redirectUri match. `resource === undefined` is
+ * a distinct key from any bound resource string — unbound consents (legacy
+ * / loopback clients that don't send the `resource` param) don't
+ * auto-approve bound-resource consents and vice-versa.
  *
  * Revoking a consent entry does NOT invalidate already-issued access
  * tokens — those live 1h anyway; revoking the CLIENT (see
@@ -25,11 +34,24 @@ export interface ConsentEntry {
   redirectUri: string;
   approvedAt: string;
   expiresAt: number;
+  /**
+   * RFC 8707 resource binding. `undefined` = unbound (legacy / loopback
+   * clients that don't send the `resource` param at /authorize). Two entries
+   * with the same (clientId, redirectUri) but different `resource` values
+   * (including undefined-vs-string) are DISTINCT cache keys.
+   */
+  resource?: string;
 }
 
 export interface ConsentCacheOptions {
   cachePath?: string;
   now?: () => number;
+  /**
+   * Resource the authorize request targets. Must match `ConsentEntry.resource`
+   * exactly for a check hit (undefined matches undefined; a string matches
+   * the same string; any mismatch is a miss).
+   */
+  resource?: string;
 }
 
 export function getConsentCachePath(configDir = getConfigDir()): string {
@@ -49,17 +71,33 @@ function load(cachePath: string): ConsentEntry[] {
   try {
     const raw = JSON.parse(readFileSync(cachePath, "utf8"));
     if (!Array.isArray(raw)) return [];
-    return raw.filter((e): e is ConsentEntry =>
-      e &&
-      typeof e === "object" &&
-      typeof e.clientId === "string" &&
-      typeof e.redirectUri === "string" &&
-      typeof e.approvedAt === "string" &&
-      typeof e.expiresAt === "number"
-    );
+    return raw
+      .filter((e): e is ConsentEntry =>
+        e &&
+        typeof e === "object" &&
+        typeof e.clientId === "string" &&
+        typeof e.redirectUri === "string" &&
+        typeof e.approvedAt === "string" &&
+        typeof e.expiresAt === "number"
+      )
+      .map((e) => ({
+        // Normalize legacy entries (pre-H12 cache files) that lack `resource`.
+        // Absent → undefined (unbound); a non-string → coerce to undefined
+        // so a corrupt record can't accidentally match a bound resource.
+        clientId: e.clientId,
+        redirectUri: e.redirectUri,
+        approvedAt: e.approvedAt,
+        expiresAt: e.expiresAt,
+        resource: typeof (e as ConsentEntry).resource === "string" ? (e as ConsentEntry).resource : undefined,
+      }));
   } catch {
     return [];
   }
+}
+
+/** Exact-match key comparison. undefined-vs-undefined matches; any other mismatch is a miss. */
+function keyMatches(entry: ConsentEntry, clientId: string, redirectUri: string, resource: string | undefined): boolean {
+  return entry.clientId === clientId && entry.redirectUri === redirectUri && entry.resource === resource;
 }
 
 function persist(cachePath: string, entries: ConsentEntry[]): void {
@@ -72,8 +110,10 @@ function persist(cachePath: string, entries: ConsentEntry[]): void {
 }
 
 /**
- * Record an approval for (clientId, redirectUri). Overwrites any prior
- * entry for the same pair. Returns the stored entry.
+ * Record an approval for (clientId, redirectUri, resource). Overwrites any
+ * prior entry for the SAME triple only — entries that share clientId +
+ * redirectUri but have a different `resource` (including bound-vs-unbound)
+ * are preserved as separate consents.
  */
 export function record(
   clientId: string,
@@ -88,9 +128,10 @@ export function record(
     redirectUri,
     approvedAt: new Date(now).toISOString(),
     expiresAt: now + ttlMs,
+    ...(options.resource !== undefined ? { resource: options.resource } : {}),
   };
   const all = load(cachePath)
-    .filter((e) => !(e.clientId === clientId && e.redirectUri === redirectUri))
+    .filter((e) => !keyMatches(e, clientId, redirectUri, options.resource))
     .filter((e) => e.expiresAt > now);
   all.push(entry);
   persist(cachePath, all);
@@ -98,8 +139,10 @@ export function record(
 }
 
 /**
- * Returns true iff a non-expired consent exists for (clientId, redirectUri).
- * Expired entries are pruned from disk as a side effect.
+ * Returns true iff a non-expired consent exists for the full triple
+ * (clientId, redirectUri, resource). `resource === undefined` is a distinct
+ * key from any bound resource string. Expired entries are pruned from disk
+ * as a side effect.
  */
 export function check(
   clientId: string,
@@ -113,7 +156,7 @@ export function check(
   if (live.length !== all.length) {
     persist(cachePath, live);
   }
-  return live.some((e) => e.clientId === clientId && e.redirectUri === redirectUri);
+  return live.some((e) => keyMatches(e, clientId, redirectUri, options.resource));
 }
 
 /**
@@ -131,10 +174,19 @@ export function list(options: ConsentCacheOptions = {}): ConsentEntry[] {
 }
 
 /**
- * Revoke consent entries. If `redirectUri` is omitted, every entry for
- * the given `clientId` is removed (a client may register multiple
- * redirects). If `clientId` is omitted, everything is cleared. Returns
- * the number of entries removed.
+ * Revoke consent entries. Filter hierarchy:
+ *   - `{}` (no filter)                                   → revoke everything
+ *   - `{ clientId }`                                     → revoke every entry for that client (all redirects, all resources)
+ *   - `{ clientId, redirectUri }`                        → revoke every entry for that (client, redirect) (all resources)
+ *   - `{ clientId, redirectUri, resource }`              → revoke only the exact triple
+ *   - `{ clientId, resource }`                           → revoke every entry for that client scoped to the given resource
+ *
+ * A `resource` filter value of `undefined` means "do not filter by resource"
+ * (NOT "match unbound entries"). To revoke only unbound entries for a client,
+ * enumerate via `list()` + call revoke per-entry — the filter API deliberately
+ * treats `resource === undefined` as "any" to match pre-H12 callers.
+ *
+ * Returns the number of entries removed.
  */
 export function revoke(
   options: ConsentCacheOptions & { clientId?: string; redirectUri?: string } = {},
@@ -146,6 +198,7 @@ export function revoke(
     if (!options.clientId) return false; // revoke-all
     if (e.clientId !== options.clientId) return true;
     if (options.redirectUri !== undefined && e.redirectUri !== options.redirectUri) return true;
+    if (options.resource !== undefined && e.resource !== options.resource) return true;
     return false;
   });
   const removed = all.length - kept.length;

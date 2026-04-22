@@ -52,8 +52,19 @@ export interface OAuthProviderOptions {
    * Invoked when a browser hits `/authorize`. Must resolve to `true`
    * (approve) or `false` (deny). The daemon wires this to the VS Code
    * modal via an SSE-based consent coordinator.
+   *
+   * `resource` is the RFC 8707 resource the authorize request targets
+   * (post-H12). The consent UI MUST display this value so users can spot
+   * cross-resource replay attempts. `undefined` means the client did not
+   * send a `resource` param (legacy / loopback flow).
    */
-  requestConsent: (info: { clientId: string; clientName: string; redirectUri: string; consentId: string }) => Promise<boolean>;
+  requestConsent: (info: {
+    clientId: string;
+    clientName: string;
+    redirectUri: string;
+    consentId: string;
+    resource?: string;
+  }) => Promise<boolean>;
   /** Live getter so rotate-token stays supported. */
   getStaticBearer: () => string;
   /**
@@ -136,10 +147,21 @@ export class PerplexityOAuthProvider implements OAuthServerProvider {
 
   async authorize(client: OAuthClientInformationFull, params: AuthorizationParams, res: Response): Promise<void> {
     const ttlMs = this.options.getConsentCacheTtlMs?.() ?? 0;
-    const cacheHit = ttlMs > 0 && consentCache.check(client.client_id, params.redirectUri, { cachePath: this.consentCachePath });
+    // H12: resource is part of the audience binding. Consent cache key
+    // includes it so a consent for resource A does NOT auto-approve
+    // resource B for the same (clientId, redirectUri) pair.
+    const resource = normalizeResource((params as AuthorizationParams & { resource?: unknown }).resource);
+    const cacheHit = ttlMs > 0 && consentCache.check(client.client_id, params.redirectUri, {
+      cachePath: this.consentCachePath,
+      resource,
+    });
 
     if (cacheHit) {
-      console.error(`[trace] oauth consent cache hit clientId=${client.client_id} redirectUri=${params.redirectUri}`);
+      // Redaction note: clientId + redirectUri + resource are non-secret URLs
+      // and opaque IDs safe to log; no tokens / bearers / cookies pass through
+      // this path. Keeping resource context in the trace lets operators correlate
+      // cache hits with /token exchanges in audit.log when debugging consent UX.
+      console.error(`[trace] oauth consent cache hit clientId=${client.client_id} redirectUri=${params.redirectUri} resource=${resource ?? "<unbound>"}`);
       try {
         this.options.onConsentCacheHit?.({
           clientId: client.client_id,
@@ -159,6 +181,7 @@ export class PerplexityOAuthProvider implements OAuthServerProvider {
         clientName: client.client_name ?? client.client_id,
         redirectUri: params.redirectUri,
         consentId,
+        resource,
       });
 
       if (!approved) {
@@ -167,7 +190,10 @@ export class PerplexityOAuthProvider implements OAuthServerProvider {
 
       if (ttlMs > 0) {
         try {
-          consentCache.record(client.client_id, params.redirectUri, ttlMs, { cachePath: this.consentCachePath });
+          consentCache.record(client.client_id, params.redirectUri, ttlMs, {
+            cachePath: this.consentCachePath,
+            resource,
+          });
         } catch {
           // cache write is best-effort; a failure here just means the next
           // request will re-prompt the user.
@@ -450,13 +476,14 @@ function redirectTo(res: Response, redirectUri: string, params: Record<string, s
  * Times out after the given ms (denying by default).
  */
 export class ConsentCoordinator {
-  private pending = new Map<string, { resolve: (v: boolean) => void; timer: NodeJS.Timeout; info: { clientId: string; clientName: string; redirectUri: string } }>();
+  private pending = new Map<string, { resolve: (v: boolean) => void; timer: NodeJS.Timeout; info: { clientId: string; clientName: string; redirectUri: string; resource?: string } }>();
 
   request(options: {
     id: string;
     clientId: string;
     clientName: string;
     redirectUri: string;
+    resource?: string;
     timeoutMs: number;
     onRequest: () => void;
   }): Promise<boolean> {
@@ -468,7 +495,12 @@ export class ConsentCoordinator {
       this.pending.set(options.id, {
         resolve,
         timer,
-        info: { clientId: options.clientId, clientName: options.clientName, redirectUri: options.redirectUri },
+        info: {
+          clientId: options.clientId,
+          clientName: options.clientName,
+          redirectUri: options.redirectUri,
+          ...(options.resource !== undefined ? { resource: options.resource } : {}),
+        },
       });
       options.onRequest();
     });
@@ -483,12 +515,13 @@ export class ConsentCoordinator {
     return true;
   }
 
-  list(): Array<{ id: string; clientId: string; clientName: string; redirectUri: string }> {
+  list(): Array<{ id: string; clientId: string; clientName: string; redirectUri: string; resource?: string }> {
     return [...this.pending.entries()].map(([id, p]) => ({
       id,
       clientId: p.info.clientId,
       clientName: p.info.clientName,
       redirectUri: p.info.redirectUri,
+      ...(p.info.resource !== undefined ? { resource: p.info.resource } : {}),
     }));
   }
 }

@@ -57,6 +57,13 @@ export interface StartDaemonServerOptions {
     clientId: string;
     clientName: string;
     redirectUri: string;
+    /**
+     * RFC 8707 resource the authorize request is targeting. `undefined` when
+     * the client did not include a `resource` param (legacy / loopback).
+     * The extension-host modal MUST display this when present so users can
+     * spot cross-resource replay attempts at consent time.
+     */
+    resource?: string;
   }) => Promise<void> | void;
   /** When tunnel is enabled we advertise this as the OAuth issuer. */
   getTunnelUrl?: () => string | null;
@@ -130,16 +137,21 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
         req._pplx.authOverride = "oauth-cached";
       }
     },
-    requestConsent: ({ clientId, clientName, redirectUri, consentId }) => {
+    requestConsent: ({ clientId, clientName, redirectUri, consentId, resource }) => {
       return consentCoordinator.request({
         id: consentId,
         clientId,
         clientName,
         redirectUri,
+        resource,
         timeoutMs: 2 * 60_000,
         onRequest: () => {
-          void options.onOAuthConsentRequest?.({ consentId, clientId, clientName, redirectUri });
-          publishEvent("daemon:oauth-consent-request", { consentId, clientId, clientName, redirectUri });
+          // H12 consent-binding: resource is propagated to both the extension
+          // host (showWarningMessage modal) and the SSE event for any webview
+          // subscriber. `undefined` is passed through verbatim so downstream
+          // callers can distinguish unbound (legacy) from bound requests.
+          void options.onOAuthConsentRequest?.({ consentId, clientId, clientName, redirectUri, resource });
+          publishEvent("daemon:oauth-consent-request", { consentId, clientId, clientName, redirectUri, resource });
         },
       });
     },

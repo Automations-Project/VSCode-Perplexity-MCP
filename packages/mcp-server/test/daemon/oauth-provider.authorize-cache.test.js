@@ -154,3 +154,176 @@ describe("oauth-provider authorize + consent cache", () => {
     expect(remaining[0].clientId).toBe(clientB.client_id);
   });
 });
+
+describe("oauth-provider authorize + consent cache — resource binding (H12 follow-up)", () => {
+  let configDir;
+  let provider;
+  let requestConsentCalls;
+
+  beforeEach(() => {
+    configDir = mkdtempSync(join(tmpdir(), "pplx-oauth-provider-resource-"));
+    requestConsentCalls = [];
+  });
+
+  afterEach(() => {
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  function buildProvider() {
+    return new PerplexityOAuthProvider({
+      configDir,
+      getStaticBearer: () => "static",
+      getConsentCacheTtlMs: () => 24 * 60 * 60_000,
+      requestConsent: async (info) => {
+        requestConsentCalls.push({
+          clientId: info.clientId,
+          redirectUri: info.redirectUri,
+          // `resource` is the specific field under test.
+          resource: info.resource,
+        });
+        return true;
+      },
+    });
+  }
+
+  async function register(provider) {
+    return provider.clientsStore.registerClient({
+      client_id: "seed-only",
+      client_name: "Resource Test Client",
+      redirect_uris: ["http://cb/a"],
+    });
+  }
+
+  it("consent approved for resource A does NOT auto-approve resource B (same client + redirect)", async () => {
+    provider = buildProvider();
+    const client = await register(provider);
+
+    // First authorize for resource A — consent prompt fires, gets approved, cache records
+    await provider.authorize(client, {
+      redirectUri: "http://cb/a", codeChallenge: "c1", state: "s1",
+      resource: "https://tunnel-a.example/mcp",
+    }, mockRes());
+    expect(requestConsentCalls).toHaveLength(1);
+
+    // Second authorize for resource B — MUST re-prompt (no cache hit)
+    await provider.authorize(client, {
+      redirectUri: "http://cb/a", codeChallenge: "c2", state: "s2",
+      resource: "https://tunnel-b.example/mcp",
+    }, mockRes());
+    expect(requestConsentCalls).toHaveLength(2);
+    expect(requestConsentCalls[1].resource).toBe("https://tunnel-b.example/mcp");
+  });
+
+  it("consent approved for resource A DOES auto-approve resource A within TTL", async () => {
+    provider = buildProvider();
+    const client = await register(provider);
+
+    await provider.authorize(client, {
+      redirectUri: "http://cb/a", codeChallenge: "c1", state: "s1",
+      resource: "https://tunnel-a.example/mcp",
+    }, mockRes());
+    await provider.authorize(client, {
+      redirectUri: "http://cb/a", codeChallenge: "c2", state: "s2",
+      resource: "https://tunnel-a.example/mcp",
+    }, mockRes());
+    // Second call is a cache hit — no second prompt
+    expect(requestConsentCalls).toHaveLength(1);
+  });
+
+  it("unbound consent does NOT auto-approve a bound-resource consent request", async () => {
+    provider = buildProvider();
+    const client = await register(provider);
+
+    // First: unbound authorize (legacy / loopback, no resource param)
+    await provider.authorize(client, {
+      redirectUri: "http://cb/a", codeChallenge: "c1", state: "s1",
+    }, mockRes());
+    expect(requestConsentCalls).toHaveLength(1);
+    expect(requestConsentCalls[0].resource).toBeUndefined();
+
+    // Second: bound authorize — MUST re-prompt
+    await provider.authorize(client, {
+      redirectUri: "http://cb/a", codeChallenge: "c2", state: "s2",
+      resource: "https://tunnel-a.example/mcp",
+    }, mockRes());
+    expect(requestConsentCalls).toHaveLength(2);
+    expect(requestConsentCalls[1].resource).toBe("https://tunnel-a.example/mcp");
+  });
+
+  it("bound consent does NOT auto-approve an unbound (legacy) authorize", async () => {
+    provider = buildProvider();
+    const client = await register(provider);
+
+    await provider.authorize(client, {
+      redirectUri: "http://cb/a", codeChallenge: "c1", state: "s1",
+      resource: "https://tunnel-a.example/mcp",
+    }, mockRes());
+    await provider.authorize(client, {
+      redirectUri: "http://cb/a", codeChallenge: "c2", state: "s2",
+    }, mockRes());
+    expect(requestConsentCalls).toHaveLength(2);
+    expect(requestConsentCalls[1].resource).toBeUndefined();
+  });
+
+  it("requestConsent receives the normalized resource string (not a URL object)", async () => {
+    provider = buildProvider();
+    const client = await register(provider);
+
+    await provider.authorize(client, {
+      redirectUri: "http://cb/a", codeChallenge: "c1", state: "s1",
+      // SDK may pass a URL — provider must normalize before invoking the callback
+      resource: new URL("https://tunnel-c.example/mcp"),
+    }, mockRes());
+    expect(requestConsentCalls).toHaveLength(1);
+    expect(typeof requestConsentCalls[0].resource).toBe("string");
+    expect(requestConsentCalls[0].resource).toBe("https://tunnel-c.example/mcp");
+  });
+
+  it("cache-hit trace line includes resource context and no secrets", async () => {
+    provider = buildProvider();
+    const client = await register(provider);
+
+    const traceLines = [];
+    const origError = console.error;
+    console.error = (...args) => { traceLines.push(args.join(" ")); };
+    try {
+      await provider.authorize(client, {
+        redirectUri: "http://cb/a", codeChallenge: "c1", state: "s1",
+        resource: "https://tunnel-a.example/mcp",
+      }, mockRes());
+      await provider.authorize(client, {
+        redirectUri: "http://cb/a", codeChallenge: "c2", state: "s2",
+        resource: "https://tunnel-a.example/mcp",
+      }, mockRes());
+    } finally {
+      console.error = origError;
+    }
+
+    const cacheHitTrace = traceLines.find((l) => l.includes("oauth consent cache hit"));
+    expect(cacheHitTrace).toBeDefined();
+    expect(cacheHitTrace).toContain("https://tunnel-a.example/mcp");
+    // Redaction sanity: the trace line must not carry any token-shaped strings.
+    expect(cacheHitTrace).not.toMatch(/pplx_(at|rt|ac|local)_/);
+    expect(cacheHitTrace).not.toMatch(/Bearer\s+\S+/);
+    expect(cacheHitTrace).not.toContain("bearerToken");
+  });
+
+  it("unbound cache-hit trace line marks resource as <unbound>", async () => {
+    provider = buildProvider();
+    const client = await register(provider);
+
+    const traceLines = [];
+    const origError = console.error;
+    console.error = (...args) => { traceLines.push(args.join(" ")); };
+    try {
+      await provider.authorize(client, { redirectUri: "http://cb/a", codeChallenge: "c1", state: "s1" }, mockRes());
+      await provider.authorize(client, { redirectUri: "http://cb/a", codeChallenge: "c2", state: "s2" }, mockRes());
+    } finally {
+      console.error = origError;
+    }
+
+    const cacheHitTrace = traceLines.find((l) => l.includes("oauth consent cache hit"));
+    expect(cacheHitTrace).toBeDefined();
+    expect(cacheHitTrace).toContain("resource=<unbound>");
+  });
+});

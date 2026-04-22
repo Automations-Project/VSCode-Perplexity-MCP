@@ -1369,17 +1369,29 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       const clientId = typeof payload.clientId === "string" ? payload.clientId : "unknown";
       const clientName = typeof payload.clientName === "string" ? payload.clientName : clientId;
       const redirectUri = typeof payload.redirectUri === "string" ? payload.redirectUri : "";
+      // H12: `resource` is the RFC 8707 audience the client will bind its token
+      // to. Showing it explicitly in the modal lets the user spot
+      // cross-resource replay attempts (client approved for tunnel-A now asks
+      // for tunnel-B). Absent = legacy / loopback client; render an
+      // "(unbound — loopback-only)" hint so the difference is visible.
+      const resource = typeof payload.resource === "string" && payload.resource.length > 0 ? payload.resource : null;
       if (!consentId) {
         return;
       }
       const approve = "Approve";
       const deny = "Deny";
+      const resourceLine = resource
+        ? `Resource: ${resource}\n`
+        : `Resource: (unbound — loopback-only; legacy clients)\n`;
       const choice = await vscode.window.showWarningMessage(
         `An MCP client is requesting access to your Perplexity session.\n\n` +
           `Client: ${clientName}\n` +
           `Client ID: ${clientId}\n` +
-          `Redirect: ${redirectUri}\n\n` +
-          `Approve only if you just initiated this flow from that application.`,
+          `Redirect: ${redirectUri}\n` +
+          resourceLine +
+          `\n` +
+          `Approve only if you just initiated this flow from that application, ` +
+          `and the resource above matches the MCP server URL you configured in it.`,
         { modal: true },
         approve,
         deny,

@@ -152,3 +152,111 @@ describe("oauth consent cache", () => {
     expect(parsed).toHaveLength(1);
   });
 });
+
+describe("oauth consent cache — RFC 8707 resource binding (H12 follow-up)", () => {
+  let configDir;
+  let cachePath;
+
+  beforeEach(() => {
+    configDir = mkdtempSync(join(tmpdir(), "pplx-oauth-consent-resource-"));
+    cachePath = getConsentCachePath(configDir);
+  });
+
+  afterEach(() => {
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  const t0 = 1_700_000_000_000;
+
+  it("record then check for the SAME resource hits", () => {
+    record("client-a", "http://cb/a", 60_000, { cachePath, now: () => t0, resource: "https://tunnel-a.example/mcp" });
+    expect(check("client-a", "http://cb/a", { cachePath, now: () => t0, resource: "https://tunnel-a.example/mcp" })).toBe(true);
+  });
+
+  it("record resource A then check for resource B is a MISS (same client + redirect)", () => {
+    record("client-a", "http://cb/a", 60_000, { cachePath, now: () => t0, resource: "https://tunnel-a.example/mcp" });
+    expect(check("client-a", "http://cb/a", { cachePath, now: () => t0, resource: "https://tunnel-b.example/mcp" })).toBe(false);
+  });
+
+  it("record a bound resource then check with undefined resource is a MISS (bound vs unbound are distinct)", () => {
+    record("client-a", "http://cb/a", 60_000, { cachePath, now: () => t0, resource: "https://tunnel-a.example/mcp" });
+    expect(check("client-a", "http://cb/a", { cachePath, now: () => t0 })).toBe(false);
+    expect(check("client-a", "http://cb/a", { cachePath, now: () => t0, resource: undefined })).toBe(false);
+  });
+
+  it("record unbound consent then check with bound resource is a MISS", () => {
+    record("client-a", "http://cb/a", 60_000, { cachePath, now: () => t0 });
+    expect(check("client-a", "http://cb/a", { cachePath, now: () => t0, resource: "https://tunnel-a.example/mcp" })).toBe(false);
+  });
+
+  it("unbound + unbound matches (pre-H12 clients still round-trip)", () => {
+    record("client-a", "http://cb/a", 60_000, { cachePath, now: () => t0 });
+    expect(check("client-a", "http://cb/a", { cachePath, now: () => t0 })).toBe(true);
+  });
+
+  it("two distinct resources for the same (client, redirect) coexist as separate entries", () => {
+    record("client-a", "http://cb/a", 60_000, { cachePath, now: () => t0, resource: "https://tunnel-a.example/mcp" });
+    record("client-a", "http://cb/a", 60_000, { cachePath, now: () => t0, resource: "https://tunnel-b.example/mcp" });
+    const entries = list({ cachePath, now: () => t0 });
+    expect(entries).toHaveLength(2);
+    const resources = entries.map((e) => e.resource).sort();
+    expect(resources).toEqual(["https://tunnel-a.example/mcp", "https://tunnel-b.example/mcp"]);
+    // Both check independently
+    expect(check("client-a", "http://cb/a", { cachePath, now: () => t0, resource: "https://tunnel-a.example/mcp" })).toBe(true);
+    expect(check("client-a", "http://cb/a", { cachePath, now: () => t0, resource: "https://tunnel-b.example/mcp" })).toBe(true);
+  });
+
+  it("re-recording the SAME triple overwrites (extends TTL); does NOT create a duplicate", () => {
+    record("client-a", "http://cb/a", 30_000, { cachePath, now: () => t0, resource: "https://tunnel-a.example/mcp" });
+    record("client-a", "http://cb/a", 90_000, { cachePath, now: () => t0 + 10_000, resource: "https://tunnel-a.example/mcp" });
+    const entries = list({ cachePath, now: () => t0 + 10_000 });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].expiresAt).toBe(t0 + 10_000 + 90_000);
+  });
+
+  it("revoke with {clientId, redirectUri} removes ALL resources for that pair (not just one)", () => {
+    record("client-a", "http://cb/a", 60_000, { cachePath, now: () => t0, resource: "https://tunnel-a.example/mcp" });
+    record("client-a", "http://cb/a", 60_000, { cachePath, now: () => t0, resource: "https://tunnel-b.example/mcp" });
+    record("client-a", "http://cb/a", 60_000, { cachePath, now: () => t0 });
+    const removed = revoke({ cachePath, now: () => t0, clientId: "client-a", redirectUri: "http://cb/a" });
+    expect(removed).toBe(3);
+    expect(list({ cachePath, now: () => t0 })).toEqual([]);
+  });
+
+  it("revoke with {clientId, redirectUri, resource} removes only the exact triple", () => {
+    record("client-a", "http://cb/a", 60_000, { cachePath, now: () => t0, resource: "https://tunnel-a.example/mcp" });
+    record("client-a", "http://cb/a", 60_000, { cachePath, now: () => t0, resource: "https://tunnel-b.example/mcp" });
+    const removed = revoke({ cachePath, now: () => t0, clientId: "client-a", redirectUri: "http://cb/a", resource: "https://tunnel-a.example/mcp" });
+    expect(removed).toBe(1);
+    const remaining = list({ cachePath, now: () => t0 });
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].resource).toBe("https://tunnel-b.example/mcp");
+  });
+
+  it("legacy cache file without `resource` field loads as unbound entries", () => {
+    const legacy = [
+      { clientId: "legacy-client", redirectUri: "http://cb/legacy", approvedAt: "now", expiresAt: t0 + 60_000 },
+    ];
+    writeFileSync(cachePath, JSON.stringify(legacy), "utf8");
+    const entries = list({ cachePath, now: () => t0 });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].resource).toBeUndefined();
+    // Unbound check hits
+    expect(check("legacy-client", "http://cb/legacy", { cachePath, now: () => t0 })).toBe(true);
+    // Bound check misses
+    expect(check("legacy-client", "http://cb/legacy", { cachePath, now: () => t0, resource: "https://x/" })).toBe(false);
+  });
+
+  it("persisted entry includes `resource` field when bound; omits it when unbound", () => {
+    record("client-a", "http://cb/a", 60_000, { cachePath, now: () => t0, resource: "https://tunnel-a.example/mcp" });
+    const bound = JSON.parse(readFileSync(cachePath, "utf8"));
+    expect(bound[0].resource).toBe("https://tunnel-a.example/mcp");
+
+    // Overwrite with an unbound entry for a different client and check absence
+    record("client-b", "http://cb/b", 60_000, { cachePath, now: () => t0 });
+    const mixed = JSON.parse(readFileSync(cachePath, "utf8"));
+    const unboundEntry = mixed.find((e) => e.clientId === "client-b");
+    expect(unboundEntry).toBeDefined();
+    expect(unboundEntry.resource).toBeUndefined();
+  });
+});
