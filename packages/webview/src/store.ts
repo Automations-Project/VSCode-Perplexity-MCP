@@ -10,6 +10,7 @@ import type {
   HistoryEntryDetail,
   Profile,
 } from "@perplexity-user-mcp/shared";
+import type { AuthorizedClientRow } from "./components/AuthorizedClients";
 
 export type AppTab = "dashboard" | "models" | "history" | "settings" | "rules" | "doctor";
 
@@ -42,6 +43,8 @@ interface DashboardStore {
   daemonStatus: DaemonStatusState | null;
   daemonAuditTail: DaemonAuditEntry[];
   daemonTokenRotatedAt: string | null;
+  oauthClients: AuthorizedClientRow[] | null;
+  setOauthClients: (clients: AuthorizedClientRow[]) => void;
   tunnelProviders: {
     activeProvider: "cf-quick" | "ngrok";
     providers: Array<{
@@ -116,6 +119,8 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
   daemonStatus: null,
   daemonAuditTail: [],
   daemonTokenRotatedAt: null,
+  oauthClients: null,
+  setOauthClients: (clients) => set({ oauthClients: clients }),
   tunnelProviders: null,
   historyExport: { id: null, phase: "idle" },
   cloudSync: { phase: "idle" },
@@ -195,6 +200,11 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
           ? { level: "error", message: `Cloudflare tunnel crashed${message.payload.error ? `: ${message.payload.error}` : "."}` }
           : store.notice,
       }));
+      return;
+    }
+
+    if (message.type === "daemon:oauth-clients") {
+      set({ oauthClients: message.payload.clients });
       return;
     }
 

@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { StatusDot } from "./components/StatusDot";
 import { DaemonStatus } from "./components/DaemonStatus";
+import { AuthorizedClients } from "./components/AuthorizedClients";
 import { DownloadMenu } from "./components/DownloadMenu";
 import { OpenWithMenu } from "./components/OpenWithMenu";
 import { getIdeIcon } from "./ide-icons";
@@ -165,6 +166,32 @@ export function buildModelGroups(
 /*  Dashboard View                                 */
 /* ═══════════════════════════════════════════════ */
 
+function AuthorizedClientsCard({ send }: { send: SendFn }) {
+  const oauthClients = useDashboardStore((store) => store.oauthClients);
+  return (
+    <AuthorizedClients
+      clients={oauthClients ?? []}
+      onRevoke={(clientId) =>
+        send({
+          type: "oauth-clients:revoke",
+          id: (typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `oauth-revoke-${Date.now()}`),
+          payload: { clientId },
+        })
+      }
+      onRevokeAll={() =>
+        send({
+          type: "oauth-clients:revoke-all",
+          id: (typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `oauth-revoke-all-${Date.now()}`),
+        })
+      }
+    />
+  );
+}
+
 export function DashboardView({
   state,
   send,
@@ -222,6 +249,8 @@ export function DashboardView({
       </div>
 
       <DaemonStatus send={send} />
+
+      <AuthorizedClientsCard send={send} />
 
       <div className="glass-panel section-panel">
         <SectionHeader

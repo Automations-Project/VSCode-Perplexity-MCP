@@ -19,9 +19,11 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.1",
+    "@testing-library/react": "^16.0.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.2.0",
+    "jsdom": "^25.0.0",
     "tailwindcss": "^4.2.1",
     "vite": "^7.3.1"
   }
