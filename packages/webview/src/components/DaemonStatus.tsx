@@ -1,4 +1,4 @@
-import { Copy, Globe2, KeyRound, Power, RefreshCcw, ServerCog } from "lucide-react";
+import { Copy, Globe2, KeyRound, Power, RefreshCcw, ServerCog, Skull } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { DaemonAuditEntry, DaemonStatusState, WebviewMessage } from "@perplexity-user-mcp/shared";
 import { useDashboardStore } from "../store";
@@ -355,6 +355,15 @@ export function DaemonStatusView({
         <button className="ghost-button btn-sm" onClick={() => { console.log("[trace] DaemonStatus click", { button: "daemon:restart" }); send({ type: "daemon:restart" }); }} title="Stop the current daemon and spawn a fresh one. Use after a VSIX upgrade if the daemon is out of sync.">
           <Power size={11} />
           Restart daemon
+        </button>
+        <button
+          className="ghost-button btn-sm"
+          onClick={() => { console.log("[trace] DaemonStatus click", { button: "daemon:kill" }); send({ type: "daemon:kill" }); }}
+          title="Force-kill the daemon. Use when tunnels are stuck (ERR_NGROK_334), the daemon isn't responding, or you want a clean-slate reset. Does NOT auto-respawn; click Restart after."
+          style={{ color: "#fca5a5" }}
+        >
+          <Skull size={11} />
+          Kill daemon
         </button>
         {status?.url ? (
           <span className="text-[var(--text-muted)]" style={{ fontSize: "0.68rem" }}>

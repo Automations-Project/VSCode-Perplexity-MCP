@@ -14,6 +14,7 @@ import {
   readAuditTail,
   restartDaemon,
   rotateDaemonToken,
+  stopDaemon,
   syncCloudHistoryViaDaemon,
   type DaemonCloudSyncProgress,
   type DaemonCloudSyncResult,
@@ -106,6 +107,13 @@ export async function restartBundledDaemon() {
     spawnDaemon: spawnBundledDaemon,
     treatSelfAsZombie: true,
   });
+}
+
+export async function killBundledDaemon() {
+  const config = requireRuntimeConfig();
+  // force=true escalates to SIGTERM/SIGKILL + lockfile release if the
+  // daemon doesn't respond to the graceful /daemon/shutdown.
+  return stopDaemon({ configDir: config.configDir, force: true, waitTimeoutMs: 3_000 });
 }
 
 export async function enableBundledDaemonTunnel() {

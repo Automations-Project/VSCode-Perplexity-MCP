@@ -60,6 +60,7 @@ import {
   getBundledNgrokSettings,
   installBundledCloudflared,
   isCloudflaredInstalled,
+  killBundledDaemon,
   listBundledTunnelProviders,
   readBundledDaemonAuditTail,
   restartBundledDaemon,
@@ -548,6 +549,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
               }
               setBundledNgrokAuthtoken(token);
               await this.postTunnelProviders();
+              await this.maybeWarnNgrokChangeRequiresReEnable("authtoken");
               await this.postNotice("info", "ngrok authtoken saved.");
               await this.postActionResult(message.id, true);
             } catch (err) {
@@ -560,6 +562,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
               const domain = (message.payload.domain ?? "").trim();
               setBundledNgrokDomain(domain.length > 0 ? domain : null);
               await this.postTunnelProviders();
+              await this.maybeWarnNgrokChangeRequiresReEnable("reserved domain");
               await this.postNotice("info", domain ? `ngrok reserved domain set to ${domain}.` : "ngrok reserved domain cleared.");
               await this.postActionResult(message.id, true);
             } catch (err) {
@@ -574,6 +577,38 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
               await this.postNotice("info", "ngrok settings cleared. Paste your authtoken again to re-enable.");
               await this.postActionResult(message.id, true);
             } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "daemon:kill": {
+            const confirm = await vscode.window.showWarningMessage(
+              "Force-kill the daemon?\n\nThis sends SIGTERM+SIGKILL to the daemon process, closes the tunnel, and releases the lockfile. Existing MCP clients will disconnect. The extension will NOT auto-spawn a fresh daemon — click Restart to bring it back.",
+              { modal: true },
+              "Kill daemon",
+            );
+            if (confirm !== "Kill daemon") {
+              await this.postActionResult(message.id, false, "cancelled");
+              break;
+            }
+            try {
+              this.stopDaemonEventStream();
+              const result = await killBundledDaemon();
+              await this.postDaemonState();
+              this.onMcpServerDefinitionsChanged?.();
+              await this.postNotice(
+                "info",
+                result.forced
+                  ? `Daemon force-killed (pid=${result.pid ?? "?"}). Lockfile released.`
+                  : result.stopped
+                    ? `Daemon stopped cleanly (pid=${result.pid ?? "?"}).`
+                    : "Daemon was not running.",
+              );
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
+              await this.postNotice("error", `Kill daemon failed: ${(err as Error).message}`);
+              debug(`[trace] daemon:kill FAILED: ${detail}`);
               await this.postActionResult(message.id, false, (err as Error).message);
             }
             break;
@@ -1010,6 +1045,32 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
     } else {
       await this.postNotice("error", `Speed Boost uninstall failed: ${result.error ?? "unknown"}`);
       await this.postActionResult(id, false, result.error);
+    }
+  }
+
+  private async maybeWarnNgrokChangeRequiresReEnable(field: string): Promise<void> {
+    try {
+      const status = await getBundledDaemonStatus();
+      const tunnelStatus = status.health?.tunnel?.status ?? status.record?.tunnelUrl ? "enabled" : "disabled";
+      const activeProvider = getBundledActiveTunnelProvider();
+      if (activeProvider === "ngrok" && tunnelStatus === "enabled") {
+        const choice = await vscode.window.showInformationMessage(
+          `ngrok ${field} changed while a tunnel is live. Re-enable to apply?`,
+          "Re-enable now",
+          "Later",
+        );
+        if (choice === "Re-enable now") {
+          try {
+            await disableBundledDaemonTunnel();
+            await enableBundledDaemonTunnel();
+            await this.postDaemonState({ restartEvents: true });
+          } catch (err) {
+            await this.postNotice("error", `Re-enable failed: ${(err as Error).message}`);
+          }
+        }
+      }
+    } catch {
+      // best-effort — the warning is nice-to-have, not critical.
     }
   }
 

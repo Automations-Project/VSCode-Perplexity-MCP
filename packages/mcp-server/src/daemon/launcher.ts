@@ -490,7 +490,13 @@ export async function stopDaemon(options: {
   waitTimeoutMs?: number;
   pollIntervalMs?: number;
   healthTimeoutMs?: number;
-} = {}): Promise<{ stopped: boolean; pid?: number | null }> {
+  /**
+   * When graceful /daemon/shutdown fails OR the wait-timeout elapses, signal
+   * the lockfile pid directly (SIGTERM then SIGKILL) and release the lockfile.
+   * Required for the "Kill daemon" UX when the daemon is unresponsive.
+   */
+  force?: boolean;
+} = {}): Promise<{ stopped: boolean; forced: boolean; pid?: number | null }> {
   const configDir = options.configDir ?? getConfigDir();
   const status = await getDaemonStatus({
     configDir,
@@ -498,11 +504,27 @@ export async function stopDaemon(options: {
     healthTimeoutMs: options.healthTimeoutMs,
   });
 
-  if (!status.running || !status.healthy || !status.record) {
-    return { stopped: false, pid: status.record?.pid ?? null };
+  if (!status.running || !status.record) {
+    // Nothing live. If force=true and there's a stale lockfile, release it.
+    if (options.force && status.record) {
+      try {
+        release({ lockPath: getLockfilePath(configDir), expectedUuid: status.record.uuid });
+      } catch {
+        // best-effort
+      }
+    }
+    return { stopped: false, forced: false, pid: status.record?.pid ?? null };
   }
 
-  await adminRequest(status.record, "/daemon/shutdown", { method: "POST" });
+  const recordForShutdown = status.record;
+
+  if (status.healthy) {
+    try {
+      await adminRequest(recordForShutdown, "/daemon/shutdown", { method: "POST" });
+    } catch (err) {
+      if (!options.force) throw err;
+    }
+  }
   const deadline = Date.now() + (options.waitTimeoutMs ?? 10_000);
 
   while (Date.now() < deadline) {
@@ -512,12 +534,39 @@ export async function stopDaemon(options: {
       healthTimeoutMs: options.healthTimeoutMs,
     });
     if (!nextStatus.running) {
-      return { stopped: true, pid: status.record.pid };
+      return { stopped: true, forced: false, pid: recordForShutdown.pid };
     }
     await delay(options.pollIntervalMs ?? 200);
   }
 
-  throw new Error("Timed out waiting for daemon shutdown.");
+  if (!options.force) {
+    throw new Error("Timed out waiting for daemon shutdown.");
+  }
+
+  // Force path: try signalling the pid directly. SIGTERM first, then SIGKILL.
+  const pid = recordForShutdown.pid;
+  let signalled = false;
+  try {
+    process.kill(pid, "SIGTERM");
+    signalled = true;
+    await delay(1000);
+    try {
+      process.kill(pid, 0);
+      // still alive
+      process.kill(pid, "SIGKILL");
+      await delay(500);
+    } catch {
+      // ESRCH — process already gone
+    }
+  } catch {
+    // process may already be dead or not ours (pid recycled)
+  }
+  try {
+    release({ lockPath: getLockfilePath(configDir), expectedUuid: recordForShutdown.uuid });
+  } catch {
+    // best-effort
+  }
+  return { stopped: signalled, forced: true, pid };
 }
 
 export async function restartDaemon(options: {

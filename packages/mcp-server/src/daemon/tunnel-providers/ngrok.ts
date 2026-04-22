@@ -57,6 +57,20 @@ export const ngrokProvider: TunnelProvider = {
     };
     updateState(state);
 
+    // Preemptively nuke any in-process ngrok session from a prior enable that
+    // may not have been cleaned up cleanly (e.g. hard daemon kill). This
+    // avoids ERR_NGROK_334 "endpoint already online" when the same domain
+    // gets re-bound in the same process. Does nothing for server-side state
+    // left behind by a previous process — only ngrok's own grace period can
+    // clear that.
+    try {
+      if (typeof ngrok.kill === "function") {
+        await ngrok.kill();
+      }
+    } catch {
+      // best-effort
+    }
+
     let listener: any | null = null;
     let resolveExited: () => void;
     const exited = new Promise<void>((resolve) => {
@@ -72,9 +86,10 @@ export const ngrokProvider: TunnelProvider = {
         forwards_to: `perplexity-mcp (port ${options.port})`,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      updateState({ status: "crashed", url: null, pid: null, error: `ngrok: ${message}` });
-      throw new Error(`ngrok forward failed: ${message}`);
+      const raw = err instanceof Error ? err.message : String(err);
+      const friendly = translateNgrokError(raw, settings.domain);
+      updateState({ status: "crashed", url: null, pid: null, error: friendly });
+      throw new Error(friendly);
     }
 
     const url = typeof listener?.url === "function" ? listener.url() : null;
@@ -114,4 +129,31 @@ async function safeClose(listener: any): Promise<void> {
   } catch {
     // best-effort
   }
+}
+
+function translateNgrokError(raw: string, domain?: string): string {
+  // ERR_NGROK_334 — the reserved domain already has a live endpoint bound to
+  // it on ngrok's servers (usually from a prior session that didn't release
+  // cleanly). Ngrok eventually reclaims the endpoint (~60s), but until then
+  // new binds are rejected.
+  if (/ERR_NGROK_334/i.test(raw) || /already online/i.test(raw)) {
+    const which = domain ? ` for "${domain}"` : "";
+    return (
+      `ngrok refused the bind${which}: the reserved domain is still registered from a previous session. ` +
+      `Wait ~60 seconds for ngrok's server to release it, then click Enable again. ` +
+      `Or: use the Kill daemon button to force-cleanup, then try a different domain (or leave the domain blank for an ephemeral URL). ` +
+      `Upstream code: ERR_NGROK_334.`
+    );
+  }
+  if (/ERR_NGROK_105/i.test(raw) || /authentication failed/i.test(raw) || /authtoken/i.test(raw)) {
+    return (
+      `ngrok rejected the authtoken. Check it at ${DASHBOARD_AUTHTOKEN_URL} and paste it into the dashboard, then try Enable again.`
+    );
+  }
+  if (/ERR_NGROK_108/i.test(raw) || /limited to 1 simultaneous/i.test(raw)) {
+    return (
+      `ngrok free tier allows one session per account. Another device or app is already using this authtoken — stop it in the ngrok dashboard (Cloud Edge → Tunnels), then click Enable.`
+    );
+  }
+  return `ngrok forward failed: ${raw}`;
 }

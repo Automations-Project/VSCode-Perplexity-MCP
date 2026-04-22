@@ -4,6 +4,30 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [0.7.1] — 2026-04-22 — ngrok lifecycle hardening + Kill daemon button
+
+### Fixed
+- **ERR_NGROK_334 ("endpoint already online") now recovers cleanly.** The ngrok provider now calls `ngrok.kill()` immediately before `ngrok.forward()` so any in-process listener from a prior enable cycle is torn down before the new one registers. The remaining ~60s grace period is server-side ngrok state we can't short-circuit, but errors now carry a specific actionable message ("Wait ~60 seconds for ngrok's server to release it, then click Enable again. Or: use the Kill daemon button…") instead of the raw upstream error.
+- **Friendly error translations** for the three most common ngrok failure codes:
+  - `ERR_NGROK_334` — domain conflict (see above).
+  - `ERR_NGROK_105` — invalid authtoken.
+  - `ERR_NGROK_108` — free-tier one-session cap violated by another device.
+
+### Added
+- **"Kill daemon" button** (`daemon:kill`) next to Restart. Confirmation modal; on approval the extension runs `stopDaemon({ force: true })` which:
+  - Attempts graceful `POST /daemon/shutdown`.
+  - If the daemon doesn't respond within 3s, signals the lockfile's pid with `SIGTERM` then `SIGKILL`.
+  - Releases the lockfile so the next Enable spawns a fresh daemon.
+  - Does NOT auto-respawn; the user explicitly controls via Restart afterwards.
+- **Auto-prompt to re-enable after ngrok setting changes.** When the user updates the ngrok authtoken or reserved domain while a tunnel is live, a VS Code info-toast offers to disable + re-enable the tunnel so the new settings apply immediately. Pick "Later" to defer.
+
+### Changed
+- `packages/mcp-server` + `packages/extension` bump to `0.7.1`.
+- `stopDaemon` signature gains an optional `force: boolean` flag; return type adds `forced: boolean`. Existing callers (`restartDaemon`) keep working.
+
+### Known limitation (not fixed here)
+- We can't auto-populate the ngrok reserved-domain dropdown from the account — ngrok's agent authtoken and their REST API key are separate credentials. Adding domain-listing would require a second UI field for the API key; deferred until we see whether users actually want that (vs. typing the domain).
+
 ## [0.7.0] — 2026-04-22 — Phase 7: pluggable tunnel providers (ngrok) + public-surface hardening
 
 ### Added

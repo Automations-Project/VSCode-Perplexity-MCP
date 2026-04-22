@@ -287,6 +287,10 @@ export type WebviewMessage =
       id: string;
     }
   | {
+      type: "daemon:kill";
+      id: string;
+    }
+  | {
       type: "daemon:list-tunnel-providers";
       id: string;
     }
