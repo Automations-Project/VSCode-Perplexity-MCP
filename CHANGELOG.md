@@ -4,6 +4,19 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [0.7.2] — 2026-04-22 — One-click ERR_NGROK_334 recovery
+
+### Added
+- When the tunnel error row shows an `ERR_NGROK_334` message (reserved-domain server-side lockout), two new buttons now appear inline:
+  - **Try ephemeral URL** — clears the saved ngrok domain and retries Enable immediately. Use this to unstick the tunnel without losing your authtoken.
+  - **Open ngrok endpoints page** — direct link to `dashboard.ngrok.com/endpoints` (the authoritative page for account-level endpoint state, distinct from the Tunnels page which often shows empty while the endpoint is still registered).
+
+### Context
+0.7.1 traces confirmed the 334 conflict is **server-side**: a fresh daemon with a different PID + fresh ngrok SDK instance still gets rejected on bind, which means the reservation is held by ngrok's server regardless of what we do locally. The two fixes available to end users are wait out the grace period or stop the endpoint manually — these buttons shortcut both paths.
+
+### Changed
+- `packages/mcp-server` + `packages/extension` bump to `0.7.2`.
+
 ## [0.7.1] — 2026-04-22 — ngrok lifecycle hardening + Kill daemon button
 
 ### Fixed

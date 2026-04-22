@@ -260,6 +260,29 @@ export function DaemonStatusView({
           {tunnel.error ? (
             <div style={{ fontSize: "0.68rem", marginTop: 4 }} className="text-[#fca5a5]">{tunnel.error}</div>
           ) : null}
+          {tunnel.error && /ERR_NGROK_334/.test(tunnel.error) ? (
+            <div className="flex items-center gap-1 flex-wrap" style={{ marginTop: 6 }}>
+              <button
+                className="primary-button btn-sm"
+                onClick={() => {
+                  console.log("[trace] DaemonStatus click", { button: "ngrok:try-ephemeral" });
+                  send({ type: "daemon:set-ngrok-domain", payload: { domain: null } });
+                  setTimeout(() => send({ type: "daemon:enable-tunnel" }), 400);
+                }}
+              >
+                Try ephemeral URL
+              </button>
+              <a
+                className="ghost-button btn-sm"
+                href="https://dashboard.ngrok.com/endpoints"
+                target="_blank"
+                rel="noreferrer"
+                style={{ textDecoration: "none" }}
+              >
+                Open ngrok endpoints page
+              </a>
+            </div>
+          ) : null}
         </div>
         <div className="flex items-center gap-1 flex-wrap" style={{ justifyContent: "flex-end" }}>
           {tunnelUrl ? (
