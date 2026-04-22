@@ -25,7 +25,10 @@ const daemonStatus: DaemonStatusState = {
     pid: 5151,
     error: null,
   },
-  bearerToken: "test-bearer-token-1234",
+  // H0 — the raw bearer never lands on DaemonStatusState; bearerAvailable
+  // gates the reveal/copy UI and the real token flows only via the
+  // modal-confirmed `daemon:bearer:reveal:response` channel.
+  bearerAvailable: true,
 };
 
 describe("DaemonStatus", () => {
@@ -106,5 +109,225 @@ describe("DaemonStatus", () => {
     });
     expect(useDashboardStore.getState().daemonTokenRotatedAt).toBe("2026-04-21T12:00:00.000Z");
     expect(useDashboardStore.getState().notice?.level).toBe("info");
+  });
+});
+
+describe("bearer reveal — store (H0 follow-up)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-23T12:00:00.000Z"));
+    useDashboardStore.setState({ revealedBearer: null });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    useDashboardStore.setState({ revealedBearer: null });
+  });
+
+  it("daemon:bearer:reveal:response populates revealedBearer with bearer + absolute expiresAt + nonce", () => {
+    const { hydrate } = useDashboardStore.getState();
+    hydrate({
+      type: "daemon:bearer:reveal:response",
+      id: "req-1",
+      payload: { bearer: "REVEAL_TEST_FIXTURE_BEARER_A", expiresInMs: 30_000, nonce: "n-1" },
+    });
+    const slice = useDashboardStore.getState().revealedBearer;
+    expect(slice).not.toBeNull();
+    expect(slice?.bearer).toBe("REVEAL_TEST_FIXTURE_BEARER_A");
+    expect(slice?.nonce).toBe("n-1");
+    // Absolute expiresAt = Date.now() + expiresInMs — and vi.setSystemTime pins Date.now()
+    expect(slice?.expiresAt).toBe(new Date("2026-04-23T12:00:00.000Z").getTime() + 30_000);
+  });
+
+  it("a second response with a different nonce replaces the prior slice (not accumulates)", () => {
+    const { hydrate } = useDashboardStore.getState();
+    hydrate({
+      type: "daemon:bearer:reveal:response",
+      id: "req-1",
+      payload: { bearer: "FIRST_FIXTURE_BEARER", expiresInMs: 30_000, nonce: "n-1" },
+    });
+    vi.advanceTimersByTime(5_000);
+    hydrate({
+      type: "daemon:bearer:reveal:response",
+      id: "req-2",
+      payload: { bearer: "SECOND_FIXTURE_BEARER", expiresInMs: 30_000, nonce: "n-2" },
+    });
+    const slice = useDashboardStore.getState().revealedBearer;
+    expect(slice?.bearer).toBe("SECOND_FIXTURE_BEARER");
+    expect(slice?.nonce).toBe("n-2");
+    // TTL restarted from the NEW now — not carried over from the first reveal
+    expect(slice?.expiresAt).toBe(new Date("2026-04-23T12:00:05.000Z").getTime() + 30_000);
+  });
+
+  it("clearRevealedBearer() empties the slice", () => {
+    useDashboardStore.setState({
+      revealedBearer: { bearer: "X", expiresAt: Date.now() + 30_000, nonce: "n" },
+    });
+    useDashboardStore.getState().clearRevealedBearer();
+    expect(useDashboardStore.getState().revealedBearer).toBeNull();
+  });
+
+  it("never leaks the bearer string into an ExtensionMessage the store logs", () => {
+    // Consumer invariant: only `daemon:bearer:reveal:response` should ever carry
+    // the raw bearer. If some future refactor adds a bearer field to another
+    // ExtensionMessage payload, this test fails fast.
+    const BEARER = "CANARY_LEAKED_BEARER_SHOULD_NOT_APPEAR_IN_STATE";
+    const { hydrate } = useDashboardStore.getState();
+    // Anything OTHER than daemon:bearer:reveal:response must NOT populate revealedBearer.
+    hydrate({
+      type: "notice",
+      payload: { level: "info", message: `bearer=${BEARER}` },
+    });
+    expect(useDashboardStore.getState().revealedBearer).toBeNull();
+  });
+});
+
+describe("bearer reveal — DaemonStatusView render (H0 follow-up)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-23T12:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("renders the hidden placeholder when no reveal is active", () => {
+    const markup = renderToStaticMarkup(
+      <DaemonStatusView
+        status={daemonStatus}
+        auditTail={[]}
+        tokenRotatedAt={null}
+        revealedBearer={null}
+        clearRevealedBearer={vi.fn()}
+        send={vi.fn()}
+      />,
+    );
+    expect(markup).toContain("&lt;hidden — click Reveal or Copy&gt;");
+    expect(markup).not.toContain("REVEAL_TEST_FIXTURE_BEARER");
+    expect(markup).not.toContain("clears in");
+  });
+
+  it("renders the bearer and countdown when a live reveal is present", () => {
+    const expiresAt = Date.now() + 27_000;
+    const markup = renderToStaticMarkup(
+      <DaemonStatusView
+        status={daemonStatus}
+        auditTail={[]}
+        tokenRotatedAt={null}
+        revealedBearer={{ bearer: "REVEAL_TEST_FIXTURE_BEARER_LIVE", expiresAt, nonce: "n-live" }}
+        clearRevealedBearer={vi.fn()}
+        send={vi.fn()}
+      />,
+    );
+    expect(markup).toContain("REVEAL_TEST_FIXTURE_BEARER_LIVE");
+    expect(markup).toMatch(/clears in \d+s/);
+    expect(markup).not.toContain("&lt;hidden — click Reveal or Copy&gt;");
+  });
+
+  it("renders the hidden placeholder when an expired reveal is still in state (TTL has elapsed)", () => {
+    // expiresAt in the past — the effect hasn't run yet to call clearRevealedBearer,
+    // but the render must treat it as hidden. Belt-and-suspenders.
+    const expiresAt = Date.now() - 1_000;
+    const markup = renderToStaticMarkup(
+      <DaemonStatusView
+        status={daemonStatus}
+        auditTail={[]}
+        tokenRotatedAt={null}
+        revealedBearer={{ bearer: "REVEAL_TEST_FIXTURE_BEARER_EXPIRED", expiresAt, nonce: "n-expired" }}
+        clearRevealedBearer={vi.fn()}
+        send={vi.fn()}
+      />,
+    );
+    expect(markup).not.toContain("REVEAL_TEST_FIXTURE_BEARER_EXPIRED");
+    expect(markup).toContain("&lt;hidden — click Reveal or Copy&gt;");
+    expect(markup).not.toMatch(/clears in \d+s/);
+  });
+
+  it("bearer-reveal row is hidden entirely when bearerAvailable=false (daemon offline)", () => {
+    const offline = { ...daemonStatus, bearerAvailable: false };
+    const markup = renderToStaticMarkup(
+      <DaemonStatusView
+        status={offline}
+        auditTail={[]}
+        tokenRotatedAt={null}
+        revealedBearer={null}
+        clearRevealedBearer={vi.fn()}
+        send={vi.fn()}
+      />,
+    );
+    expect(markup).not.toContain("bearer-reveal-row");
+    expect(markup).not.toContain("&lt;hidden — click Reveal or Copy&gt;");
+  });
+});
+
+// @vitest-environment jsdom
+describe("bearer reveal — TTL effect (H0 follow-up)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-23T12:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("invokes clearRevealedBearer() when the interval tick catches up to expiresAt", async () => {
+    // Dynamic import so the jsdom pragma above takes effect before React / DOM
+    // test utilities load.
+    const { render, cleanup, act } = await import("@testing-library/react");
+    const clearSpy = vi.fn();
+    const { unmount } = render(
+      <DaemonStatusView
+        status={daemonStatus}
+        auditTail={[]}
+        tokenRotatedAt={null}
+        revealedBearer={{
+          bearer: "REVEAL_TEST_FIXTURE_BEARER_TTL",
+          expiresAt: Date.now() + 3_000,
+          nonce: "n-ttl",
+        }}
+        clearRevealedBearer={clearSpy}
+        send={vi.fn()}
+      />,
+    );
+    expect(clearSpy).not.toHaveBeenCalled();
+
+    // Advance past expiresAt + one tick of the interval (1s) so the callback runs.
+    act(() => {
+      vi.advanceTimersByTime(4_100);
+    });
+
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+    unmount();
+    cleanup();
+  });
+
+  it("cleans up the interval on unmount so a late-resurrected slice does not leak", async () => {
+    const { render, cleanup, act } = await import("@testing-library/react");
+    const clearSpy = vi.fn();
+    const { unmount } = render(
+      <DaemonStatusView
+        status={daemonStatus}
+        auditTail={[]}
+        tokenRotatedAt={null}
+        revealedBearer={{
+          bearer: "REVEAL_TEST_FIXTURE_BEARER_UNMOUNT",
+          expiresAt: Date.now() + 30_000,
+          nonce: "n-unmount",
+        }}
+        clearRevealedBearer={clearSpy}
+        send={vi.fn()}
+      />,
+    );
+    unmount();
+    cleanup();
+
+    // After unmount, advancing past expiresAt must NOT invoke the stale callback.
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+
+    expect(clearSpy).not.toHaveBeenCalled();
   });
 });

@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { startTransition, useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
 import type { ExtensionMessage, HistoryItem, WebviewMessage } from "@perplexity-user-mcp/shared";
 import { postMessage } from "./lib/vscode";
+import { ACTION_TYPES } from "./action-types";
 import { type AppTab, useDashboardStore } from "./store";
 import {
   DashboardView,
@@ -30,38 +31,6 @@ const tabs: Array<{ id: AppTab; label: string; icon: typeof Compass }> = [
 ];
 
 const initialDashboardState = window.__PERPLEXITY_INITIAL_STATE__;
-
-const ACTION_TYPES = new Set<string>([
-  "auth:login",
-  "configs:generate",
-  "configs:remove",
-  "rules:sync",
-  "rules:remove",
-  "models:refresh",
-  "speed-boost:install",
-  "speed-boost:uninstall",
-  "doctor:run",
-  "doctor:probe",
-  "doctor:export",
-  "doctor:report-issue",
-  "doctor:action",
-  "daemon:status",
-  "daemon:rotate-token",
-  "daemon:enable-tunnel",
-  "daemon:disable-tunnel",
-  "history:request-entry",
-  "history:open-preview",
-  "history:open-rich",
-  "history:open-with",
-  "history:export",
-  "history:pin",
-  "history:tag",
-  "history:delete",
-  "history:rebuild-index",
-  "history:cloud-sync",
-  "history:cloud-hydrate",
-  "viewers:configure",
-]);
 
 let actionSeq = 0;
 function nextActionId(prefix: string): string {

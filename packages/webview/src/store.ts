@@ -43,6 +43,19 @@ interface DashboardStore {
   daemonStatus: DaemonStatusState | null;
   daemonAuditTail: DaemonAuditEntry[];
   daemonTokenRotatedAt: string | null;
+  /**
+   * Live revealed bearer. Populated ONLY by the `daemon:bearer:reveal:response`
+   * ExtensionMessage (which itself requires a modal-confirmed
+   * `daemon:bearer:reveal` request on the extension-host side). Cleared
+   * automatically at `expiresAt` by the `DaemonStatus` component's TTL effect,
+   * or immediately replaced when a new reveal response arrives with a
+   * different `nonce`. While non-null the raw bearer IS in webview state —
+   * that is the designed behavior of an explicit reveal; the 30s TTL is the
+   * safety rail.
+   */
+  revealedBearer: { bearer: string; expiresAt: number; nonce: string } | null;
+  setRevealedBearer: (r: { bearer: string; expiresAt: number; nonce: string }) => void;
+  clearRevealedBearer: () => void;
   oauthClients: AuthorizedClientRow[] | null;
   setOauthClients: (clients: AuthorizedClientRow[]) => void;
   tunnelProviders: {
@@ -119,6 +132,9 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
   daemonStatus: null,
   daemonAuditTail: [],
   daemonTokenRotatedAt: null,
+  revealedBearer: null,
+  setRevealedBearer: (r) => set({ revealedBearer: r }),
+  clearRevealedBearer: () => set({ revealedBearer: null }),
   oauthClients: null,
   setOauthClients: (clients) => set({ oauthClients: clients }),
   tunnelProviders: null,
@@ -205,6 +221,23 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
 
     if (message.type === "daemon:oauth-clients") {
       set({ oauthClients: message.payload.clients });
+      return;
+    }
+
+    if (message.type === "daemon:bearer:reveal:response") {
+      // Translate the host's relative TTL into an absolute deadline so the
+      // UI's tick loop can compute remaining seconds without trusting
+      // setTimeout drift. A new nonce overwrites any prior slice — e.g. the
+      // user clicks Reveal twice in a row; the second response supersedes
+      // the first and the TTL restarts from 30s.
+      const expiresAt = Date.now() + message.payload.expiresInMs;
+      set({
+        revealedBearer: {
+          bearer: message.payload.bearer,
+          expiresAt,
+          nonce: message.payload.nonce,
+        },
+      });
       return;
     }
 

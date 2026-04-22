@@ -12,12 +12,16 @@ export function DaemonStatus({ send }: { send: SendFn }) {
   const auditTail = useDashboardStore((store) => store.daemonAuditTail);
   const tokenRotatedAt = useDashboardStore((store) => store.daemonTokenRotatedAt);
   const tunnelProviders = useDashboardStore((store) => store.tunnelProviders);
+  const revealedBearer = useDashboardStore((store) => store.revealedBearer);
+  const clearRevealedBearer = useDashboardStore((store) => store.clearRevealedBearer);
   return (
     <DaemonStatusView
       status={status}
       auditTail={auditTail}
       tokenRotatedAt={tokenRotatedAt}
       tunnelProviders={tunnelProviders}
+      revealedBearer={revealedBearer}
+      clearRevealedBearer={clearRevealedBearer}
       send={send}
     />
   );
@@ -28,12 +32,22 @@ export function DaemonStatusView({
   auditTail,
   tokenRotatedAt,
   tunnelProviders,
+  revealedBearer,
+  clearRevealedBearer,
   send,
 }: {
   status: DaemonStatusState | null;
   auditTail: DaemonAuditEntry[];
   tokenRotatedAt: string | null;
   tunnelProviders?: TunnelProvidersState | null;
+  /**
+   * H0 reveal slice. Non-null only during an active 30s reveal. Raw bearer
+   * is present here — the slice itself is the enforcement mechanism (TTL +
+   * auto-clear) the extension host promised when it posted the response.
+   */
+  revealedBearer?: { bearer: string; expiresAt: number; nonce: string } | null;
+  /** Invoked by the TTL effect when `Date.now() >= expiresAt`. */
+  clearRevealedBearer?: () => void;
   send: SendFn;
 }) {
   const [authtokenInput, setAuthtokenInput] = useState("");
@@ -50,6 +64,28 @@ export function DaemonStatusView({
   const showNgrokSetup = activeProvider === "ngrok";
   const [revealed, setRevealed] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+  // H0 — live 1-second tick driving the reveal countdown. Re-runs per
+  // revealedBearer (nonce change resets). `now` is state so React re-renders
+  // the countdown label each second; the TTL auto-clear fires via the same
+  // interval callback once expiresAt is reached.
+  const [now, setNow] = useState<number>(() => Date.now());
+  useEffect(() => {
+    if (!revealedBearer) return;
+    setNow(Date.now());
+    const tick = window.setInterval(() => {
+      const current = Date.now();
+      setNow(current);
+      if (current >= revealedBearer.expiresAt) {
+        window.clearInterval(tick);
+        clearRevealedBearer?.();
+      }
+    }, 1_000);
+    return () => window.clearInterval(tick);
+  }, [revealedBearer, clearRevealedBearer]);
+  const revealRemainingSec = revealedBearer
+    ? Math.max(0, Math.ceil((revealedBearer.expiresAt - now) / 1000))
+    : 0;
+  const isRevealLive = Boolean(revealedBearer) && revealRemainingSec > 0;
   const tunnel = status?.tunnel ?? { status: "disabled", url: null, pid: null, error: null };
   const tunnelActive = tunnel.status === "enabled" || tunnel.status === "starting";
   const tunnelUrl = tunnel.url ?? null;
@@ -301,18 +337,38 @@ export function DaemonStatusView({
       </div>
 
       {bearerAvailable ? (
-        <div className="list-row" style={{ marginTop: 8, alignItems: "flex-start" }}>
+        <div className="list-row" style={{ marginTop: 8, alignItems: "flex-start" }} data-testid="bearer-reveal-row">
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ fontSize: "0.72rem", fontWeight: 600 }} className="text-[var(--text-primary)]">
               Bearer token
+              {isRevealLive ? (
+                <span
+                  style={{ marginLeft: 8, fontSize: "0.66rem", fontWeight: 500 }}
+                  className="text-[var(--text-muted)]"
+                  data-testid="bearer-reveal-countdown"
+                >
+                  clears in {revealRemainingSec}s
+                </span>
+              ) : null}
             </div>
-            <div style={{ fontSize: "0.7rem", marginTop: 3, fontFamily: "var(--font-mono, monospace)" }} className="text-[var(--text-muted)] break-all">
-              {/* Raw bearer never reaches the webview state — see daemon:bearer:reveal handler. */}
-              &lt;hidden — click Reveal or Copy&gt;
+            <div
+              style={{ fontSize: "0.7rem", marginTop: 3, fontFamily: "var(--font-mono, monospace)" }}
+              className="text-[var(--text-muted)] break-all"
+              data-testid="bearer-reveal-value"
+            >
+              {isRevealLive && revealedBearer ? (
+                // Bearer is in webview state for ≤30s by explicit user consent.
+                // Raw text on purpose — the user just clicked Reveal and
+                // confirmed the modal to see this value; rendering a masked
+                // string here would defeat the feature.
+                <code>{revealedBearer.bearer}</code>
+              ) : (
+                <>&lt;hidden — click Reveal or Copy&gt;</>
+              )}
             </div>
             <div style={{ fontSize: "0.66rem", marginTop: 4 }} className="text-[var(--text-muted)]">
               Required in an <code>Authorization: Bearer …</code> header for every MCP request (loopback or tunnel).
-              Reveal / copy flows through a modal security confirmation in the VS Code host.
+              Reveal / copy flows through a modal security confirmation in the VS Code host; reveal auto-clears after 30s.
             </div>
           </div>
           <div className="flex items-center gap-1 flex-wrap" style={{ justifyContent: "flex-end" }}>
