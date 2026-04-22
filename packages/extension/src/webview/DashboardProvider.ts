@@ -61,9 +61,12 @@ import {
   installBundledCloudflared,
   isCloudflaredInstalled,
   killBundledDaemon,
+  listBundledOAuthConsents,
   listBundledTunnelProviders,
   readBundledDaemonAuditTail,
   restartBundledDaemon,
+  revokeAllBundledOAuthConsents,
+  revokeBundledOAuthConsent,
   rotateBundledDaemonToken,
   setBundledActiveTunnelProvider,
   setBundledNgrokAuthtoken,
@@ -714,6 +717,47 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             }
             break;
           }
+          case "daemon:oauth-consents-list": {
+            try {
+              await this.postOAuthConsents();
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "daemon:oauth-consents-revoke": {
+            try {
+              const removed = await revokeBundledOAuthConsent(message.payload.clientId, message.payload.redirectUri);
+              await this.postOAuthConsents();
+              await this.postNotice(
+                "info",
+                removed > 0
+                  ? `Revoked ${removed} cached consent${removed === 1 ? "" : "s"}.`
+                  : "No matching consent was cached.",
+              );
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "daemon:oauth-consents-revoke-all": {
+            try {
+              const removed = await revokeAllBundledOAuthConsents();
+              await this.postOAuthConsents();
+              await this.postNotice(
+                "info",
+                removed > 0
+                  ? `Revoked ${removed} cached consent${removed === 1 ? "" : "s"}.`
+                  : "No cached consents to revoke.",
+              );
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
           case "history:request-list": {
             await this.postHistoryList(100);
             break;
@@ -1096,6 +1140,19 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       } satisfies ExtensionMessage);
     } catch (err) {
       debug(`[trace] postTunnelProviders failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  private async postOAuthConsents(): Promise<void> {
+    if (!this.view) return;
+    try {
+      const consents = await listBundledOAuthConsents();
+      await this.view.webview.postMessage({
+        type: "daemon:oauth-consents",
+        payload: { consents },
+      } satisfies ExtensionMessage);
+    } catch (err) {
+      debug(`[trace] postOAuthConsents failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

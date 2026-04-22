@@ -223,6 +223,17 @@ export type ExtensionMessage =
   | { type: "daemon:token-rotated"; payload: { rotatedAt: string } }
   | { type: "daemon:audit-tail"; payload: { items: DaemonAuditEntry[] } }
   | {
+      type: "daemon:oauth-consents";
+      payload: {
+        consents: Array<{
+          clientId: string;
+          redirectUri: string;
+          approvedAt: string;
+          expiresAt: number;
+        }>;
+      };
+    }
+  | {
       type: "daemon:tunnel-providers";
       payload: {
         activeProvider: "cf-quick" | "ngrok";
@@ -383,6 +394,9 @@ export type WebviewMessage =
   | { type: "daemon:rotate-token"; id: string }
   | { type: "daemon:enable-tunnel"; id: string }
   | { type: "daemon:disable-tunnel"; id: string }
+  | { type: "daemon:oauth-consents-list"; id: string }
+  | { type: "daemon:oauth-consents-revoke"; id: string; payload: { clientId: string; redirectUri?: string } }
+  | { type: "daemon:oauth-consents-revoke-all"; id: string }
   | { type: "history:request-list"; payload?: { filter?: string } }
   | { type: "history:request-entry"; id: string; payload: { historyId: string } }
   | { type: "history:open-preview"; id: string; payload: { historyId: string } }
