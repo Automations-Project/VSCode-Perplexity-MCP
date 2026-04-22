@@ -36,6 +36,8 @@ export interface ExtensionSettingsSnapshot {
   autoRefreshIntervalHours: number;
   debugBufferSize: number;
   debugVerboseHttp: boolean;
+  /** Hours a granted OAuth consent is remembered before the user is prompted again. 0 disables the cache (modal every time). */
+  oauthConsentCacheTtlHours: number;
 }
 
 export interface RulesStatus {

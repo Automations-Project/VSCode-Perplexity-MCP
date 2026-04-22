@@ -18,7 +18,7 @@ export interface AuditEntry {
   userAgent?: string;
   path?: string;
   httpStatus?: number;
-  auth?: "bearer" | "oauth" | "none";
+  auth?: "bearer" | "oauth" | "oauth-cached" | "none";
 }
 
 export interface AuditOptions {

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, statSync, renameSync } from "node:fs";
 import { join } from "node:path";
+import { getSettingsSnapshot } from "../settings.js";
 import {
   disableDaemonTunnel,
   enableDaemonTunnel,
@@ -205,6 +206,12 @@ async function spawnBundledDaemon(options: { configDir: string; host?: string; p
   }
 
   const logFd = openDaemonLogFd(options.configDir);
+  let consentTtlHours = 24;
+  try {
+    consentTtlHours = getSettingsSnapshot().oauthConsentCacheTtlHours;
+  } catch {
+    // settings unavailable outside the extension host — fall back to default
+  }
   const child = spawn(process.execPath, args, {
     detached: true,
     stdio: ["ignore", logFd, logFd],
@@ -216,6 +223,7 @@ async function spawnBundledDaemon(options: { configDir: string; host?: string; p
       // binary to behave as a pure Node runtime for this child.
       ELECTRON_RUN_AS_NODE: "1",
       PERPLEXITY_CONFIG_DIR: options.configDir,
+      PERPLEXITY_OAUTH_CONSENT_TTL_HOURS: String(consentTtlHours),
     },
   });
   closeSync(logFd);

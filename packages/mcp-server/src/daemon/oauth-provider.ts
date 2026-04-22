@@ -27,6 +27,7 @@ import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import type { OAuthRegisteredClientsStore } from "@modelcontextprotocol/sdk/server/auth/clients.js";
 import type { AuthorizationParams, OAuthServerProvider } from "@modelcontextprotocol/sdk/server/auth/provider.js";
 import type { OAuthClientInformationFull, OAuthTokenRevocationRequest, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
+import * as consentCache from "./oauth-consent-cache.js";
 
 const CODE_TTL_MS = 2 * 60_000;
 const TOKEN_TTL_MS = 60 * 60_000;
@@ -42,6 +43,20 @@ export interface OAuthProviderOptions {
   requestConsent: (info: { clientId: string; clientName: string; redirectUri: string; consentId: string }) => Promise<boolean>;
   /** Live getter so rotate-token stays supported. */
   getStaticBearer: () => string;
+  /**
+   * Live getter for the consent-cache TTL in ms. `0` disables the cache
+   * (modal fires every time). Read live per-authorize so toggling the
+   * setting takes effect on the next request without restarting the
+   * provider.
+   */
+  getConsentCacheTtlMs?: () => number;
+  /**
+   * Fires just before the authorize response is sent when the provider
+   * decided to auto-approve from the consent cache. server.ts uses this
+   * to flip the request's audit tag from `none` to `oauth-cached` so
+   * the audit log records the cache hit distinctly.
+   */
+  onConsentCacheHit?: (info: { clientId: string; redirectUri: string; res: Response }) => void;
 }
 
 interface StoredClient extends OAuthClientInformationFull {
@@ -78,9 +93,11 @@ export class PerplexityOAuthProvider implements OAuthServerProvider {
   private tokens = new Map<string, AccessTokenRecord>();
   private clients = new Map<string, StoredClient>();
   private clientsPath: string;
+  private consentCachePath: string;
 
   constructor(private readonly options: OAuthProviderOptions) {
     this.clientsPath = join(options.configDir, "oauth-clients.json");
+    this.consentCachePath = join(options.configDir, "oauth-consent.json");
     this.loadClients();
   }
 
@@ -101,6 +118,23 @@ export class PerplexityOAuthProvider implements OAuthServerProvider {
   }
 
   async authorize(client: OAuthClientInformationFull, params: AuthorizationParams, res: Response): Promise<void> {
+    const ttlMs = this.options.getConsentCacheTtlMs?.() ?? 0;
+    const cacheHit = ttlMs > 0 && consentCache.check(client.client_id, params.redirectUri, { cachePath: this.consentCachePath });
+
+    if (cacheHit) {
+      console.error(`[trace] oauth consent cache hit clientId=${client.client_id} redirectUri=${params.redirectUri}`);
+      try {
+        this.options.onConsentCacheHit?.({
+          clientId: client.client_id,
+          redirectUri: params.redirectUri,
+          res,
+        });
+      } catch {
+        // audit tagging is best-effort; never fail the authorize because of it
+      }
+      return this.issueAuthorizationCode(client, params, res);
+    }
+
     const consentId = crypto.randomBytes(8).toString("base64url");
     try {
       const approved = await this.options.requestConsent({
@@ -114,22 +148,16 @@ export class PerplexityOAuthProvider implements OAuthServerProvider {
         return redirectTo(res, params.redirectUri, { error: "access_denied", state: params.state });
       }
 
-      const code = `pplx_ac_${crypto.randomBytes(24).toString("base64url")}`;
-      this.codes.set(code, {
-        clientId: client.client_id,
-        redirectUri: params.redirectUri,
-        codeChallenge: params.codeChallenge,
-        scopes: params.scopes ?? [],
-        exp: Date.now() + CODE_TTL_MS,
-      });
-
-      const stored = this.clients.get(client.client_id);
-      if (stored) {
-        stored.consent_last_approved_at = new Date().toISOString();
-        this.persistClients();
+      if (ttlMs > 0) {
+        try {
+          consentCache.record(client.client_id, params.redirectUri, ttlMs, { cachePath: this.consentCachePath });
+        } catch {
+          // cache write is best-effort; a failure here just means the next
+          // request will re-prompt the user.
+        }
       }
 
-      return redirectTo(res, params.redirectUri, { code, state: params.state });
+      return this.issueAuthorizationCode(client, params, res);
     } catch (err) {
       return redirectTo(res, params.redirectUri, {
         error: "server_error",
@@ -137,6 +165,25 @@ export class PerplexityOAuthProvider implements OAuthServerProvider {
         state: params.state,
       });
     }
+  }
+
+  private issueAuthorizationCode(client: OAuthClientInformationFull, params: AuthorizationParams, res: Response): void {
+    const code = `pplx_ac_${crypto.randomBytes(24).toString("base64url")}`;
+    this.codes.set(code, {
+      clientId: client.client_id,
+      redirectUri: params.redirectUri,
+      codeChallenge: params.codeChallenge,
+      scopes: params.scopes ?? [],
+      exp: Date.now() + CODE_TTL_MS,
+    });
+
+    const stored = this.clients.get(client.client_id);
+    if (stored) {
+      stored.consent_last_approved_at = new Date().toISOString();
+      this.persistClients();
+    }
+
+    return redirectTo(res, params.redirectUri, { code, state: params.state });
   }
 
   async challengeForAuthorizationCode(_client: OAuthClientInformationFull, authorizationCode: string): Promise<string> {
@@ -259,7 +306,22 @@ export class PerplexityOAuthProvider implements OAuthServerProvider {
       }
     }
     this.persistClients();
+    // Also purge any cached consents for the revoked client so a future
+    // registration with the same client_id can't silently inherit them.
+    try {
+      consentCache.revoke({ cachePath: this.consentCachePath, clientId });
+    } catch {
+      // best-effort
+    }
     return true;
+  }
+
+  listConsents(): consentCache.ConsentEntry[] {
+    return consentCache.list({ cachePath: this.consentCachePath });
+  }
+
+  revokeConsent(clientId?: string, redirectUri?: string): number {
+    return consentCache.revoke({ cachePath: this.consentCachePath, clientId, redirectUri });
   }
 
   private issueTokenPair(clientId: string, scopes: string[]): OAuthTokens {

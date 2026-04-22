@@ -103,10 +103,28 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
   // OAuth 2.1 authorization-server wiring. The provider persists clients to
   // <configDir>/oauth-clients.json and holds codes/tokens in memory. Consent
   // flows route through the host-supplied onOAuthConsentRequest callback.
+  //
+  // Consent-cache TTL is read live per /authorize via the env var — the
+  // extension host writes it from `Perplexity.oauthConsentCacheTtlHours`
+  // when it spawns the daemon. `0` disables the cache.
   const consentCoordinator = new ConsentCoordinator();
   const oauthProvider = new PerplexityOAuthProvider({
     configDir: options.configDir ?? ".",
     getStaticBearer: () => currentToken.bearerToken,
+    getConsentCacheTtlMs: () => {
+      const raw = Number(process.env.PERPLEXITY_OAUTH_CONSENT_TTL_HOURS);
+      const hours = Number.isFinite(raw) && raw >= 0 ? raw : 24;
+      return Math.floor(hours * 60 * 60_000);
+    },
+    onConsentCacheHit: ({ res }) => {
+      // Flip the audit tag so cache-driven auto-approvals are distinguishable
+      // from both unauthenticated traffic and fresh modal approvals.
+      const req = (res as any).req;
+      if (req) {
+        req._pplx = req._pplx ?? {};
+        req._pplx.authOverride = "oauth-cached";
+      }
+    },
     requestConsent: ({ clientId, clientName, redirectUri, consentId }) => {
       return consentCoordinator.request({
         id: consentId,
@@ -197,6 +215,8 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
       // Only audit admin + /mcp endpoints, not homepage/static.
       if (path.startsWith("/daemon") || path.startsWith("/mcp") || path.startsWith("/authorize") || path.startsWith("/token") || path.startsWith("/register")) {
         try {
+          const latestCtx = req._pplx ?? ctx;
+          const authTag = latestCtx.authOverride ?? (hasAuth ? "bearer" : "none");
           appendAuditEntry(
             {
               timestamp: new Date(startedAtReq).toISOString(),
@@ -209,7 +229,7 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
               userAgent: ctx.userAgent || undefined,
               path,
               httpStatus: status,
-              auth: hasAuth ? "bearer" : "none",
+              auth: authTag,
             },
             { auditPath },
           );

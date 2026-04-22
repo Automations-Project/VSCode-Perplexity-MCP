@@ -274,6 +274,13 @@
           "type": "boolean",
           "default": false,
           "description": "Include HTTP traffic from the MCP server in debug events."
+        },
+        "Perplexity.oauthConsentCacheTtlHours": {
+          "type": "number",
+          "default": 24,
+          "minimum": 0,
+          "maximum": 720,
+          "description": "Hours a granted OAuth consent is remembered before re-prompting. 0 disables the cache (modal every time). Applies after the daemon is restarted."
         }
       }
     },
