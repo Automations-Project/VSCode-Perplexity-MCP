@@ -170,6 +170,34 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
   // ever listens on 127.0.0.1; no untrusted network can reach it directly.
   (app as any).set?.("trust proxy", 1);
 
+  // H11 (attachRequestSource): FIRST middleware on the stack. Stamps every
+  // request with req._pplx.source computed from real network indicators
+  // (X-Forwarded-For, CF-Connecting-IP, socket IP). The self-reported
+  // `x-perplexity-source` header is captured into req._pplx.declaredSource
+  // for audit enrichment only — it is NEVER consulted for the allowlist
+  // check below. Runs before helmet / json / trace / security.middleware so
+  // downstream consumers always see a populated source.
+  app.use((req: any, _res: any, next: any) => {
+    req._pplx = req._pplx ?? {};
+    req._pplx.source = computeRequestSource(req);
+    const declared = req.headers?.["x-perplexity-source"];
+    if (typeof declared === "string") req._pplx.declaredSource = declared;
+    next();
+  });
+
+  // H11 (tunnelAllowlist): SECOND middleware. Tunnel callers are restricted
+  // to the MCP + OAuth surface (plus homepage / robots / favicon). Any other
+  // path returns 404 (not 403) so the admin surface is invisible to probes.
+  // Loopback requests pass through unchanged.
+  app.use((req: any, res: any, next: any) => {
+    if (req._pplx.source !== "tunnel") return next();
+    const path = (typeof req.originalUrl === "string" ? req.originalUrl : req.url ?? "");
+    if (!pathIsTunnelAllowed(path)) {
+      return res.status(404).end();
+    }
+    next();
+  });
+
   app.use(
     helmet({
       contentSecurityPolicy: false, // SDK's OAuth handlers + our homepage serve inline styles; CSP would need a full policy pass
@@ -669,6 +697,47 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
     listOAuthConsents: () => oauthProvider.listConsents(),
     revokeOAuthConsents: (filter) => oauthProvider.revokeConsent(filter?.clientId, filter?.redirectUri),
   };
+}
+
+/**
+ * Compute the source of a request from real network indicators only.
+ *
+ * H11: security decisions (admin-surface allowlist) must NEVER trust the
+ * `x-perplexity-source` header — a tunnel caller could forge it. Only
+ * examine X-Forwarded-For, CF-Connecting-IP, and the underlying socket IP.
+ * The extension host's declared-source hint is captured separately into
+ * `req._pplx.declaredSource` for audit enrichment but is never consulted
+ * here.
+ */
+function computeRequestSource(req: any): "loopback" | "tunnel" {
+  if (req.headers?.["x-forwarded-for"]) return "tunnel";
+  if (req.headers?.["cf-connecting-ip"]) return "tunnel";
+  const ip = req.ip ?? req.socket?.remoteAddress ?? "";
+  if (ip && ip !== "127.0.0.1" && ip !== "::1" && ip !== "::ffff:127.0.0.1") return "tunnel";
+  return "loopback";
+}
+
+/**
+ * Paths a tunnel caller is allowed to reach. Everything else (notably
+ * `/daemon/*`) is returned as 404 to keep the admin surface invisible to
+ * anyone who only has the tunnel URL — even if they somehow obtained the
+ * static bearer.
+ */
+const TUNNEL_ALLOWLIST: RegExp[] = [
+  /^\/mcp(\/|$|\?)/,
+  /^\/$/,
+  /^\/authorize(\/|$|\?)/,
+  /^\/token(\/|$|\?)/,
+  /^\/register(\/|$|\?)/,
+  /^\/revoke(\/|$|\?)/,
+  /^\/\.well-known\/(oauth-authorization-server|oauth-protected-resource)(\/|$|\?)/,
+  /^\/robots\.txt$/,
+  /^\/favicon\.ico$/,
+];
+
+function pathIsTunnelAllowed(path: string): boolean {
+  const bare = path.split("?")[0] ?? path;
+  return TUNNEL_ALLOWLIST.some((re) => re.test(bare));
 }
 
 /** Resolve the OAuth issuer from the request's Host header so tunnel + loopback clients both see a correct metadata doc. */
