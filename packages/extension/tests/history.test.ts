@@ -20,7 +20,13 @@ describe("history store", () => {
     tempDirs.push(configDir);
     process.env.PERPLEXITY_CONFIG_DIR = configDir;
 
-    const { appendHistory, readHistory } = await import("perplexity-user-mcp");
+    // Import from the `history-store` subpath (not the root package) so we
+    // don't pull in the PerplexityClient / daemon / OAuth / patchright
+    // transitive tree. Under full-suite load the root-package import can
+    // exceed the 5s per-test timeout; the subpath is the same underlying
+    // module and re-exports `appendHistory` / `readHistory` under the same
+    // names.
+    const { appendHistory, readHistory } = await import("perplexity-user-mcp/history-store");
 
     for (let index = 0; index < 55; index += 1) {
       appendHistory({
