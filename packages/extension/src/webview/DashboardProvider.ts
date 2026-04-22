@@ -22,6 +22,7 @@ import type { IdeTarget } from "@perplexity-user-mcp/shared";
 import { getAccountSnapshot, setLastRefreshTier } from "../auth/session.js";
 import { log, debug } from "../extension.js";
 import { redactMessage, redactObject } from "../redact.js";
+import { REVEAL_CONFIRM_LABEL, runBearerRevealGate } from "./bearer-reveal-gate.js";
 import type { DebugCollector } from "../debug/collector.js";
 import { runDoctor } from "perplexity-user-mcp";
 import {
@@ -1428,30 +1429,36 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       return;
     }
     if (message.type === "daemon:bearer:reveal") {
-      // When invoked from a command we open the dashboard and route through
-      // the webview handler so the 30s-TTL UI can do the reveal properly.
-      await this.reveal();
-      await this.refresh();
-      await this.view?.webview.postMessage({
-        type: "action:result",
-        id: message.id,
-        ok: true,
-      } satisfies ExtensionMessage);
-      try {
-        const daemon = await getBundledDaemonStatus();
-        if (!daemon.record?.bearerToken) {
-          void vscode.window.showErrorMessage("Daemon is not running.");
-          return;
-        }
-        const nonce = crypto.randomUUID();
-        await this.view?.webview.postMessage({
-          type: "daemon:bearer:reveal:response",
-          id: message.id,
-          payload: { bearer: daemon.record.bearerToken, expiresInMs: 30_000, nonce },
-        } satisfies ExtensionMessage);
-      } catch (err) {
-        void vscode.window.showErrorMessage(`Reveal daemon bearer failed: ${(err as Error).message}`);
-      }
+      // H0: every reveal path MUST be explicit and modal-confirmed before the
+      // bearer leaves the extension host. Route through the shared gate so
+      // cancellation on the command-palette side can never emit a reveal
+      // response. See packages/extension/src/webview/bearer-reveal-gate.ts.
+      await runBearerRevealGate(message.id, {
+        confirm: async () =>
+          vscode.window.showWarningMessage(
+            "Show the daemon bearer in the dashboard for 30 seconds?",
+            {
+              modal: true,
+              detail: "The token will auto-clear from the dashboard after 30 seconds. It is not persisted anywhere by the dashboard.",
+            },
+            REVEAL_CONFIRM_LABEL,
+          ),
+        getBearer: async () => {
+          const daemon = await getBundledDaemonStatus();
+          return daemon.record?.bearerToken ?? null;
+        },
+        openDashboard: async () => {
+          await this.reveal();
+          await this.refresh();
+        },
+        postMessage: async (msg) => {
+          await this.view?.webview.postMessage(msg satisfies ExtensionMessage);
+        },
+        showError: (text) => {
+          void vscode.window.showErrorMessage(text);
+        },
+        randomNonce: () => crypto.randomUUID(),
+      });
       return;
     }
   }

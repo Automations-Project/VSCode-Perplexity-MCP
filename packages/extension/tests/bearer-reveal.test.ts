@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { redactMessage, redactObject } from "../src/redact.js";
+import { REVEAL_CONFIRM_LABEL, REVEAL_TTL_MS, runBearerRevealGate, type RevealGateDeps } from "../src/webview/bearer-reveal-gate.js";
 
 describe("bearer reveal + log cycle is leak-free", () => {
   const REAL_BEARER = "TEST_REAL_BEARER_FIXTURE_43CHARS_AAAAAAAAAAA";
@@ -56,5 +57,97 @@ describe("bearer reveal + log cycle is leak-free", () => {
     expect(state.bearerAvailable).toBe(true);
     // Suppress unused-import warning for redactObject.
     expect(typeof redactObject).toBe("function");
+  });
+});
+
+describe("command-palette bearer reveal gate (H0)", () => {
+  const CANARY_BEARER = "CANARY_BEARER_MUST_NOT_LEAK_43CHAR_FIXTURE_A";
+
+  function makeDeps(overrides: Partial<RevealGateDeps> = {}): RevealGateDeps {
+    return {
+      confirm: vi.fn(async () => undefined),
+      getBearer: vi.fn(async () => CANARY_BEARER),
+      openDashboard: vi.fn(async () => {}),
+      postMessage: vi.fn(async () => {}),
+      showError: vi.fn(),
+      randomNonce: vi.fn(() => "TEST_NONCE_0001"),
+      ...overrides,
+    };
+  }
+
+  it("cancellation (modal returns undefined) — NO bearer response posted, dashboard NOT opened, bearer NOT fetched", async () => {
+    const deps = makeDeps({ confirm: vi.fn(async () => undefined) });
+    const outcome = await runBearerRevealGate("id-cancel", deps);
+    expect(outcome).toBe("cancelled");
+    expect(deps.postMessage).not.toHaveBeenCalled();
+    expect(deps.openDashboard).not.toHaveBeenCalled();
+    expect(deps.getBearer).not.toHaveBeenCalled();
+    expect(deps.showError).not.toHaveBeenCalled();
+  });
+
+  it("cancellation (modal returns any non-confirm label) — NO bearer response posted", async () => {
+    const deps = makeDeps({ confirm: vi.fn(async () => "Cancel") });
+    const outcome = await runBearerRevealGate("id-cancel-2", deps);
+    expect(outcome).toBe("cancelled");
+    expect(deps.postMessage).not.toHaveBeenCalled();
+    expect(deps.openDashboard).not.toHaveBeenCalled();
+    expect(deps.getBearer).not.toHaveBeenCalled();
+  });
+
+  it("confirmation (exact label) — reveal response posted with bearer + 30s TTL + nonce, ONLY after openDashboard", async () => {
+    const callOrder: string[] = [];
+    const deps = makeDeps({
+      confirm: vi.fn(async () => { callOrder.push("confirm"); return REVEAL_CONFIRM_LABEL; }),
+      getBearer: vi.fn(async () => { callOrder.push("getBearer"); return CANARY_BEARER; }),
+      openDashboard: vi.fn(async () => { callOrder.push("openDashboard"); }),
+      postMessage: vi.fn(async (msg) => {
+        callOrder.push(`postMessage:${msg.type}`);
+        // Record full message so the assertion below can inspect the payload.
+        (deps.postMessage as ReturnType<typeof vi.fn>).mock.calls.push([msg]);
+      }),
+    });
+    const outcome = await runBearerRevealGate("id-reveal", deps);
+    expect(outcome).toBe("confirmed");
+    expect(callOrder).toEqual([
+      "confirm",
+      "getBearer",
+      "openDashboard",
+      "postMessage:daemon:bearer:reveal:response",
+    ]);
+    expect(deps.postMessage).toHaveBeenCalledWith({
+      type: "daemon:bearer:reveal:response",
+      id: "id-reveal",
+      payload: { bearer: CANARY_BEARER, expiresInMs: REVEAL_TTL_MS, nonce: "TEST_NONCE_0001" },
+    });
+  });
+
+  it("daemon absent — no-daemon outcome, NO bearer response posted, showError called with 'Daemon is not running.'", async () => {
+    const deps = makeDeps({
+      confirm: vi.fn(async () => REVEAL_CONFIRM_LABEL),
+      getBearer: vi.fn(async () => null),
+    });
+    const outcome = await runBearerRevealGate("id-no-daemon", deps);
+    expect(outcome).toBe("no-daemon");
+    expect(deps.postMessage).not.toHaveBeenCalled();
+    expect(deps.openDashboard).not.toHaveBeenCalled();
+    expect(deps.showError).toHaveBeenCalledWith("Daemon is not running.");
+  });
+
+  it("getBearer throws — error outcome, NO bearer response posted, showError called with thrown message", async () => {
+    const deps = makeDeps({
+      confirm: vi.fn(async () => REVEAL_CONFIRM_LABEL),
+      getBearer: vi.fn(async () => { throw new Error("token file EACCES"); }),
+    });
+    const outcome = await runBearerRevealGate("id-error", deps);
+    expect(outcome).toBe("error");
+    expect(deps.postMessage).not.toHaveBeenCalled();
+    expect(deps.showError).toHaveBeenCalledWith("Show daemon bearer failed: token file EACCES");
+  });
+
+  it("confirm label constant is the exact string the modal must return", () => {
+    // Intentionally duplicated literal: if the UI copy ever changes (e.g. "Show for 30s"
+    // vs "Show for 30 seconds") this test pins the source-of-truth value the
+    // dispatchFromCommand modal and the gate both consume.
+    expect(REVEAL_CONFIRM_LABEL).toBe("Show for 30 seconds");
   });
 });
