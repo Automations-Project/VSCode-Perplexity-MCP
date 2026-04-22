@@ -18,6 +18,7 @@ import {
   PerplexityOAuthProvider,
   type AuthorizedClientSummary,
 } from "./oauth-provider.js";
+import type { ConsentEntry } from "./oauth-consent-cache.js";
 import { getHomepageHtml, getRobotsTxt } from "./public-pages.js";
 import { createSecurity, type SecurityMiddlewareResult } from "./security.js";
 import { ensureToken, getTokenPath, rotateToken, type DaemonTokenRecord } from "./token.js";
@@ -78,6 +79,10 @@ export interface StartedDaemonServer {
   revokeOAuthClient: (clientId: string) => boolean;
   /** Extension host resolves a pending /authorize consent. */
   resolveOAuthConsent: (consentId: string, approved: boolean) => boolean;
+  /** Live non-expired cached consents. */
+  listOAuthConsents: () => ConsentEntry[];
+  /** Revoke cached consents. No args → revoke all. */
+  revokeOAuthConsents: (filter?: { clientId?: string; redirectUri?: string }) => number;
 }
 
 export async function startDaemonServer(options: StartDaemonServerOptions = {}): Promise<StartedDaemonServer> {
@@ -371,6 +376,22 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
     res.json({ ok: resolved });
   });
 
+  // Cached-consent admin — list + revoke.
+  //
+  // Gated on the static bearer ONLY (never the OAuth access-token path)
+  // for the same reason as /daemon/oauth-consent above: no OAuth client
+  // should be able to inspect or wipe another client's approvals, and the
+  // extension host + CLI are the only intended callers.
+  app.get("/daemon/oauth-consents", requireBearer, (_req: any, res: any) => {
+    res.json({ consents: oauthProvider.listConsents() });
+  });
+  app.delete("/daemon/oauth-consents", requireBearer, (req: any, res: any) => {
+    const clientId = typeof req.body?.clientId === "string" ? req.body.clientId : undefined;
+    const redirectUri = typeof req.body?.redirectUri === "string" ? req.body.redirectUri : undefined;
+    const removed = oauthProvider.revokeConsent(clientId, redirectUri);
+    res.json({ ok: true, removed });
+  });
+
   // Unauthenticated public pages — homepage, robots.txt, favicon. These go
   // through the security middleware (rate limit, UA block) but bypass bearer.
   //
@@ -645,6 +666,8 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
     listOAuthClients: () => oauthProvider.listClients(),
     revokeOAuthClient: (clientId: string) => oauthProvider.revokeClient(clientId),
     resolveOAuthConsent: (consentId: string, approved: boolean) => consentCoordinator.resolve(consentId, approved),
+    listOAuthConsents: () => oauthProvider.listConsents(),
+    revokeOAuthConsents: (filter) => oauthProvider.revokeConsent(filter?.clientId, filter?.redirectUri),
   };
 }
 

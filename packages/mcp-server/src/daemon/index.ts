@@ -11,11 +11,15 @@ export {
   ensureDaemon,
   enableDaemonTunnel,
   getDaemonStatus,
+  listOAuthConsents,
   restartDaemon,
+  revokeAllOAuthConsents,
+  revokeOAuthConsent,
   rotateDaemonToken,
   startDaemon,
   stopDaemon,
 } from "./launcher.js";
+export type { ConsentEntrySummary } from "./launcher.js";
 export { acquire, getLockfilePath, isStale, read, release, replace } from "./lockfile.js";
 export { startDaemonServer } from "./server.js";
 export { ensureToken, generateBearerToken, getTokenPath, readToken, rotateToken } from "./token.js";

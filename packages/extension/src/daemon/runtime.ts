@@ -12,11 +12,15 @@ import {
   getTunnelBinaryPath,
   hydrateCloudHistoryEntryViaDaemon,
   installCloudflared,
+  listOAuthConsents,
   readAuditTail,
   restartDaemon,
+  revokeAllOAuthConsents,
+  revokeOAuthConsent,
   rotateDaemonToken,
   stopDaemon,
   syncCloudHistoryViaDaemon,
+  type ConsentEntrySummary,
   type DaemonCloudSyncProgress,
   type DaemonCloudSyncResult,
   type DaemonExportResult,
@@ -182,6 +186,21 @@ export function clearBundledNgrokSettings(): void {
 export function readBundledDaemonAuditTail(limit = 50) {
   const config = requireRuntimeConfig();
   return readAuditTail(limit, { auditPath: getAuditLogPath(config.configDir) });
+}
+
+export async function listBundledOAuthConsents(): Promise<ConsentEntrySummary[]> {
+  const config = requireRuntimeConfig();
+  return listOAuthConsents({ configDir: config.configDir });
+}
+
+export async function revokeBundledOAuthConsent(clientId: string, redirectUri?: string): Promise<number> {
+  const config = requireRuntimeConfig();
+  return revokeOAuthConsent(clientId, redirectUri, { configDir: config.configDir });
+}
+
+export async function revokeAllBundledOAuthConsents(): Promise<number> {
+  const config = requireRuntimeConfig();
+  return revokeAllOAuthConsents({ configDir: config.configDir });
 }
 
 export function getBundledDaemonConfigDir(): string {

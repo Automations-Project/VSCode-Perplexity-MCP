@@ -681,6 +681,62 @@ export async function disableDaemonTunnel(options: {
   });
 }
 
+export interface ConsentEntrySummary {
+  clientId: string;
+  redirectUri: string;
+  approvedAt: string;
+  expiresAt: number;
+}
+
+async function requireRunningRecord(options: {
+  configDir?: string;
+  healthTimeoutMs?: number;
+}): Promise<DaemonLockRecord> {
+  const configDir = options.configDir ?? getConfigDir();
+  const status = await getDaemonStatus({
+    configDir,
+    reclaimStale: true,
+    healthTimeoutMs: options.healthTimeoutMs,
+  });
+  if (!status.running || !status.healthy || !status.record) {
+    throw new Error("Daemon is not running.");
+  }
+  return status.record;
+}
+
+export async function listOAuthConsents(options: {
+  configDir?: string;
+  healthTimeoutMs?: number;
+} = {}): Promise<ConsentEntrySummary[]> {
+  const record = await requireRunningRecord(options);
+  const body = await adminRequest(record, "/daemon/oauth-consents", { method: "GET" });
+  const consents = (body as { consents?: ConsentEntrySummary[] })?.consents;
+  return Array.isArray(consents) ? consents : [];
+}
+
+export async function revokeOAuthConsent(
+  clientId: string,
+  redirectUri?: string,
+  options: { configDir?: string; healthTimeoutMs?: number } = {},
+): Promise<number> {
+  const record = await requireRunningRecord(options);
+  const body = await adminRequest(record, "/daemon/oauth-consents", {
+    method: "DELETE",
+    body: redirectUri ? { clientId, redirectUri } : { clientId },
+  });
+  const removed = (body as { removed?: number })?.removed ?? 0;
+  return Number(removed) || 0;
+}
+
+export async function revokeAllOAuthConsents(
+  options: { configDir?: string; healthTimeoutMs?: number } = {},
+): Promise<number> {
+  const record = await requireRunningRecord(options);
+  const body = await adminRequest(record, "/daemon/oauth-consents", { method: "DELETE" });
+  const removed = (body as { removed?: number })?.removed ?? 0;
+  return Number(removed) || 0;
+}
+
 async function probeHealth(
   record: DaemonLockRecord,
   options: { timeoutMs?: number } = {},
