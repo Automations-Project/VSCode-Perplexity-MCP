@@ -316,8 +316,8 @@
   },
   "dependencies": {},
   "devDependencies": {
-    "perplexity-user-mcp": "workspace:*",
-    "@perplexity-user-mcp/shared": "workspace:*",
+    "perplexity-user-mcp": "*",
+    "@perplexity-user-mcp/shared": "*",
     "@types/vscode": "^1.100.0",
     "@vscode/vsce": "^3.7.1",
     "patchright": "^1.59.4",

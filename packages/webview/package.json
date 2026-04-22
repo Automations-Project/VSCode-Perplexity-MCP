@@ -10,7 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@perplexity-user-mcp/shared": "workspace:*",
+    "@perplexity-user-mcp/shared": "*",
     "lucide-react": "^0.577.0",
     "motion": "^12.36.0",
     "react": "^19.2.4",
