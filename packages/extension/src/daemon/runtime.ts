@@ -12,14 +12,18 @@ import {
   getTunnelBinaryPath,
   hydrateCloudHistoryEntryViaDaemon,
   installCloudflared,
+  listOAuthClients,
   listOAuthConsents,
   readAuditTail,
   restartDaemon,
+  revokeAllOAuthClients,
   revokeAllOAuthConsents,
+  revokeOAuthClient,
   revokeOAuthConsent,
   rotateDaemonToken,
   stopDaemon,
   syncCloudHistoryViaDaemon,
+  type AuthorizedClientSummary,
   type ConsentEntrySummary,
   type DaemonCloudSyncProgress,
   type DaemonCloudSyncResult,
@@ -201,6 +205,21 @@ export async function revokeBundledOAuthConsent(clientId: string, redirectUri?: 
 export async function revokeAllBundledOAuthConsents(): Promise<number> {
   const config = requireRuntimeConfig();
   return revokeAllOAuthConsents({ configDir: config.configDir });
+}
+
+export async function listBundledOAuthClients(): Promise<AuthorizedClientSummary[]> {
+  const config = requireRuntimeConfig();
+  return listOAuthClients({ configDir: config.configDir });
+}
+
+export async function revokeBundledOAuthClient(clientId: string): Promise<boolean> {
+  const config = requireRuntimeConfig();
+  return revokeOAuthClient(clientId, { configDir: config.configDir });
+}
+
+export async function revokeAllBundledOAuthClients(): Promise<number> {
+  const config = requireRuntimeConfig();
+  return revokeAllOAuthClients({ configDir: config.configDir });
 }
 
 export function getBundledDaemonConfigDir(): string {

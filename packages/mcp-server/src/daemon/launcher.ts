@@ -737,6 +737,47 @@ export async function revokeAllOAuthConsents(
   return Number(removed) || 0;
 }
 
+export interface AuthorizedClientSummary {
+  clientId: string;
+  clientName?: string;
+  registeredAt: number;
+  lastUsedAt?: string;
+  consentLastApprovedAt?: string;
+  activeTokens: number;
+}
+
+export async function listOAuthClients(options: {
+  configDir?: string;
+  healthTimeoutMs?: number;
+} = {}): Promise<AuthorizedClientSummary[]> {
+  const record = await requireRunningRecord(options);
+  const body = await adminRequest(record, "/daemon/oauth-clients", { method: "GET" });
+  const clients = (body as { clients?: AuthorizedClientSummary[] })?.clients;
+  return Array.isArray(clients) ? clients : [];
+}
+
+export async function revokeOAuthClient(
+  clientId: string,
+  options: { configDir?: string; healthTimeoutMs?: number } = {},
+): Promise<boolean> {
+  const record = await requireRunningRecord(options);
+  const body = await adminRequest(record, "/daemon/oauth-clients", {
+    method: "DELETE",
+    body: { clientId },
+  });
+  const ok = (body as { ok?: boolean })?.ok;
+  return Boolean(ok);
+}
+
+export async function revokeAllOAuthClients(
+  options: { configDir?: string; healthTimeoutMs?: number } = {},
+): Promise<number> {
+  const record = await requireRunningRecord(options);
+  const body = await adminRequest(record, "/daemon/oauth-clients", { method: "DELETE" });
+  const removed = (body as { removed?: number })?.removed ?? 0;
+  return Number(removed) || 0;
+}
+
 async function probeHealth(
   record: DaemonLockRecord,
   options: { timeoutMs?: number } = {},

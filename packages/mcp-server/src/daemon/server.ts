@@ -84,6 +84,8 @@ export interface StartedDaemonServer {
   listOAuthClients: () => AuthorizedClientSummary[];
   /** Deletes an OAuth client and all its outstanding tokens. */
   revokeOAuthClient: (clientId: string) => boolean;
+  /** Deletes every registered OAuth client and invalidates all outstanding tokens. */
+  revokeAllOAuthClients: () => number;
   /** Extension host resolves a pending /authorize consent. */
   resolveOAuthConsent: (consentId: string, approved: boolean) => boolean;
   /** Live non-expired cached consents. */
@@ -439,6 +441,31 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
     res.json({ ok: true, removed });
   });
 
+  // Registered OAuth clients — list + revoke.
+  //
+  // Same static-bearer gating as /daemon/oauth-consents above; H11's
+  // TUNNEL_ALLOWLIST already makes this loopback-only so no extra gating
+  // is required here. Per-client revoke accepts ?clientId= (query) or
+  // a JSON body { clientId }. No body (or query) on DELETE = revoke-all.
+  app.get("/daemon/oauth-clients", requireBearer, (_req: any, res: any) => {
+    res.json({ clients: oauthProvider.listClients() });
+  });
+  app.delete("/daemon/oauth-clients", requireBearer, (req: any, res: any) => {
+    const clientId =
+      typeof req.query?.clientId === "string" && req.query.clientId.length > 0
+        ? req.query.clientId
+        : typeof req.body?.clientId === "string" && req.body.clientId.length > 0
+          ? req.body.clientId
+          : undefined;
+    if (clientId) {
+      const ok = oauthProvider.revokeClient(clientId);
+      res.json({ ok, removed: ok ? 1 : 0 });
+      return;
+    }
+    const removed = oauthProvider.revokeAllClients();
+    res.json({ ok: true, removed });
+  });
+
   // Unauthenticated public pages — homepage, robots.txt, favicon. These go
   // through the security middleware (rate limit, UA block) but bypass bearer.
   //
@@ -718,6 +745,7 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
     readAuditTail: (limit = 50) => readAuditTail(limit, { auditPath }),
     listOAuthClients: () => oauthProvider.listClients(),
     revokeOAuthClient: (clientId: string) => oauthProvider.revokeClient(clientId),
+    revokeAllOAuthClients: () => oauthProvider.revokeAllClients(),
     resolveOAuthConsent: (consentId: string, approved: boolean) => consentCoordinator.resolve(consentId, approved),
     listOAuthConsents: () => oauthProvider.listConsents(),
     revokeOAuthConsents: (filter) => oauthProvider.revokeConsent(filter?.clientId, filter?.redirectUri),

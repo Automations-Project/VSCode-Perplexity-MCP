@@ -63,11 +63,14 @@ import {
   installBundledCloudflared,
   isCloudflaredInstalled,
   killBundledDaemon,
+  listBundledOAuthClients,
   listBundledOAuthConsents,
   listBundledTunnelProviders,
   readBundledDaemonAuditTail,
   restartBundledDaemon,
+  revokeAllBundledOAuthClients,
   revokeAllBundledOAuthConsents,
+  revokeBundledOAuthClient,
   revokeBundledOAuthConsent,
   rotateBundledDaemonToken,
   setBundledActiveTunnelProvider,
@@ -791,12 +794,73 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             }
             break;
           }
-          case "oauth-clients:list":
-          case "oauth-clients:revoke":
+          case "oauth-clients:list": {
+            try {
+              await this.postOAuthClients();
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "oauth-clients:revoke": {
+            const clientId = message.payload.clientId;
+            const confirm = await vscode.window.showWarningMessage(
+              `Revoke access for "${clientId}"?`,
+              {
+                modal: true,
+                detail:
+                  "All outstanding access tokens for this client will be invalidated. The client must go through /register + /authorize again to reconnect.",
+              },
+              "Revoke access",
+            );
+            if (confirm !== "Revoke access") {
+              await this.postActionResult(message.id, false, "cancelled");
+              break;
+            }
+            try {
+              const ok = await revokeBundledOAuthClient(clientId);
+              await this.postOAuthClients();
+              await this.postNotice(
+                ok ? "info" : "warning",
+                ok ? `Revoked ${clientId}.` : `No client with id ${clientId}.`,
+              );
+              await this.postActionResult(message.id, ok);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
           case "oauth-clients:revoke-all": {
-            // Handlers for these arrive in a later Phase 8.2 task; acknowledge
-            // here so the ID round-trips cleanly and the switch is exhaustive.
-            await this.postActionResult(message.id, false, "not-yet-implemented");
+            let current: Awaited<ReturnType<typeof listBundledOAuthClients>> = [];
+            try {
+              current = await listBundledOAuthClients();
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+              break;
+            }
+            const confirm = await vscode.window.showWarningMessage(
+              `Revoke access for ${current.length} OAuth client${current.length === 1 ? "" : "s"}?`,
+              {
+                modal: true,
+                detail: `All outstanding access tokens for every registered client will be invalidated. Affected:\n${current
+                  .map((c) => `- ${c.clientName ?? c.clientId}`)
+                  .join("\n")}`,
+              },
+              "Revoke all",
+            );
+            if (confirm !== "Revoke all") {
+              await this.postActionResult(message.id, false, "cancelled");
+              break;
+            }
+            try {
+              const removed = await revokeAllBundledOAuthClients();
+              await this.postOAuthClients();
+              await this.postNotice("info", `Revoked ${removed} client${removed === 1 ? "" : "s"}.`);
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
             break;
           }
           case "daemon:oauth-consents-revoke-all": {
@@ -1213,6 +1277,19 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private async postOAuthClients(): Promise<void> {
+    if (!this.view) return;
+    try {
+      const clients = await listBundledOAuthClients();
+      await this.view.webview.postMessage({
+        type: "daemon:oauth-clients",
+        payload: { clients },
+      } satisfies ExtensionMessage);
+    } catch (err) {
+      debug(`[trace] postOAuthClients failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   private async postDaemonState(options: { ensure?: boolean; restartEvents?: boolean } = {}): Promise<void> {
     if (!this.view) {
       return;
@@ -1244,6 +1321,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
         payload: { items: readBundledDaemonAuditTail(50) as DaemonAuditEntry[] },
       } satisfies ExtensionMessage);
       await this.postTunnelProviders();
+      await this.postOAuthClients();
 
       if (options.restartEvents && status.running && status.healthy) {
         await this.startDaemonEventStream();

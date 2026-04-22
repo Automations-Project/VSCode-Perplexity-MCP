@@ -406,6 +406,28 @@ export class PerplexityOAuthProvider implements OAuthServerProvider {
     return true;
   }
 
+  /**
+   * Revoke every registered OAuth client and invalidate all outstanding
+   * access/refresh tokens. Returns the count of clients that were removed.
+   * Cached consents for every revoked client are also purged so a
+   * future registration with a colliding id cannot silently inherit them.
+   */
+  revokeAllClients(): number {
+    const ids = [...this.clients.keys()];
+    if (ids.length === 0) return 0;
+    this.clients.clear();
+    this.tokens.clear();
+    this.persistClients();
+    for (const id of ids) {
+      try {
+        consentCache.revoke({ cachePath: this.consentCachePath, clientId: id });
+      } catch {
+        // best-effort
+      }
+    }
+    return ids.length;
+  }
+
   listConsents(): consentCache.ConsentEntry[] {
     return consentCache.list({ cachePath: this.consentCachePath });
   }

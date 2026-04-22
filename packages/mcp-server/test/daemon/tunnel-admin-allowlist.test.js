@@ -59,6 +59,8 @@ describe("H11 tunnel admin allowlist", () => {
     { method: "POST", path: "/daemon/oauth-consent", body: JSON.stringify({ consentId: "x", approved: true }), contentType: "application/json" },
     { method: "GET",  path: "/daemon/oauth-consents" },
     { method: "DELETE", path: "/daemon/oauth-consents", body: JSON.stringify({}),                contentType: "application/json" },
+    { method: "GET",  path: "/daemon/oauth-clients" },
+    { method: "DELETE", path: "/daemon/oauth-clients",  body: JSON.stringify({}),                contentType: "application/json" },
   ];
 
   for (const { method, path, body, contentType } of DAEMON_PATHS) {
