@@ -4,6 +4,29 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [0.7.3] — 2026-04-22 — Phase 8.1: OAuth consent cache
+
+### Added
+- **OAuth consent cache.** The daemon now remembers per-(client_id, redirect_uri) consents so Claude Desktop / Cursor / Cline don't re-prompt a VS Code modal on every ~1h token-refresh cycle. Cache lives at `<configDir>/oauth-consent.json` (0600). Default TTL 24h, configurable via the new `Perplexity.oauthConsentCacheTtlHours` setting. `0` disables the cache (modal every time); max 720h (30d).
+- **Admin endpoints** for inspecting and clearing the cache:
+  - `GET /daemon/oauth-consents` returns `{ consents: [{ clientId, redirectUri, approvedAt, expiresAt }] }`.
+  - `DELETE /daemon/oauth-consents` revokes by body `{ clientId, redirectUri? }`; empty body revokes everything. Returns `{ ok, removed }`.
+  Static-bearer gated only (no OAuth-token path) so no OAuth client can inspect or wipe another's consents.
+- **Launcher helpers** `listOAuthConsents`, `revokeOAuthConsent`, `revokeAllOAuthConsents` (new subpath export `perplexity-user-mcp/daemon`) plus matching `listBundledOAuthConsents` / `revokeBundledOAuthConsent` / `revokeAllBundledOAuthConsents` on the extension runtime.
+- **Dashboard message transport** wired for a future 8.2 UI panel — `daemon:oauth-consents-list`, `daemon:oauth-consents-revoke`, `daemon:oauth-consents-revoke-all` inbound, `daemon:oauth-consents` outbound.
+
+### Changed
+- `PerplexityOAuthProvider.revokeClient` now also purges that client's cached consents so a future re-registration with the same `client_id` can't silently inherit stale approvals.
+- `AuditEntry.auth` gains `oauth-cached` — audit lines for cache-driven auto-approvals are distinguishable from both unauthenticated and fresh-modal approvals.
+- `ExtensionSettingsSnapshot` gains `oauthConsentCacheTtlHours` for future UI surfacing.
+- `packages/mcp-server` + `packages/extension` bump to `0.7.3`.
+
+### How it wires up
+- Extension reads the setting and writes `PERPLEXITY_OAUTH_CONSENT_TTL_HOURS` into the daemon spawn env. The provider reads it live per `/authorize` so toggling the setting takes effect on the next OAuth handshake without a full daemon restart.
+- On cache hit: `authorize()` skips the consent modal, logs `[trace] oauth consent cache hit clientId=… redirectUri=…`, fires `onConsentCacheHit` so `server.ts` can flip the audit tag, and issues the authorization code.
+- On fresh approval (cache miss + user approves): cache entry written with the current TTL.
+- On denial: cache is NOT written.
+
 ## [0.7.2] — 2026-04-22 — One-click ERR_NGROK_334 recovery
 
 ### Added
