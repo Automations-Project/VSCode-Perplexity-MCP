@@ -10,6 +10,25 @@ describe("ACTION_TYPES", () => {
     expect(ACTION_TYPES.has("daemon:bearer:reveal")).toBe(true);
   });
 
+  it("includes daemon:install-cloudflared so the cf-named install button gets an id", () => {
+    expect(ACTION_TYPES.has("daemon:install-cloudflared")).toBe(true);
+  });
+
+  it("includes daemon:cf-named-login so the webview auto-attaches an id", () => {
+    // Phase 8.4 bug: omitted from ACTION_TYPES caused id=undefined in
+    // extension-host breadcrumbs; the webview's pending-action slice never
+    // cleared because `daemon:cf-named-login:result` had no id to match.
+    expect(ACTION_TYPES.has("daemon:cf-named-login")).toBe(true);
+  });
+
+  it("includes daemon:cf-named-create so the webview auto-attaches an id", () => {
+    expect(ACTION_TYPES.has("daemon:cf-named-create")).toBe(true);
+  });
+
+  it("includes daemon:cf-named-list so the webview auto-attaches an id", () => {
+    expect(ACTION_TYPES.has("daemon:cf-named-list")).toBe(true);
+  });
+
   it("keeps every pre-0.7.4 action type that used to be generated with an id", () => {
     // Anti-regression: if someone trims this list and drops a known action type,
     // the App-level send() path stops generating ids for it — silent behavior

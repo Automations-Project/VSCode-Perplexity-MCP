@@ -29,6 +29,15 @@ export const ACTION_TYPES: ReadonlySet<string> = new Set<string>([
   // `action:result` / `daemon:bearer:reveal:response` without id=undefined.
   "daemon:bearer:copy",
   "daemon:bearer:reveal",
+  // Phase 8.4 cf-named dashboard actions. Each must carry a generated id so
+  // `daemon:cf-named-*:result` correlates with the pending-action slice.
+  // Missing these here caused `id=undefined` breadcrumbs during the 8.4
+  // dashboard smoke — the extension-host handlers emitted results with
+  // `id: undefined` and the webview's pending-state never cleared.
+  "daemon:install-cloudflared",
+  "daemon:cf-named-login",
+  "daemon:cf-named-create",
+  "daemon:cf-named-list",
   "history:request-entry",
   "history:open-preview",
   "history:open-rich",

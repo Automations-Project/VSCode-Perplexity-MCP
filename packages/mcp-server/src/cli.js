@@ -338,7 +338,13 @@ export async function routeCommand(parsed) {
     }
     try {
       const { runCloudflaredLogin } = await import("./daemon/tunnel-providers/index.js");
-      const result = await runCloudflaredLogin({ configDir: process.env.PERPLEXITY_CONFIG_DIR });
+      // forwardOutput: pipe cloudflared's child stderr AND stdout to OUR
+      // stderr so the CLI user sees the "open this URL in your browser"
+      // prompt. Never to our stdout — that's reserved for --json payload.
+      const result = await runCloudflaredLogin({
+        configDir: process.env.PERPLEXITY_CONFIG_DIR,
+        forwardOutput: true,
+      });
       const body = flags.json
         ? JSON.stringify({ ok: true, certPath: result.certPath })
         : `cloudflared login completed. Cert at ${result.certPath}`;

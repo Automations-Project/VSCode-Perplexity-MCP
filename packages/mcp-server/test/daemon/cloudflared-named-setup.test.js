@@ -72,15 +72,19 @@ afterEach(() => {
 });
 
 describe("runCloudflaredLogin", () => {
-  it("resolves ok when cert.pem appears", async () => {
+  it("resolves ok when cert.pem is written during the flow (absent at entry)", async () => {
     installFakeBinary(configDir);
     const certDir = join(homeDir, ".cloudflared");
     mkdirSync(certDir, { recursive: true });
     const certPath = join(certDir, "cert.pem");
+    // Cert MUST be absent at entry — that's the precondition for a real
+    // login flow. The fake cloudflared emits a URL and only later writes
+    // the cert, matching the real-world sequence.
 
     const child = makeFakeChild();
+    let spawnCalls = 0;
     const fakeSpawn = () => {
-      // Emit the login URL, then create the cert after 50ms.
+      spawnCalls++;
       setTimeout(() => child.stderr.write("Please visit https://dash.cloudflare.com/argotunnel?...\n"), 10);
       setTimeout(() => {
         writeFileSync(certPath, "fake-cert", "utf8");
@@ -94,10 +98,73 @@ describe("runCloudflaredLogin", () => {
       timeoutMs: 2_000,
       dependencies: { spawn: fakeSpawn },
     });
+    expect(spawnCalls).toBe(1); // child was actually spawned (not short-circuited)
     expect(result.ok).toBe(true);
     expect(result.certPath).toBe(certPath);
     expect(result.stderr).toContain("argotunnel");
     expect(child.killed).toBe(true);
+  });
+
+  it("rejects when cert.pem already exists at entry, without spawning", async () => {
+    installFakeBinary(configDir);
+    const certDir = join(homeDir, ".cloudflared");
+    mkdirSync(certDir, { recursive: true });
+    const certPath = join(certDir, "cert.pem");
+    writeFileSync(certPath, "pre-existing-cert", "utf8");
+
+    let spawnCalls = 0;
+    const fakeSpawn = () => {
+      spawnCalls++;
+      return makeFakeChild();
+    };
+
+    await expect(
+      runCloudflaredLogin({
+        configDir,
+        certPath,
+        timeoutMs: 500,
+        dependencies: { spawn: fakeSpawn },
+      }),
+    ).rejects.toThrow(/cert already exists at .*cert\.pem; rename or delete it to re-run login/);
+    expect(spawnCalls).toBe(0); // critical: no cloudflared spawn when cert pre-exists
+  });
+
+  it("forwardOutput: true pipes child stderr and stdout to parent stderr", async () => {
+    installFakeBinary(configDir);
+    const certDir = join(homeDir, ".cloudflared");
+    mkdirSync(certDir, { recursive: true });
+    const certPath = join(certDir, "cert.pem");
+
+    const writes = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk) => {
+      writes.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
+      return true;
+    };
+
+    try {
+      const child = makeFakeChild();
+      const fakeSpawn = () => {
+        setTimeout(() => child.stderr.write("URL-from-stderr: https://dash.cloudflare.com/argotunnel?A\n"), 5);
+        setTimeout(() => child.stdout.write("URL-from-stdout: https://dash.cloudflare.com/argotunnel?B\n"), 10);
+        setTimeout(() => writeFileSync(certPath, "fake-cert", "utf8"), 40);
+        return child;
+      };
+
+      await runCloudflaredLogin({
+        configDir,
+        certPath,
+        timeoutMs: 2_000,
+        forwardOutput: true,
+        dependencies: { spawn: fakeSpawn },
+      });
+    } finally {
+      process.stderr.write = origWrite;
+    }
+
+    const combined = writes.join("");
+    expect(combined).toContain("URL-from-stderr");
+    expect(combined).toContain("URL-from-stdout");
   });
 
   it("rejects on timeout and kills the child", async () => {

@@ -85,6 +85,15 @@ export function runCloudflaredLogin(options: {
   timeoutMs?: number;
   /** Override the cert watch location (defaults to `$HOME/.cloudflared/cert.pem`). */
   certPath?: string;
+  /**
+   * When true, pipe the cloudflared child's stderr AND stdout to the parent
+   * process's stderr so CLI users see the "open this URL in your browser"
+   * prompt (some cloudflared builds emit it on stdout, others on stderr).
+   * Never forwards to parent stdout — the CLI reserves stdout for --json
+   * machine-readable output. Default false (test hermeticity + dashboard
+   * flow that wraps output in notifications instead).
+   */
+  forwardOutput?: boolean;
   /** Test-only dependency injection seam. */
   dependencies?: { spawn?: SpawnFn };
 }): Promise<CloudflaredLoginResult> {
@@ -97,8 +106,24 @@ export function runCloudflaredLogin(options: {
       return;
     }
 
-    const spawnImpl = options.dependencies?.spawn ?? nodeSpawn;
     const certPath = options.certPath ?? defaultCertPath();
+    // If a cert is already present at entry, the spawn + 250ms poll loop
+    // would race: the first poll tick would see the existing cert and resolve
+    // ok in ~300ms, killing cloudflared before it ever opened a browser. That
+    // gave misleading "success" to callers who expected a fresh login flow
+    // and also hid stale / wrong-account cert problems. runCloudflaredLogin
+    // is strictly "perform a login flow"; idempotent "already configured"
+    // belongs in the provider's isSetupComplete, not here.
+    if (existsSync(certPath)) {
+      reject(
+        new Error(
+          `cert already exists at ${certPath}; rename or delete it to re-run login.`,
+        ),
+      );
+      return;
+    }
+
+    const spawnImpl = options.dependencies?.spawn ?? nodeSpawn;
     const timeoutMs = options.timeoutMs ?? DEFAULT_LOGIN_TIMEOUT_MS;
     const child = spawnImpl(binaryPath, ["tunnel", "login"], {
       stdio: ["ignore", "pipe", "pipe"],
@@ -107,11 +132,16 @@ export function runCloudflaredLogin(options: {
 
     const stderrChunks: string[] = [];
     child.stderr?.on("data", (chunk) => {
-      stderrChunks.push(chunk.toString("utf8"));
+      const text = chunk.toString("utf8");
+      stderrChunks.push(text);
+      if (options.forwardOutput) process.stderr.write(text);
     });
     // Some cloudflared builds emit the browse URL to stdout — capture both.
+    // When forwarding, route stdout to PARENT STDERR (never parent stdout).
     child.stdout?.on("data", (chunk) => {
-      stderrChunks.push(chunk.toString("utf8"));
+      const text = chunk.toString("utf8");
+      stderrChunks.push(text);
+      if (options.forwardOutput) process.stderr.write(text);
     });
 
     let settled = false;
