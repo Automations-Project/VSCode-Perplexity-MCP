@@ -79,13 +79,6 @@ const PATTERNS = [
     re: /\buser_[A-Fa-f0-9]{8,}\b/g,
     replace: "<userId>",
   },
-  // Cookie name=value pairs we know are sensitive.
-  // Negative lookahead for `<redacted:` lets SECRET_PATTERNS tag cookies with
-  // a kind-tagged placeholder first without this rule clobbering the result.
-  {
-    re: /(__Secure-next-auth\.session-token|cf_clearance)=(?!<redacted:)[^;\s,'"]+/g,
-    replace: (_m, name) => `${name}=<cookie>`,
-  },
   // Home directory paths. Must replace before the "long opaque token" rule
   // because long path segments would otherwise trip it.
   {

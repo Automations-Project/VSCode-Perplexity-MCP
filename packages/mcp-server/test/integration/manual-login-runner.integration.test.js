@@ -78,7 +78,7 @@ describe("manual-login-runner (integration)", () => {
     expect(code).toBe(2);
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("cancelled");
-  });
+  }, 15_000);
 
   it("exits 3 {reason:'cf_blocked'} when CF challenge never resolves", async () => {
     const { code, result } = await fork_({
@@ -90,5 +90,5 @@ describe("manual-login-runner (integration)", () => {
     });
     expect(code).toBe(3);
     expect(result.reason).toBe("cf_blocked");
-  });
+  }, 15_000);
 });

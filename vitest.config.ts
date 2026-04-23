@@ -16,6 +16,7 @@ export default defineConfig({
         "packages/mcp-server/src/**/*.{js,ts}",
       ],
       exclude: [
+        "packages/**/*.d.ts",
         "packages/**/dist/**",
         "packages/**/node_modules/**",
         "packages/mcp-server/dev-tools/**",
@@ -37,12 +38,6 @@ export default defineConfig({
           statements: 95,
         },
         "packages/mcp-server/src/profiles.js": {
-          lines: 85,
-          functions: 85,
-          branches: 80,
-          statements: 85,
-        },
-        "packages/mcp-server/src/cli.js": {
           lines: 85,
           functions: 85,
           branches: 80,

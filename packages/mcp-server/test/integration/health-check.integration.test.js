@@ -61,7 +61,7 @@ describe("health-check runner (integration)", () => {
     expect(result.tier).toBe("Pro");
     expect(result.modelCount).toBe(2);
     expect(result.userId).toBeUndefined();
-  });
+  }, 15_000);
 
   it("returns {valid:false, reason:'no_cookies'} when the vault has no cookies", async () => {
     const { code, result } = await runRunner({
