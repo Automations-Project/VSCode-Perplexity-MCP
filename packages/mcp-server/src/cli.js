@@ -3,7 +3,8 @@
 // during tests.
 
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -67,6 +68,8 @@ const KNOWN_COMMANDS = new Set([
   "daemon:rotate-token", "daemon:install-tunnel", "daemon:enable-tunnel", "daemon:disable-tunnel",
   "daemon:list-providers", "daemon:set-provider",
   "daemon:set-ngrok-authtoken", "daemon:set-ngrok-domain", "daemon:clear-ngrok",
+  "daemon:cf-named-login", "daemon:cf-named-list",
+  "daemon:cf-named-create", "daemon:cf-named-bind",
 ]);
 
 function normalizeExportFormat(value) {
@@ -263,7 +266,7 @@ export async function routeCommand(parsed) {
   if (command === "daemon:set-provider") {
     const providerId = parsed.positional?.[0];
     if (!providerId) {
-      return { code: 1, stdout: "", stderr: "set-provider requires a provider id (cf-quick | ngrok).\n" };
+      return { code: 1, stdout: "", stderr: "set-provider requires a provider id (cf-quick | ngrok | cf-named).\n" };
     }
     try {
       const providersModule = await import("./daemon/tunnel-providers/index.js");
@@ -307,6 +310,151 @@ export async function routeCommand(parsed) {
       return { code: 0, stdout: "ngrok settings cleared.\n", stderr: "" };
     } catch (error) {
       return { code: 1, stdout: "", stderr: (error instanceof Error ? error.message : String(error)) + "\n" };
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // cf-named (Cloudflare Named Tunnel) CLI — mirrors the 8.4.3 dashboard
+  // widget for npm-only users. Helpers imported directly from the
+  // mcp-server; do NOT import the extension's runtime.ts (VS Code-private).
+  //
+  // Dashed subcommand names (daemon cf-named-login, etc.) so the existing
+  // parseArgs one-level-deep routing (daemon <x> → daemon:<x>) works
+  // unchanged. Documented identically in DAEMON_HELP_TEXT.
+  //
+  // Login, create, bind each modal-confirm via stderr/stdin unless --yes.
+  // Exit 130 on user decline (standard "interrupted by user" code).
+  // ─────────────────────────────────────────────────────────────────────
+
+  if (command === "daemon:cf-named-login") {
+    if (!flags.yes) {
+      const { promptYesNo } = await import("./tty-prompt.js");
+      const ok = await promptYesNo({
+        prompt: "This opens your default browser to authorize Cloudflare. Continue? [y/N] ",
+      });
+      if (!ok) {
+        return { code: 130, stdout: "", stderr: "Cancelled.\n" };
+      }
+    }
+    try {
+      const { runCloudflaredLogin } = await import("./daemon/tunnel-providers/index.js");
+      const result = await runCloudflaredLogin({ configDir: process.env.PERPLEXITY_CONFIG_DIR });
+      const body = flags.json
+        ? JSON.stringify({ ok: true, certPath: result.certPath })
+        : `cloudflared login completed. Cert at ${result.certPath}`;
+      return { code: 0, stdout: body + "\n", stderr: "" };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      const hint = /not installed/i.test(msg)
+        ? `${msg}\nRun 'npx perplexity-user-mcp daemon install-tunnel' to install cloudflared.\n`
+        : msg + "\n";
+      return { code: 1, stdout: "", stderr: hint };
+    }
+  }
+
+  if (command === "daemon:cf-named-list") {
+    try {
+      const { listNamedTunnels } = await import("./daemon/tunnel-providers/index.js");
+      const tunnels = await listNamedTunnels({ configDir: process.env.PERPLEXITY_CONFIG_DIR });
+      const body = flags.json
+        ? JSON.stringify({ tunnels })
+        : tunnels.length === 0
+          ? "No named tunnels."
+          : tunnels
+              .map((t) => `${t.uuid}  ${t.name}  (${t.connections ?? 0} connections)`)
+              .join("\n");
+      return { code: 0, stdout: body + "\n", stderr: "" };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return { code: 1, stdout: "", stderr: msg + "\n" };
+    }
+  }
+
+  if (command === "daemon:cf-named-create") {
+    const name = flags.name ?? parsed.positional?.[0];
+    const hostname = flags.hostname ?? parsed.positional?.[1];
+    if (!name || typeof name !== "string") {
+      return { code: 1, stdout: "", stderr: "cf-named-create requires --name (or first positional argument).\n" };
+    }
+    if (!hostname || typeof hostname !== "string") {
+      return { code: 1, stdout: "", stderr: "cf-named-create requires --hostname (or second positional argument).\n" };
+    }
+    if (!flags.yes) {
+      const { promptYesNo } = await import("./tty-prompt.js");
+      const ok = await promptYesNo({
+        prompt: `This creates a Cloudflare tunnel "${name}" and routes DNS "${hostname}" under your zone. Continue? [y/N] `,
+      });
+      if (!ok) {
+        return { code: 130, stdout: "", stderr: "Cancelled.\n" };
+      }
+    }
+    try {
+      const { createNamedTunnel, writeTunnelConfig } = await import("./daemon/tunnel-providers/index.js");
+      const configDir = process.env.PERPLEXITY_CONFIG_DIR;
+      const created = await createNamedTunnel({ configDir, name, hostname });
+      // Placeholder port=1; the cf-named provider's start() rewrites it to the
+      // live daemon port on every spawn (port-drift rewrite), so this value is
+      // never read in practice. Matches the 8.4.3 dashboard behavior.
+      const config = writeTunnelConfig({
+        configDir,
+        uuid: created.uuid,
+        hostname,
+        port: 1,
+        credentialsPath: created.credentialsPath,
+      });
+      const body = flags.json
+        ? JSON.stringify({ ok: true, uuid: created.uuid, name: created.name, hostname, configPath: config.configPath, credentialsPath: created.credentialsPath })
+        : `Tunnel created: uuid=${created.uuid} hostname=${hostname}\nConfig written to ${config.configPath}`;
+      return { code: 0, stdout: body + "\n", stderr: "" };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return { code: 1, stdout: "", stderr: msg + "\n" };
+    }
+  }
+
+  if (command === "daemon:cf-named-bind") {
+    const uuid = flags.uuid ?? parsed.positional?.[0];
+    const hostname = flags.hostname ?? parsed.positional?.[1];
+    if (!uuid || typeof uuid !== "string") {
+      return { code: 1, stdout: "", stderr: "cf-named-bind requires --uuid (or first positional argument).\n" };
+    }
+    if (!hostname || typeof hostname !== "string") {
+      return { code: 1, stdout: "", stderr: "cf-named-bind requires --hostname (or second positional argument).\n" };
+    }
+    const credentialsPath = join(homedir(), ".cloudflared", `${uuid}.json`);
+    if (!existsSync(credentialsPath)) {
+      return {
+        code: 1,
+        stdout: "",
+        stderr: `Credentials file not found at ${credentialsPath}. Run 'cloudflared tunnel create' for this UUID first, or use 'cf-named-create'.\n`,
+      };
+    }
+    if (!flags.yes) {
+      const { promptYesNo } = await import("./tty-prompt.js");
+      const ok = await promptYesNo({
+        prompt: `This writes a managed config binding tunnel ${uuid} to ${hostname}. Continue? [y/N] `,
+      });
+      if (!ok) {
+        return { code: 130, stdout: "", stderr: "Cancelled.\n" };
+      }
+    }
+    try {
+      const { writeTunnelConfig } = await import("./daemon/tunnel-providers/index.js");
+      const configDir = process.env.PERPLEXITY_CONFIG_DIR;
+      const config = writeTunnelConfig({
+        configDir,
+        uuid,
+        hostname,
+        port: 1,
+        credentialsPath,
+      });
+      const body = flags.json
+        ? JSON.stringify({ ok: true, uuid, hostname, configPath: config.configPath, credentialsPath })
+        : `Bound tunnel ${uuid} to ${hostname}.\nConfig written to ${config.configPath}`;
+      return { code: 0, stdout: body + "\n", stderr: "" };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return { code: 1, stdout: "", stderr: msg + "\n" };
     }
   }
 
@@ -669,6 +817,27 @@ Usage:
   npx perplexity-user-mcp daemon install-tunnel
   npx perplexity-user-mcp daemon enable-tunnel
   npx perplexity-user-mcp daemon disable-tunnel
+  npx perplexity-user-mcp daemon list-providers [--json]
+  npx perplexity-user-mcp daemon set-provider <cf-quick | ngrok | cf-named>
+  npx perplexity-user-mcp daemon set-ngrok-authtoken <TOKEN>
+  npx perplexity-user-mcp daemon set-ngrok-domain [<DOMAIN>]
+  npx perplexity-user-mcp daemon clear-ngrok
+
+Cloudflare named-tunnel setup (persistent URL on your own zone):
+  npx perplexity-user-mcp daemon cf-named-login [--yes]
+      Run 'cloudflared tunnel login' (opens browser, writes ~/.cloudflared/cert.pem).
+  npx perplexity-user-mcp daemon cf-named-list [--json]
+      List tunnels visible to the origin cert.
+  npx perplexity-user-mcp daemon cf-named-create --name NAME --hostname HOST [--yes] [--json]
+      Create a new tunnel + DNS CNAME, then write the managed config.
+  npx perplexity-user-mcp daemon cf-named-bind --uuid UUID --hostname HOST [--yes] [--json]
+      Bind the managed config to an existing tunnel UUID (credentials must exist
+      at ~/.cloudflared/<uuid>.json). No browser, no DNS changes.
+
+Notes:
+  - --yes skips the y/N confirmation prompt for login / create / bind.
+  - cf-named-login / create / bind prompt on stderr and read stdin; exit 130 on decline.
+  - With --json, stdout is a single parseable JSON line (scriptable).
 
 Environment:
   PERPLEXITY_NO_DAEMON=1        'daemon attach' runs in-process stdio (bypass daemon)
