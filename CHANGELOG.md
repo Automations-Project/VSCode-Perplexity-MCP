@@ -4,6 +4,29 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [0.8.1] — 2026-04-24 — Phase 8.4: cloudflared named-tunnel provider
+
+### Added
+- **Cloudflare Named Tunnel provider (`cf-named`).** Third tunnel option alongside `cf-quick` (Cloudflare Quick Tunnels) and `ngrok`. Targets users with a Cloudflare-managed domain: one-time `cloudflared tunnel login` writes `~/.cloudflared/cert.pem`, then the dashboard walks through creating a named tunnel, installing a DNS CNAME on the user-chosen `<sub>.<zone>`, and writing a managed YAML config at `<configDir>/cloudflared-named.yml` (0600). Persistent URL, free Cloudflare Access OAuth + WAF + logs on top.
+- **Setup helpers** (`daemon/tunnel-providers/cloudflared-named-setup.ts`). All spawn-based, injectable via the existing `dependencies.spawn` DI pattern — zero new npm deps. `runCloudflaredLogin` polls for the cert file on a 250ms tick (cloudflared login doesn't always exit cleanly after emitting the URL) and rejects up front if a cert already exists so we never spawn a stale-account login flow. `createNamedTunnel` parses `Tunnel credentials written to <path>.json` with a `\.json`-anchored regex so cloudflared's same-line advisory prose doesn't pollute the captured credentials path. `writeTunnelConfig` uses the tempfile + rename + icacls/chmod pattern from `ngrok-config.ts` so the managed YAML (references sensitive credentials) lands 0600 atomically.
+- **Dashboard setup widget.** New missing-binary / missing-cert / missing-config / missing-credentials / ready states, each with distinct recovery actions (install binary, run cloudflared login, create-new / bind-existing / list-existing forms). The missing-credentials state explicitly offers recovery rather than dead-ending at a red banner — user feedback during smoke showed corrupted `<uuid>.json` pointers hitting a click-nothing screen in the first pass; 843759b added recovery forms + explicit copy naming the managed YAML path.
+- **CLI mirrors.** `perplexity-user-mcp daemon cf-named-login` / `cf-named-create` / `cf-named-list` / `cf-named-install` / `cf-named-delete` / `cf-named-unbind`. Each wraps the same runtime helpers the dashboard uses, forwards cloudflared's stderr + stdout to parent stderr so the browser-login URL is visible in the terminal, and preserves stdout JSON discipline.
+- **Message transport.** Shared contracts for `daemon:install-cloudflared`, `daemon:cf-named-login`, `daemon:cf-named-create`, `daemon:cf-named-list`, `daemon:cf-named-delete`, `daemon:cf-named-unbind`. ActionTypes now stamps correlation ids on all six so pending-action tracking clears correctly when `…:result` fires.
+
+### Changed
+- **`start()` rewrites the managed YAML with the current daemon port on every invocation.** The daemon uses OS-assigned ports and picks a different one on almost every restart, so the persisted port is nearly always stale. Missing this rewrite would route cloudflared to a dead port on each reconnection; idempotent writes are cheap.
+- **`deriveCfNamedState` checks credentials-file-not-found before any cert keyword.** The earlier ordering routed a corrupted-credentials-path error containing the substring "origin certificate" to `missing-cert`, putting the UI into a login-button loop (login rejected because cert existed → UI unchanged). Specific-state-wins ordering plus tightening the cert alternation to the exact phrase "origin cert not found" closes that loop.
+- **`TunnelProviderId` extended** from `"cf-quick" | "ngrok"` to include `"cf-named"`. Provider registry gains the new entry.
+- `packages/mcp-server` + `packages/extension` bump to `0.8.1`.
+
+### Tests
+- **539 passed / 65 files** — up from 433 / 60 at the start of Phase 8.4 (+106 new tests). Breakdown: mcp-server daemon (setup helpers + provider lifecycle + port-drift + login flow + CLI paths) ~60; extension dashboard (`DashboardProvider.cf-named.test.ts`) + ActionTypes pin ~10; webview (`DaemonStatus.cf-named.test.tsx` + `DaemonStatus.test.tsx` state-machine regressions + AuthorizedClients harness update) ~36.
+
+### Release gate
+- Typecheck: green across all 4 packages.
+- Full suite: 539 passed / 65 files (32.88s).
+- Manual smoke: **DEFERRED to consolidated final-smoke pass** after `v0.8.3` (per execution strategy `docs/superpowers/specs/2026-04-24-phase-8-completion-execution-design.md`). Phase 8.4 smoke checklist pre-seeded at `docs/smoke-tests.md` § Phase 8.4 (cf-named provider).
+
 ## [0.8.0] — 2026-04-23 — Phase 8.3: stdio launcher → daemon-proxy
 
 ### Added
