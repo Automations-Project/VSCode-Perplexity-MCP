@@ -180,6 +180,19 @@ export async function routeCommand(parsed) {
   }
 
   if (command === "daemon:attach") {
+    // 8.3.2: PERPLEXITY_NO_DAEMON=1 opt-out. Must short-circuit BEFORE importing
+    // the daemon layer — the whole point is air-gapped / single-client users
+    // keep the daemon code cold. Warning goes to stderr only (stdout is the
+    // MCP JSON-RPC channel; any byte on stdout corrupts the protocol).
+    const noDaemonRaw = process.env.PERPLEXITY_NO_DAEMON;
+    if (typeof noDaemonRaw === "string" && /^(1|true)$/i.test(noDaemonRaw.trim())) {
+      process.stderr.write(
+        "[perplexity-mcp] PERPLEXITY_NO_DAEMON=1 set; running in-process stdio (daemon bypass)\n",
+      );
+      const mod = await import("./index.js");
+      await mod.main();
+      return { code: 0, stdout: "", stderr: "" };
+    }
     const { attachToDaemon } = await import("./daemon/attach.js");
     const ensureTimeoutRaw = flags["ensure-timeout-ms"];
     const ensureTimeoutMs =
@@ -642,6 +655,7 @@ Environment:
   PERPLEXITY_CONFIG_DIR         Override config dir (default: ~/.perplexity-mcp)
   PERPLEXITY_VAULT_PASSPHRASE   Env-var master-key fallback for headless Linux
   PERPLEXITY_MCP_STDIO=1        Forces stdio-server mode (no prompts)
+  PERPLEXITY_NO_DAEMON=1        'daemon attach' runs in-process stdio (bypass daemon)
 `;
 
 const DAEMON_HELP_TEXT = `perplexity-user-mcp daemon
@@ -655,6 +669,9 @@ Usage:
   npx perplexity-user-mcp daemon install-tunnel
   npx perplexity-user-mcp daemon enable-tunnel
   npx perplexity-user-mcp daemon disable-tunnel
+
+Environment:
+  PERPLEXITY_NO_DAEMON=1        'daemon attach' runs in-process stdio (bypass daemon)
 `;
 
 /* v8 ignore start -- only runs when cli.js is executed as a script */

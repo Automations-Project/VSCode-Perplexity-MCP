@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseArgs, routeCommand } from "../src/cli.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -426,5 +426,76 @@ describe("doctor subcommand", () => {
   it("doctor (human) prints a report header", async () => {
     const res = await routeCommand({ command: "doctor", flags: {}, positional: [] });
     expect(res.stdout).toMatch(/Perplexity Doctor report/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 8.3.2 — PERPLEXITY_NO_DAEMON opt-out for `daemon attach`.
+// Hoisted mocks replace the dynamic imports inside cli.js' daemon:attach branch
+// so we can verify: (a) opt-out calls main() from index.js, (b) opt-out never
+// reaches attachToDaemon, (c) absent env var preserves the 8.3.1 attach path,
+// (d) stdout stays empty (the warning lands on stderr only).
+// ---------------------------------------------------------------------------
+const mainSpy = vi.hoisted(() => vi.fn(async () => undefined));
+const attachSpy = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock("../src/index.js", () => ({ main: mainSpy }));
+vi.mock("../src/daemon/attach.js", () => ({ attachToDaemon: attachSpy }));
+
+describe("daemon:attach — PERPLEXITY_NO_DAEMON opt-out (Task 8.3.2)", () => {
+  let savedEnv;
+  let stdoutSpy;
+  let stderrSpy;
+
+  beforeEach(() => {
+    savedEnv = process.env.PERPLEXITY_NO_DAEMON;
+    delete process.env.PERPLEXITY_NO_DAEMON;
+    mainSpy.mockClear();
+    attachSpy.mockClear();
+    stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env.PERPLEXITY_NO_DAEMON;
+    else process.env.PERPLEXITY_NO_DAEMON = savedEnv;
+    stdoutSpy.mockRestore();
+    stderrSpy.mockRestore();
+  });
+
+  it("(a) PERPLEXITY_NO_DAEMON=1 invokes in-process stdio main() exactly once", async () => {
+    process.env.PERPLEXITY_NO_DAEMON = "1";
+    const res = await routeCommand({ command: "daemon:attach", flags: {} });
+    expect(mainSpy).toHaveBeenCalledTimes(1);
+    expect(res).toEqual({ code: 0, stdout: "", stderr: "" });
+  });
+
+  it("(b) PERPLEXITY_NO_DAEMON=1 never calls attachToDaemon (daemon layer stays cold)", async () => {
+    process.env.PERPLEXITY_NO_DAEMON = "1";
+    await routeCommand({ command: "daemon:attach", flags: {} });
+    expect(attachSpy).not.toHaveBeenCalled();
+  });
+
+  it("(c) env var absent → existing attach path is used (attachToDaemon called)", async () => {
+    await routeCommand({ command: "daemon:attach", flags: {} });
+    expect(attachSpy).toHaveBeenCalledTimes(1);
+    expect(mainSpy).not.toHaveBeenCalled();
+  });
+
+  it("(d) stdout stays clean on opt-out; warning lands on stderr only", async () => {
+    process.env.PERPLEXITY_NO_DAEMON = "1";
+    await routeCommand({ command: "daemon:attach", flags: {} });
+    expect(stdoutSpy).not.toHaveBeenCalled();
+    const stderrPayload = stderrSpy.mock.calls
+      .map((args) => (typeof args[0] === "string" ? args[0] : args[0]?.toString?.() ?? ""))
+      .join("");
+    expect(stderrPayload).toContain("PERPLEXITY_NO_DAEMON=1 set");
+    expect(stderrPayload).toContain("daemon bypass");
+  });
+
+  it("accepts case-insensitive 'TRUE' as a truthy opt-out value", async () => {
+    process.env.PERPLEXITY_NO_DAEMON = "TRUE";
+    await routeCommand({ command: "daemon:attach", flags: {} });
+    expect(mainSpy).toHaveBeenCalledTimes(1);
+    expect(attachSpy).not.toHaveBeenCalled();
   });
 });
