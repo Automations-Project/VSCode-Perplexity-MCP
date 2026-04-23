@@ -180,7 +180,12 @@ describe("cf-named widget — unready states", () => {
     expect(markup).toMatch(/data-testid="cf-named-bind-btn"[^>]*disabled=""/);
   });
 
-  it("renders the missing-credentials state as copy-only (no action button)", () => {
+  it("renders the missing-credentials state with a red banner AND the create/bind recovery forms", () => {
+    // Previous UX left this state as copy-only, trapping users with no
+    // actionable controls. The recovery path is identical to missing-config
+    // (create a new tunnel or bind a different existing UUID), so the
+    // widget now renders the same forms plus a red banner naming the
+    // specific problem.
     const markup = renderToStaticMarkup(
       <DaemonStatusView
         status={baseStatus}
@@ -194,11 +199,14 @@ describe("cf-named widget — unready states", () => {
       />,
     );
     expect(markup).toContain('data-testid="cf-named-creds-missing"');
-    expect(markup).toContain("credentials file not found");
-    // No buttons in this state — we tell the user what's wrong and let them
-    // re-run Create.
+    expect(markup).toContain("credentials file for this tunnel");
+    // Recovery forms MUST render — previous regression had no buttons here.
+    expect(markup).toContain('data-testid="cf-named-create-btn"');
+    expect(markup).toContain('data-testid="cf-named-bind-btn"');
+    expect(markup).toContain('data-testid="cf-named-list-btn"');
+    // Still no login button in this state (user's cert is fine — it's the
+    // per-tunnel credentials file that's missing).
     expect(markup).not.toContain('data-testid="cf-named-login-btn"');
-    expect(markup).not.toContain('data-testid="cf-named-create-btn"');
     expect(markup).not.toContain('data-testid="cf-named-install-cloudflared"');
   });
 });

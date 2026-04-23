@@ -327,7 +327,17 @@ export function DaemonStatusView({
             </div>
           ) : null}
 
-          {cfNamedState === "missing-config" ? (
+          {cfNamedState === "missing-credentials" ? (
+            <div
+              style={{ fontSize: "0.66rem", marginTop: 6 }}
+              className="text-[#fca5a5]"
+              data-testid="cf-named-creds-missing"
+            >
+              The credentials file for this tunnel's UUID is missing. Create a new tunnel below, bind a different existing UUID, or fix the credentials path manually in <code>~/.perplexity-mcp/cloudflared-named.yml</code>.
+            </div>
+          ) : null}
+
+          {cfNamedState === "missing-config" || cfNamedState === "missing-credentials" ? (
             <div style={{ marginTop: 8 }}>
               <div style={{ fontSize: "0.66rem", fontWeight: 600 }} className="text-[var(--text-primary)]">
                 Create a new tunnel
@@ -423,11 +433,6 @@ export function DaemonStatusView({
             </div>
           ) : null}
 
-          {cfNamedState === "missing-credentials" ? (
-            <div style={{ fontSize: "0.66rem", marginTop: 6 }} className="text-[#fca5a5]" data-testid="cf-named-creds-missing">
-              Credentials file was moved or deleted. Re-run Create (above) for this hostname, or fix the path manually.
-            </div>
-          ) : null}
         </div>
       ) : null}
 
