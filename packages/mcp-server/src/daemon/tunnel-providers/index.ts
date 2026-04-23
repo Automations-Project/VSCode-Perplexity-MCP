@@ -10,6 +10,23 @@ export { readNgrokSettings, writeNgrokSettings, clearNgrokSettings, getNgrokConf
 export type { NgrokSettings } from "./ngrok-config.js";
 export type { TunnelProvider, TunnelProviderId, TunnelProviderStatus, SetupCheck } from "./types.js";
 export { createCloudflaredNamedProvider };
+// Re-export the cf-named setup helpers so the extension runtime can drive the
+// 8.4.3 setup flow (dashboard widget) through the same subpath it already uses
+// for tunnel provider status + ngrok settings.
+export {
+  runCloudflaredLogin,
+  listNamedTunnels,
+  createNamedTunnel,
+  writeTunnelConfig,
+  readNamedTunnelConfig,
+  getNamedTunnelConfigPath,
+} from "./cloudflared-named-setup.js";
+export type {
+  CloudflaredLoginResult,
+  NamedTunnelSummary,
+  CreatedTunnel,
+  NamedTunnelConfig,
+} from "./cloudflared-named-setup.js";
 
 const REGISTRY: Record<TunnelProviderId, TunnelProvider> = {
   "cf-quick": cloudflaredQuickProvider,

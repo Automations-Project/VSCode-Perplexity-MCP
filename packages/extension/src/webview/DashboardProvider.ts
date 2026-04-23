@@ -23,6 +23,12 @@ import { getAccountSnapshot, setLastRefreshTier } from "../auth/session.js";
 import { log, debug } from "../extension.js";
 import { redactMessage, redactObject } from "../redact.js";
 import { REVEAL_CONFIRM_LABEL, runBearerRevealGate } from "./bearer-reveal-gate.js";
+import {
+  handleCfNamedCreate,
+  handleCfNamedList,
+  handleCfNamedLogin,
+  type CfNamedDeps,
+} from "./cf-named-handlers.js";
 import type { DebugCollector } from "../debug/collector.js";
 import { runDoctor } from "perplexity-user-mcp";
 import {
@@ -54,6 +60,7 @@ import {
 } from "../history/open-handlers.js";
 import {
   clearBundledNgrokSettings,
+  createCfNamedTunnel,
   disableBundledDaemonTunnel,
   enableBundledDaemonTunnel,
   ensureBundledDaemon,
@@ -66,13 +73,16 @@ import {
   listBundledOAuthClients,
   listBundledOAuthConsents,
   listBundledTunnelProviders,
+  listCfNamedTunnels,
   readBundledDaemonAuditTail,
+  readCfNamedConfig,
   restartBundledDaemon,
   revokeAllBundledOAuthClients,
   revokeAllBundledOAuthConsents,
   revokeBundledOAuthClient,
   revokeBundledOAuthConsent,
   rotateBundledDaemonToken,
+  runCfNamedLogin,
   setBundledActiveTunnelProvider,
   setBundledNgrokAuthtoken,
   setBundledNgrokDomain,
@@ -543,7 +553,13 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
               }
               setBundledActiveTunnelProvider(providerId);
               await this.postTunnelProviders();
-              await this.postNotice("info", `Active tunnel provider set to ${providerId === "ngrok" ? "ngrok" : "Cloudflare Quick"}. Click Enable to start it.`);
+              const providerLabel =
+                providerId === "ngrok"
+                  ? "ngrok"
+                  : providerId === "cf-named"
+                    ? "Cloudflare Named Tunnel"
+                    : "Cloudflare Quick";
+              await this.postNotice("info", `Active tunnel provider set to ${providerLabel}. Click Enable to start it.`);
               await this.postActionResult(message.id, true);
             } catch (err) {
               await this.postActionResult(message.id, false, (err as Error).message);
@@ -588,6 +604,69 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             } catch (err) {
               await this.postActionResult(message.id, false, (err as Error).message);
             }
+            break;
+          }
+          case "daemon:install-cloudflared": {
+            // Simple passthrough — the cf-named widget uses this when the
+            // user clicks "Install cloudflared" in the missing-binary state.
+            // The enable-tunnel path has its own inline install prompt; this
+            // message lets the cf-named widget trigger the same install
+            // without also enabling a tunnel.
+            try {
+              await vscode.window.withProgress(
+                {
+                  location: vscode.ProgressLocation.Notification,
+                  title: "Downloading cloudflared…",
+                  cancellable: false,
+                },
+                async () => {
+                  await installBundledCloudflared();
+                },
+              );
+              await this.postTunnelProviders();
+              await this.postNotice("info", "cloudflared installed.");
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "daemon:cf-named-login": {
+            // Delegate to the pure helper so tests can exercise the modal +
+            // runtime wiring without a webview host. The helper posts the
+            // result message in every branch (cancel / ok / error).
+            const deps = this.makeCfNamedDeps();
+            const outcome = await handleCfNamedLogin(message.id, deps);
+            if (outcome === "ok") {
+              await this.postTunnelProviders();
+              await this.postNotice("info", "cloudflared login complete.");
+              await this.postActionResult(message.id, true);
+            } else {
+              await this.postActionResult(message.id, false, outcome);
+            }
+            break;
+          }
+          case "daemon:cf-named-create": {
+            const deps = this.makeCfNamedDeps();
+            const outcome = await handleCfNamedCreate(message.id, message.payload, deps);
+            if (outcome === "ok") {
+              await this.postTunnelProviders();
+              await this.postNotice(
+                "info",
+                message.payload.mode === "create"
+                  ? `Created tunnel "${message.payload.name}" → ${message.payload.hostname}.`
+                  : `Bound existing tunnel → ${message.payload.hostname}.`,
+              );
+              await this.postActionResult(message.id, true);
+            } else {
+              await this.postActionResult(message.id, false, outcome);
+            }
+            break;
+          }
+          case "daemon:cf-named-list": {
+            const deps = this.makeCfNamedDeps();
+            const outcome = await handleCfNamedList(message.id, deps);
+            await this.postActionResult(message.id, outcome === "ok");
             break;
           }
           case "daemon:kill": {
@@ -1237,6 +1316,25 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
     } catch {
       // best-effort — the warning is nice-to-have, not critical.
     }
+  }
+
+  /**
+   * Build the dependency bundle the cf-named handlers consume. Lives on the
+   * instance so the handlers always see the live webview post target (the
+   * webview reference can change across a dispose/resolve cycle).
+   */
+  private makeCfNamedDeps(): CfNamedDeps {
+    return {
+      runCfNamedLogin: () => runCfNamedLogin(),
+      createCfNamedTunnel: (params) => createCfNamedTunnel(params),
+      listCfNamedTunnels: () => listCfNamedTunnels(),
+      readCfNamedConfig: () => readCfNamedConfig(),
+      showWarningMessage: async (msg, options, ...items) =>
+        vscode.window.showWarningMessage(msg, options, ...items),
+      post: async (m) => {
+        await this.view?.webview.postMessage(m);
+      },
+    };
   }
 
   private async postTunnelProviders(): Promise<void> {

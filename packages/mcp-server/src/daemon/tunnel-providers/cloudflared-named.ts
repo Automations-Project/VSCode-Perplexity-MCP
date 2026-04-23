@@ -94,7 +94,17 @@ export function createCloudflaredNamedProvider(
         return {
           ready: false,
           reason: "cloudflared login required — origin cert not found.",
-          action: { label: "Run cloudflared login", kind: "open-url" },
+          // 8.4.2 emitted `kind: "open-url"` here but the action has no URL —
+          // it spawns `cloudflared tunnel login` on the host. 8.4.3 migrates
+          // this to the generic run-command contract: the UI dispatches the
+          // webview message identified by `command` (here: `cf-named-login`
+          // → `daemon:cf-named-login`), which the extension modal-confirms
+          // before spawning the child process.
+          action: {
+            label: "Run cloudflared login",
+            kind: "run-command",
+            command: "cf-named-login",
+          },
         };
       }
 

@@ -59,16 +59,22 @@ interface DashboardStore {
   oauthClients: AuthorizedClientRow[] | null;
   setOauthClients: (clients: AuthorizedClientRow[]) => void;
   tunnelProviders: {
-    activeProvider: "cf-quick" | "ngrok";
+    activeProvider: "cf-quick" | "ngrok" | "cf-named";
     providers: Array<{
-      id: "cf-quick" | "ngrok";
+      id: "cf-quick" | "ngrok" | "cf-named";
       displayName: string;
       description: string;
       isActive: boolean;
       setup: {
         ready: boolean;
         reason?: string;
-        action?: { label: string; kind: "open-url" | "input-authtoken" | "install-binary"; url?: string };
+        action?: {
+          label: string;
+          kind: "open-url" | "input-authtoken" | "install-binary" | "run-command";
+          url?: string;
+          /** Identifier (e.g. "cf-named-login") for kind: "run-command". */
+          command?: string;
+        };
       };
     }>;
     ngrok: { configured: boolean; domain?: string; updatedAt?: string };

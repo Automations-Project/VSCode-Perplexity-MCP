@@ -40,10 +40,22 @@ import {
   readNgrokSettings,
   writeNgrokSettings,
   clearNgrokSettings,
+  runCloudflaredLogin,
+  listNamedTunnels,
+  createNamedTunnel,
+  writeTunnelConfig,
+  readNamedTunnelConfig,
   type TunnelProviderId,
   type TunnelProviderStatus,
   type NgrokSettings,
+  type CloudflaredLoginResult,
+  type NamedTunnelSummary,
+  type CreatedTunnel,
+  type NamedTunnelConfig,
 } from "perplexity-user-mcp/daemon/tunnel-providers";
+import { existsSync as fsExistsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join as pathJoin } from "node:path";
 
 const DAEMON_LOG_MAX_BYTES = 2 * 1024 * 1024;
 
@@ -185,6 +197,103 @@ export function setBundledNgrokDomain(domain: string | null): NgrokSettings {
 export function clearBundledNgrokSettings(): void {
   const config = requireRuntimeConfig();
   clearNgrokSettings(config.configDir);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// cf-named (cloudflared named-tunnel) setup wrappers — 8.4.3
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Spawn `cloudflared tunnel login` on the host. Opens the user's default
+ * browser so they can authorize the cert that lands at
+ * `~/.cloudflared/cert.pem`. Resolves once the cert is observed.
+ */
+export async function runCfNamedLogin(
+  options: { signal?: AbortSignal } = {},
+): Promise<CloudflaredLoginResult> {
+  const config = requireRuntimeConfig();
+  return runCloudflaredLogin({
+    configDir: config.configDir,
+    ...(options.signal ? { signal: options.signal } : {}),
+  });
+}
+
+/**
+ * List all cloudflared tunnels visible to the user's origin cert. Read-only;
+ * no side effects. Used by the UI's "bind existing tunnel" alternative.
+ */
+export async function listCfNamedTunnels(): Promise<NamedTunnelSummary[]> {
+  const config = requireRuntimeConfig();
+  return listNamedTunnels({ configDir: config.configDir });
+}
+
+/**
+ * Either create a fresh tunnel (runs `cloudflared tunnel create` + DNS route)
+ * OR bind the managed YAML to an existing tunnel UUID the user already set up
+ * by hand. The "bind-existing" branch skips both network calls and just
+ * rewrites `<configDir>/cloudflared-named.yml`.
+ *
+ * For bind-existing we require the `~/.cloudflared/<uuid>.json` credentials
+ * file to exist up front; cloudflared would fail later with a cryptic error if
+ * it's missing and the YAML would persist a broken config.
+ *
+ * Port is pinned to 1 as a placeholder — the provider's start() rewrites the
+ * port on every spawn (port-drift rewrite). The YAML is worthless until
+ * start() runs anyway, so the placeholder never leaks.
+ */
+export async function createCfNamedTunnel(params: {
+  mode: "create" | "bind-existing";
+  name?: string;
+  hostname: string;
+  uuid?: string;
+}): Promise<CreatedTunnel | NamedTunnelConfig> {
+  const config = requireRuntimeConfig();
+  if (!params.hostname) throw new Error("hostname is required.");
+
+  if (params.mode === "bind-existing") {
+    const uuid = (params.uuid ?? "").trim();
+    if (!uuid) throw new Error("uuid is required for bind-existing mode.");
+    const credentialsPath = pathJoin(homedir(), ".cloudflared", `${uuid}.json`);
+    if (!fsExistsSync(credentialsPath)) {
+      throw new Error(
+        `Credentials file not found at ${credentialsPath}. Run "cloudflared tunnel create" for this UUID first, or switch to "create" mode.`,
+      );
+    }
+    return writeTunnelConfig({
+      configDir: config.configDir,
+      uuid,
+      hostname: params.hostname,
+      // Placeholder port. The provider's start() rewrites this to the live
+      // daemon port on every spawn, so the value we persist here is never read.
+      port: 1,
+      credentialsPath,
+    });
+  }
+
+  // mode === "create"
+  const name = (params.name ?? "").trim();
+  if (!name) throw new Error("name is required for create mode.");
+  const created = await createNamedTunnel({
+    configDir: config.configDir,
+    name,
+    hostname: params.hostname,
+  });
+  // Wire the newly-created tunnel into the managed YAML so the next daemon
+  // start picks it up without a second UI round-trip.
+  writeTunnelConfig({
+    configDir: config.configDir,
+    uuid: created.uuid,
+    hostname: params.hostname,
+    port: 1,
+    credentialsPath: created.credentialsPath,
+  });
+  return created;
+}
+
+/** Read the managed cf-named YAML, or null if not configured. */
+export async function readCfNamedConfig(): Promise<NamedTunnelConfig | null> {
+  const config = requireRuntimeConfig();
+  return readNamedTunnelConfig(config.configDir);
 }
 
 export function readBundledDaemonAuditTail(limit = 50) {

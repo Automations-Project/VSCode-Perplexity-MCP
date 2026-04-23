@@ -52,6 +52,12 @@ export function DaemonStatusView({
 }) {
   const [authtokenInput, setAuthtokenInput] = useState("");
   const [domainInput, setDomainInput] = useState("");
+  // cf-named setup inputs — local React state so they're not persisted in
+  // zustand (mirrors the ngrok widget's pattern at lines ~186–227).
+  const [cfNamedName, setCfNamedName] = useState("");
+  const [cfNamedHostname, setCfNamedHostname] = useState("");
+  const [cfNamedBindUuid, setCfNamedBindUuid] = useState("");
+  const [cfNamedBindHostname, setCfNamedBindHostname] = useState("");
   useEffect(() => {
     if (!tunnelProviders) {
       send({ type: "daemon:list-tunnel-providers" });
@@ -62,6 +68,16 @@ export function DaemonStatusView({
   const ngrokConfigured = tunnelProviders?.ngrok.configured ?? false;
   const ngrokDomain = tunnelProviders?.ngrok.domain;
   const showNgrokSetup = activeProvider === "ngrok";
+  const cfNamedEntry = tunnelProviders?.providers.find((p) => p.id === "cf-named");
+  const showCfNamedSetup = activeProvider === "cf-named";
+  // Derive the four unready states from the backend's `reason` string. The
+  // provider emits distinct reason copy for each state (see
+  // cloudflared-named.ts isSetupComplete), so keyword-matching on that
+  // string is the contract — no extra discriminator field is added to
+  // SetupCheck by 8.4.3. If reason-drift ever becomes a problem, promote
+  // to a backend-emitted `code` field and this helper becomes the only
+  // place that needs to change.
+  const cfNamedState = deriveCfNamedState(cfNamedEntry?.setup);
   const [revealed, setRevealed] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   // H0 — live 1-second tick driving the reveal countdown. Re-runs per
@@ -169,7 +185,7 @@ export function DaemonStatusView({
               style={{ padding: "4px 8px", fontSize: "0.7rem" }}
               value={activeProvider}
               onChange={(event) => {
-                const next = event.target.value as "cf-quick" | "ngrok";
+                const next = event.target.value as "cf-quick" | "ngrok" | "cf-named";
                 send({ type: "daemon:set-tunnel-provider", payload: { providerId: next } });
               }}
             >
@@ -273,10 +289,169 @@ export function DaemonStatusView({
         </div>
       ) : null}
 
+      {showCfNamedSetup && cfNamedEntry && !cfNamedEntry.setup.ready ? (
+        <div
+          className="glass-panel section-panel"
+          data-testid="cf-named-setup-box"
+          style={{ marginTop: 10, padding: 10, borderRadius: 8, borderColor: "rgba(255, 180, 80, 0.3)" }}
+        >
+          <div style={{ fontSize: "0.72rem", fontWeight: 600 }} className="text-[var(--text-primary)]">
+            Cloudflare named-tunnel setup
+          </div>
+          <div style={{ fontSize: "0.66rem", marginTop: 3 }} className="text-[var(--text-muted)]">
+            {cfNamedEntry.setup.reason ?? "Setup is not complete."}
+          </div>
+
+          {cfNamedState === "missing-binary" ? (
+            <div className="flex items-center gap-1 flex-wrap" style={{ marginTop: 8 }}>
+              <button
+                className="primary-button btn-sm"
+                data-testid="cf-named-install-cloudflared"
+                onClick={() => send({ type: "daemon:install-cloudflared" })}
+              >
+                Install cloudflared
+              </button>
+            </div>
+          ) : null}
+
+          {cfNamedState === "missing-cert" ? (
+            <div className="flex items-center gap-1 flex-wrap" style={{ marginTop: 8 }}>
+              <button
+                className="primary-button btn-sm"
+                data-testid="cf-named-login-btn"
+                onClick={() => send({ type: "daemon:cf-named-login" })}
+                title="Spawns cloudflared tunnel login on the host. Confirmed via a VS Code modal before the browser opens."
+              >
+                Run cloudflared login
+              </button>
+            </div>
+          ) : null}
+
+          {cfNamedState === "missing-config" ? (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: "0.66rem", fontWeight: 600 }} className="text-[var(--text-primary)]">
+                Create a new tunnel
+              </div>
+              <div className="flex items-center gap-1 flex-wrap" style={{ marginTop: 4 }}>
+                <input
+                  type="text"
+                  placeholder="perplexity-mcp"
+                  value={cfNamedName}
+                  onChange={(event) => setCfNamedName(event.target.value)}
+                  data-testid="cf-named-create-name"
+                  style={{ flex: "1 1 140px", minWidth: 140, fontSize: "0.7rem", padding: "4px 8px", borderRadius: 4 }}
+                />
+                <input
+                  type="text"
+                  placeholder="mcp.example.com"
+                  value={cfNamedHostname}
+                  onChange={(event) => setCfNamedHostname(event.target.value)}
+                  data-testid="cf-named-create-hostname"
+                  style={{ flex: "1 1 180px", minWidth: 180, fontSize: "0.7rem", padding: "4px 8px", borderRadius: 4 }}
+                />
+                <button
+                  className="primary-button btn-sm"
+                  data-testid="cf-named-create-btn"
+                  disabled={cfNamedName.trim().length < 1 || cfNamedHostname.trim().length < 3}
+                  onClick={() => {
+                    send({
+                      type: "daemon:cf-named-create",
+                      payload: {
+                        mode: "create",
+                        name: cfNamedName.trim(),
+                        hostname: cfNamedHostname.trim(),
+                      },
+                    });
+                    setCfNamedName("");
+                    setCfNamedHostname("");
+                  }}
+                >
+                  Create
+                </button>
+              </div>
+              <div style={{ fontSize: "0.66rem", fontWeight: 600, marginTop: 10 }} className="text-[var(--text-primary)]">
+                Or bind an existing tunnel
+              </div>
+              <div style={{ fontSize: "0.64rem", marginTop: 3 }} className="text-[var(--text-muted)]">
+                If you already ran <code>cloudflared tunnel create</code>, paste the UUID + hostname here instead.
+              </div>
+              <div className="flex items-center gap-1 flex-wrap" style={{ marginTop: 4 }}>
+                <input
+                  type="text"
+                  placeholder="00000000-0000-0000-0000-000000000000"
+                  value={cfNamedBindUuid}
+                  onChange={(event) => setCfNamedBindUuid(event.target.value)}
+                  data-testid="cf-named-bind-uuid"
+                  style={{ flex: "1 1 220px", minWidth: 220, fontSize: "0.7rem", padding: "4px 8px", borderRadius: 4, fontFamily: "var(--font-mono, monospace)" }}
+                />
+                <input
+                  type="text"
+                  placeholder="mcp.example.com"
+                  value={cfNamedBindHostname}
+                  onChange={(event) => setCfNamedBindHostname(event.target.value)}
+                  data-testid="cf-named-bind-hostname"
+                  style={{ flex: "1 1 180px", minWidth: 180, fontSize: "0.7rem", padding: "4px 8px", borderRadius: 4 }}
+                />
+                <button
+                  className="ghost-button btn-sm"
+                  data-testid="cf-named-bind-btn"
+                  disabled={cfNamedBindUuid.trim().length < 8 || cfNamedBindHostname.trim().length < 3}
+                  onClick={() => {
+                    send({
+                      type: "daemon:cf-named-create",
+                      payload: {
+                        mode: "bind-existing",
+                        uuid: cfNamedBindUuid.trim(),
+                        hostname: cfNamedBindHostname.trim(),
+                      },
+                    });
+                    setCfNamedBindUuid("");
+                    setCfNamedBindHostname("");
+                  }}
+                >
+                  Bind
+                </button>
+                <button
+                  className="ghost-button btn-sm"
+                  data-testid="cf-named-list-btn"
+                  onClick={() => send({ type: "daemon:cf-named-list" })}
+                  title="Fetch existing tunnels from cloudflared. Results appear as a notice."
+                >
+                  List existing
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {cfNamedState === "missing-credentials" ? (
+            <div style={{ fontSize: "0.66rem", marginTop: 6 }} className="text-[#fca5a5]" data-testid="cf-named-creds-missing">
+              Credentials file was moved or deleted. Re-run Create (above) for this hostname, or fix the path manually.
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {showCfNamedSetup && cfNamedEntry?.setup.ready ? (
+        <div
+          className="glass-panel section-panel"
+          data-testid="cf-named-managed-caveat"
+          style={{ marginTop: 10, padding: 10, borderRadius: 8 }}
+        >
+          <div style={{ fontSize: "0.66rem" }} className="text-[var(--text-muted)]">
+            This tunnel&apos;s YAML at <code>~/.perplexity-mcp/cloudflared-named.yml</code> is provider-managed.
+            Adding custom ingress rules by hand will be overwritten on the next daemon start.
+          </div>
+        </div>
+      ) : null}
+
       <div className="list-row" style={{ marginTop: 10, alignItems: "flex-start" }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: "0.72rem", fontWeight: 600 }} className="text-[var(--text-primary)]">
-            {activeProvider === "ngrok" ? "ngrok tunnel" : "Cloudflare Quick Tunnel"}
+            {activeProvider === "ngrok"
+              ? "ngrok tunnel"
+              : activeProvider === "cf-named"
+                ? "Cloudflare Named Tunnel"
+                : "Cloudflare Quick Tunnel"}
           </div>
           <div style={{ fontSize: "0.7rem", marginTop: 3 }} className="text-[var(--text-muted)] break-all">
             {tunnelUrl ? (revealed ? tunnelUrl : maskTunnelUrl(tunnelUrl)) : "No public tunnel URL."}
@@ -483,6 +658,37 @@ function formatRelative(iso: string): string {
   const hours = Math.round(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.round(hours / 24)}d ago`;
+}
+
+/**
+ * Four distinct unready states for cf-named, derived by keyword-matching the
+ * backend's `reason` string. The provider in cloudflared-named.ts emits
+ * stable reason copy for each state:
+ *   - "cloudflared binary not installed."  → missing-binary
+ *   - "cloudflared login required — origin cert not found."  → missing-cert
+ *   - "named tunnel not configured — run the setup flow."  → missing-config
+ *   - "credentials file not found at <path>."  → missing-credentials
+ * If the reason is unrecognized (future provider change without UI update),
+ * we fall back to "missing-config" so the widget still surfaces the full
+ * setup form — safe default.
+ */
+export type CfNamedSetupState =
+  | "ready"
+  | "missing-binary"
+  | "missing-cert"
+  | "missing-config"
+  | "missing-credentials"
+  | "unknown";
+
+export function deriveCfNamedState(setup: { ready: boolean; reason?: string } | undefined): CfNamedSetupState {
+  if (!setup) return "unknown";
+  if (setup.ready) return "ready";
+  const reason = (setup.reason ?? "").toLowerCase();
+  if (/not installed/.test(reason)) return "missing-binary";
+  if (/login required|cert\.pem|cert not found|origin cert/.test(reason)) return "missing-cert";
+  if (/credentials file not found/.test(reason)) return "missing-credentials";
+  if (/not configured|run the setup flow|named tunnel/.test(reason)) return "missing-config";
+  return "missing-config";
 }
 
 function maskTunnelUrl(url: string): string {

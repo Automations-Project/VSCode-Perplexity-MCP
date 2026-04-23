@@ -251,20 +251,46 @@ export type ExtensionMessage =
   | {
       type: "daemon:tunnel-providers";
       payload: {
-        activeProvider: "cf-quick" | "ngrok";
+        activeProvider: "cf-quick" | "ngrok" | "cf-named";
         providers: Array<{
-          id: "cf-quick" | "ngrok";
+          id: "cf-quick" | "ngrok" | "cf-named";
           displayName: string;
           description: string;
           isActive: boolean;
           setup: {
             ready: boolean;
             reason?: string;
-            action?: { label: string; kind: "open-url" | "input-authtoken" | "install-binary"; url?: string };
+            /** See SetupCheck in mcp-server types.ts for kind semantics. */
+            action?: {
+              label: string;
+              kind: "open-url" | "input-authtoken" | "install-binary" | "run-command";
+              url?: string;
+              /** Opaque identifier (e.g. "cf-named-login") for kind: "run-command". */
+              command?: string;
+            };
           };
         }>;
         ngrok: { configured: boolean; domain?: string; updatedAt?: string };
       };
+    }
+  | {
+      type: "daemon:cf-named-login:result";
+      id: string;
+      payload: { ok: true; certPath: string } | { ok: false; error: string };
+    }
+  | {
+      type: "daemon:cf-named-create:result";
+      id: string;
+      payload:
+        | { ok: true; hostname: string; uuid: string; configPath: string }
+        | { ok: false; error: string };
+    }
+  | {
+      type: "daemon:cf-named-list:result";
+      id: string;
+      payload:
+        | { ok: true; tunnels: Array<{ uuid: string; name: string; connections?: number }> }
+        | { ok: false; error: string };
     }
   | { type: "history:list"; payload: { items: HistoryItem[] } }
   | { type: "history:entry"; payload: HistoryEntryDetail }
@@ -325,7 +351,37 @@ export type WebviewMessage =
   | {
       type: "daemon:set-tunnel-provider";
       id: string;
-      payload: { providerId: "cf-quick" | "ngrok" };
+      payload: { providerId: "cf-quick" | "ngrok" | "cf-named" };
+    }
+  | {
+      type: "daemon:install-cloudflared";
+      id: string;
+    }
+  | {
+      type: "daemon:cf-named-login";
+      id: string;
+    }
+  | {
+      type: "daemon:cf-named-create";
+      id: string;
+      payload:
+        | {
+            mode: "create";
+            /** Human-readable tunnel name, e.g. "perplexity-mcp". */
+            name: string;
+            /** Fully qualified hostname, e.g. "mcp.example.com". */
+            hostname: string;
+          }
+        | {
+            mode: "bind-existing";
+            /** UUID of an existing tunnel the user created manually. */
+            uuid: string;
+            hostname: string;
+          };
+    }
+  | {
+      type: "daemon:cf-named-list";
+      id: string;
     }
   | {
       type: "daemon:set-ngrok-authtoken";
