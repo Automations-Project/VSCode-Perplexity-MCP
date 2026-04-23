@@ -4,6 +4,32 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [0.7.4] — 2026-04-23 — Phase 8.2: security hardening + authorized clients panel
+
+### Security
+- **H0 — Closed live bearer-in-logs leak.** `DaemonStatusState.bearerToken` is removed; replaced with `bearerAvailable: boolean`. The webview never receives the raw daemon bearer on state pushes. New explicit one-shot channels `daemon:bearer:copy` (extension-host clipboard write; bearer never touches the webview) and `daemon:bearer:reveal` (modal-confirmed 30s-TTL reveal with nonce). A redactor now wraps all log sinks (extension `log` / `debug`, the `log:webview` forwarder, and daemon `[trace]` paths). New CI gate `scripts/assert-no-secret-leak.mjs` scans captured test logs for known secret shapes — zero hits required per release.
+- **H11 — Admin surface locked to loopback.** Every `/daemon/*` endpoint now returns `404 Not Found` to tunnel callers regardless of bearer validity. Tunnel path allowlist: `/mcp`, `/`, `/authorize`, `/token`, `/register`, `/revoke`, `/.well-known/{oauth-authorization-server,oauth-protected-resource}`, `/robots.txt`, `/favicon.ico`. New `attachRequestSource` middleware derives `loopback` vs `tunnel` from real network indicators only (`X-Forwarded-For`, `CF-Connecting-IP`, `req.ip`); the `x-perplexity-source` header is still captured for audit enrichment but is never consulted for security decisions.
+- **H12 — RFC 8707 resource binding.** OAuth tokens now carry a `resource` binding captured at `/authorize`, validated on both code- and refresh-grant exchanges at `/token`, and enforced at `/mcp`. The static daemon bearer is loopback-only. The tunnel rejects OAuth tokens whose bound resource mismatches the incoming request AND tokens with no bound resource; the loopback path accepts unbound tokens (tagged `oauth-unbound`) strictly for migration of pre-0.7.4 clients. SDK-aligned signatures: `exchangeAuthorizationCode(client, code, codeVerifier?, redirectUri?, resource?)` and `exchangeRefreshToken(client, refreshToken, scopes?, resource?)`. One canonical `resolveRequestResource(req)` helper is used by PRM, code/token binding, and `/mcp` verification. Consent cache keys now include the resource so a client that re-authorizes against a different tunnel URL re-prompts.
+
+### Added
+- **Authorized OAuth clients dashboard panel.** A new card below daemon status shows every client registered via `/register` with its client ID, last-used timestamp, consent approval timestamp, and active token count. Per-row **Revoke** (modal confirm, invalidates all outstanding tokens for that client) and a card-level **Revoke all** (modal lists every affected client). Local-bearer rows land in Phase 8.6.
+- **`Perplexity: Copy Daemon Bearer` command.** Modal-confirm, then `vscode.env.clipboard.writeText` on the extension host — the bearer never leaves the host process.
+- **`Perplexity: Show Daemon Bearer (30s)` command.** Modal-confirm, then a one-shot reveal to the dashboard with a 30s TTL and auto-clear.
+- **`/daemon/oauth-clients` endpoints.** `GET` lists authorized clients; `DELETE` revokes by `clientId` or wipes all. Static-bearer gated and loopback-only per H11.
+- **H12 follow-up: consent-binding.** Cached consents are now keyed by `(client_id, redirect_uri, resource)` so a client re-authorizing against a different tunnel URL re-prompts the modal instead of inheriting the prior consent.
+- **`scripts/assert-no-secret-leak.mjs`.** Node (Windows-first) CI gate that scans captured test logs for known secret shapes plus env-provided canary values.
+
+### Changed
+- `packages/mcp-server` + `packages/extension` bump to `0.7.4`.
+- `AuditEntry.auth` union gains `oauth-cached` (Phase 8.1) and `oauth-unbound` (Phase 8.2) — cached-consent approvals and legacy unbound-token loopback paths are now distinguishable in audit lines.
+- `DaemonStatusState` shape change: `bearerToken: string | null` removed, `bearerAvailable: boolean` added. All webview consumers updated; the bearer is requested explicitly via the new copy / reveal channels.
+
+### Tests
+- 179 passed (29 files) — up from 43 at the start of Phase 8.2; 136 new tests across the phase. Breakdown: daemon + OAuth conformance + resource binding + consent-cache + tunnel allowlist + admin endpoints (~122), extension-host redaction + bearer-reveal + auto-config + auth-manager + history + doctor (~43), webview AuthorizedClients panel + DaemonStatus bearer-reveal TTL + ActionTypes pin (~14).
+
+### Breaking
+- Pre-0.7.4 OAuth tokens minted without a `resource` binding are **rejected over the tunnel** post-upgrade. Legacy external clients (Claude Desktop / Cursor / Cline connected over the tunnel) must re-authorize and include an RFC 8707 `resource` parameter at `/authorize`. Loopback callers are unaffected — the daemon accepts unbound tokens on `127.0.0.1` strictly for migration and tags them `oauth-unbound` in audit.
+
 ## [0.7.3] — 2026-04-22 — Phase 8.1: OAuth consent cache
 
 ### Added
