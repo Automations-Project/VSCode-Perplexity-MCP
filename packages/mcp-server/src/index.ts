@@ -11,6 +11,7 @@ import { registerResources } from "./resources.js";
 import { loadToolConfig, getEnabledTools } from "./tool-config.js";
 import { watchReinit } from "./reinit-watcher.js";
 import { getActiveName } from "./profiles.js";
+import { getPackageVersion } from "./package-version.js";
 
 let client: PerplexityClient;
 let clientInitPromise: Promise<void> | null = null;
@@ -26,7 +27,7 @@ export async function main() {
 
   const server = new McpServer({
     name: "perplexity",
-    version: "0.5.0",
+    version: getPackageVersion(),
   });
 
   const toolConfig = loadToolConfig();

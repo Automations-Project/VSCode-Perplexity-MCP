@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { PerplexityClient } from "../client.js";
 import { getActiveName, getConfigDir } from "../profiles.js";
+import { getPackageVersion } from "../package-version.js";
 import { watchReinit } from "../reinit-watcher.js";
 import type { StartedDaemonServer } from "./server.js";
 import { startDaemonServer } from "./server.js";
@@ -230,7 +231,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Sta
   const tokenPath = getTokenPath(configDir);
   const retries = options.retries ?? 3;
   const retryDelayMs = options.retryDelayMs ?? 200;
-  const version = options.version ?? process.env.npm_package_version ?? "0.5.0";
+  const version = options.version ?? getPackageVersion();
 
   for (let attempt = 0; attempt < retries; attempt++) {
     const status = await getDaemonStatus({

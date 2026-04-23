@@ -4,6 +4,7 @@ import { TextDecoder } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { ensureDaemon, type EnsureDaemonOptions } from "./launcher.js";
+import { getPackageVersion } from "../package-version.js";
 
 type DaemonEnsureOptions = Pick<
   EnsureDaemonOptions,
@@ -124,7 +125,7 @@ async function callDaemonTool(
   const client = new Client(
     {
       name: clientId,
-      version: "0.5.0",
+      version: getPackageVersion(),
     },
     {
       capabilities: {},

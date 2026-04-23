@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -22,6 +22,10 @@ function createMockClient() {
     init: async () => undefined,
     shutdown: async () => undefined,
   };
+}
+
+function readPackageVersion() {
+  return JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version;
 }
 
 describe("daemon server integration", () => {
@@ -58,6 +62,17 @@ describe("daemon server integration", () => {
     });
 
     expect(response.status).toBe(401);
+  });
+
+  it("uses the package version when no daemon version override is supplied", async () => {
+    await daemon.close();
+    daemon = await startDaemonServer({
+      configDir,
+      bearerToken: "test-bearer-token",
+      createClient: () => createMockClient(),
+    });
+
+    expect(daemon.getHealth().version).toBe(readPackageVersion());
   });
 
   it("serves a real MCP roundtrip over streamable HTTP and writes an audit line", async () => {

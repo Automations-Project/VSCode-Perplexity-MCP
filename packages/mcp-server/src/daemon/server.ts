@@ -12,6 +12,7 @@ import { registerPrompts } from "../prompts.js";
 import { registerResources } from "../resources.js";
 import { getEnabledTools, loadToolConfig } from "../tool-config.js";
 import { registerTools } from "../tools.js";
+import { getPackageVersion } from "../package-version.js";
 import { appendAuditEntry, getAuditLogPath, readAuditTail } from "./audit.js";
 import {
   ConsentCoordinator,
@@ -97,7 +98,7 @@ export interface StartedDaemonServer {
 export async function startDaemonServer(options: StartDaemonServerOptions = {}): Promise<StartedDaemonServer> {
   const host = options.host ?? "127.0.0.1";
   const requestedPort = options.port ?? 0;
-  const version = options.version ?? process.env.npm_package_version ?? "0.5.0";
+  const version = options.version ?? getPackageVersion();
   const auditPath = getAuditLogPath(options.configDir);
   const tokenPath = getTokenPath(options.configDir);
   const initialToken = options.bearerToken

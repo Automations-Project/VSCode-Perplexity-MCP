@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { acquire, getLockfilePath } from "../../src/daemon/lockfile.ts";
@@ -21,6 +21,10 @@ function createMockClient() {
     reinit: async () => undefined,
     shutdown: async () => undefined,
   };
+}
+
+function readPackageVersion() {
+  return JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version;
 }
 
 describe("daemon launcher", () => {
@@ -70,6 +74,7 @@ describe("daemon launcher", () => {
     expect(status.running).toBe(true);
     expect(status.healthy).toBe(true);
     expect(status.record?.pid).toBe(results[0].pid);
+    expect(results[0].version).toBe(readPackageVersion());
   });
 
   it("reclaims a stale lockfile before starting a new daemon", async () => {
