@@ -637,10 +637,14 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             // result message in every branch (cancel / ok / error).
             const deps = this.makeCfNamedDeps();
             const outcome = await handleCfNamedLogin(message.id, deps);
+            debug(`[cf-named] post-login: handler returned outcome=${outcome}`);
             if (outcome === "ok") {
               await this.postTunnelProviders();
+              debug(`[cf-named] post-login: postTunnelProviders done`);
               await this.postNotice("info", "cloudflared login complete.");
+              debug(`[cf-named] post-login: postNotice done`);
               await this.postActionResult(message.id, true);
+              debug(`[cf-named] post-login: postActionResult done`);
             } else {
               await this.postActionResult(message.id, false, outcome);
             }
@@ -1341,6 +1345,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
   private async postTunnelProviders(): Promise<void> {
     if (!this.view) return;
     try {
+      debug(`[trace] postTunnelProviders enter`);
       const providers = await listBundledTunnelProviders();
       const activeProvider = getBundledActiveTunnelProvider();
       const ngrok = getBundledNgrokSettings();
@@ -1358,6 +1363,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
           ngrok,
         },
       } satisfies ExtensionMessage);
+      debug(`[trace] postTunnelProviders exit OK active=${activeProvider} count=${providers.length} cf-named.ready=${providers.find((p) => p.id === "cf-named")?.setup.ready ?? "n/a"}`);
     } catch (err) {
       debug(`[trace] postTunnelProviders failed: ${err instanceof Error ? err.message : String(err)}`);
     }
