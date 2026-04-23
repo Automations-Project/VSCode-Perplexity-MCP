@@ -3,12 +3,15 @@ import type {
   AuthState,
   DaemonAuditEntry,
   DaemonStatusState,
+  CfNamedManagedConfig,
+  CfNamedTunnelSummary,
   DashboardState,
   DoctorReport,
   ExtensionMessage,
   ExternalViewer,
   HistoryEntryDetail,
   Profile,
+  TunnelProbeResult,
 } from "@perplexity-user-mcp/shared";
 import type { AuthorizedClientRow } from "./components/AuthorizedClients";
 
@@ -25,6 +28,13 @@ export interface ModelsRefreshStatus {
   count?: number;
   error?: string;
   at?: number;
+}
+
+export interface TunnelProbeState {
+  results: TunnelProbeResult[];
+  timeoutMs: 5000;
+  error?: string;
+  checkedAt?: string;
 }
 
 interface DashboardStore {
@@ -78,7 +88,20 @@ interface DashboardStore {
       };
     }>;
     ngrok: { configured: boolean; domain?: string; updatedAt?: string };
+    cfNamed?: {
+      config: CfNamedManagedConfig | null;
+      tunnels?: CfNamedTunnelSummary[];
+      lastListedAt?: string;
+      lastListError?: string;
+      lastDeleted?: {
+        uuid: string;
+        hostname?: string;
+        localConfigCleared: boolean;
+        dnsCleanupUrl: string;
+      };
+    };
   } | null;
+  tunnelProbe: TunnelProbeState | null;
   historyExport: {
     id: string | null;
     phase: "idle" | "starting" | "downloaded" | "saved" | "error";
@@ -144,6 +167,7 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
   oauthClients: null,
   setOauthClients: (clients) => set({ oauthClients: clients }),
   tunnelProviders: null,
+  tunnelProbe: null,
   historyExport: { id: null, phase: "idle" },
   cloudSync: { phase: "idle" },
   cloudHydrate: { historyId: null, phase: "idle" },
@@ -210,6 +234,87 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
 
     if (message.type === "daemon:tunnel-providers") {
       set({ tunnelProviders: message.payload });
+      return;
+    }
+
+    if (message.type === "daemon:cf-named-list:result") {
+      if (message.payload.ok) {
+        const tunnels = message.payload.tunnels;
+        set((store) => ({
+          tunnelProviders: store.tunnelProviders
+            ? {
+                ...store.tunnelProviders,
+                cfNamed: {
+                  config: store.tunnelProviders.cfNamed?.config ?? null,
+                  tunnels,
+                  lastListedAt: new Date().toISOString(),
+                },
+              }
+            : store.tunnelProviders,
+        }));
+      } else {
+        const error = message.payload.error;
+        set((store) => ({
+          tunnelProviders: store.tunnelProviders
+            ? {
+                ...store.tunnelProviders,
+                cfNamed: {
+                  config: store.tunnelProviders.cfNamed?.config ?? null,
+                  tunnels: store.tunnelProviders.cfNamed?.tunnels,
+                  lastListedAt: store.tunnelProviders.cfNamed?.lastListedAt,
+                  lastListError: error,
+                },
+              }
+            : store.tunnelProviders,
+          notice: { level: "error", message: `Cloudflare tunnel list failed: ${error}` },
+        }));
+      }
+      return;
+    }
+
+    if (message.type === "daemon:cf-named-delete-remote:result") {
+      if (message.payload.ok) {
+        const payload = message.payload;
+        set((store) => ({
+          tunnelProviders: store.tunnelProviders
+            ? {
+                ...store.tunnelProviders,
+                cfNamed: {
+                  config:
+                    store.tunnelProviders.cfNamed?.config?.uuid === payload.uuid
+                      ? null
+                      : store.tunnelProviders.cfNamed?.config ?? null,
+                  tunnels: store.tunnelProviders.cfNamed?.tunnels?.filter((t) => t.uuid !== payload.uuid),
+                  lastListedAt: store.tunnelProviders.cfNamed?.lastListedAt,
+                  lastDeleted: {
+                    uuid: payload.uuid,
+                    hostname: payload.hostname,
+                    localConfigCleared: payload.localConfigCleared,
+                    dnsCleanupUrl: payload.dnsCleanupUrl,
+                  },
+                },
+              }
+            : store.tunnelProviders,
+        }));
+      }
+      return;
+    }
+
+    if (message.type === "daemon:tunnel-probe:result") {
+      set({
+        tunnelProbe: message.payload.ok
+          ? {
+              results: message.payload.results,
+              timeoutMs: message.payload.timeoutMs,
+              checkedAt: new Date().toISOString(),
+            }
+          : {
+              results: message.payload.results ?? [],
+              timeoutMs: message.payload.timeoutMs,
+              error: message.payload.error,
+              checkedAt: new Date().toISOString(),
+            },
+      });
       return;
     }
 
@@ -343,3 +448,20 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
   dismissExpiredForMs: (ms) => set({ expiredDismissedUntil: Date.now() + ms }),
   setRichViewEntry: (entry) => set({ richViewEntry: entry }),
 }));
+
+/**
+ * Returns `true` while any in-flight `pendingActions` id starts with the given
+ * message type prefix. IDs are generated in `App.tsx` via
+ * `${type}-${seq}-${base36}`, so matching on `${prefix}-` is unambiguous.
+ * Used by `DaemonStatus` to render spinner / disabled state on the exact
+ * button that was clicked — eliminating the "dead click" window between
+ * `postMessage` and the extension host's `action:result` response.
+ */
+export function useIsActionPending(prefix: string): boolean {
+  return useDashboardStore((s) => {
+    for (const id of s.pendingActions) {
+      if (id.startsWith(`${prefix}-`)) return true;
+    }
+    return false;
+  });
+}

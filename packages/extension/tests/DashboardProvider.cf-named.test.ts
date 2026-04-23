@@ -3,8 +3,10 @@ import type { ExtensionMessage } from "@perplexity-user-mcp/shared";
 
 import {
   handleCfNamedCreate,
+  handleCfNamedDeleteRemote,
   handleCfNamedList,
   handleCfNamedLogin,
+  handleCfNamedUnbindLocal,
   type CfNamedDeps,
 } from "../src/webview/cf-named-handlers.js";
 
@@ -28,6 +30,9 @@ function makeDeps(overrides: Partial<CfNamedDeps> = {}): CfNamedDeps & {
       { uuid: "aaa-1", name: "perplexity-mcp", connections: 2 },
       { uuid: "bbb-2", name: "other" },
     ]),
+    clearCfNamedConfig: vi.fn(async () => true),
+    deleteCfNamedTunnel: vi.fn(async (uuid) => ({ uuid })),
+    disableActiveTunnelIfNeeded: vi.fn(async () => undefined),
     readCfNamedConfig: vi.fn(async () => ({
       uuid: "11111111-2222-3333-4444-555555555555",
       hostname: "mcp.example.com",
@@ -251,5 +256,96 @@ describe("daemon:cf-named-list handler", () => {
     if (first.type === "daemon:cf-named-list:result" && !first.payload.ok) {
       expect(first.payload.error).toMatch(/no cert/);
     }
+  });
+});
+
+describe("daemon:cf-named-unbind-local handler", () => {
+  it("cancel short-circuits without disabling or clearing config", async () => {
+    const deps = makeDeps({ showWarningMessage: vi.fn(async () => undefined) });
+    const outcome = await handleCfNamedUnbindLocal(
+      "req-u1",
+      { uuid: "11111111-2222-3333-4444-555555555555" },
+      deps,
+    );
+    expect(outcome).toBe("cancelled");
+    expect(deps.disableActiveTunnelIfNeeded).not.toHaveBeenCalled();
+    expect(deps.clearCfNamedConfig).not.toHaveBeenCalled();
+  });
+
+  it("confirm disables first, clears local config, and posts result", async () => {
+    const deps = makeDeps({ showWarningMessage: vi.fn(async () => "Unbind local config") });
+    const outcome = await handleCfNamedUnbindLocal(
+      "req-u2",
+      { uuid: "11111111-2222-3333-4444-555555555555" },
+      deps,
+    );
+    expect(outcome).toBe("ok");
+    expect(
+      (deps.disableActiveTunnelIfNeeded as any).mock.invocationCallOrder[0],
+    ).toBeLessThan((deps.clearCfNamedConfig as any).mock.invocationCallOrder[0]);
+    expect(deps.posted[0]).toEqual({
+      type: "daemon:cf-named-unbind-local:result",
+      id: "req-u2",
+      payload: { ok: true, uuid: "11111111-2222-3333-4444-555555555555", configCleared: true },
+    });
+  });
+});
+
+describe("daemon:cf-named-delete-remote handler", () => {
+  it("confirm disables before delete, clears matching local config, and posts DNS cleanup URL", async () => {
+    const deps = makeDeps({ showWarningMessage: vi.fn(async () => "Delete remote tunnel") });
+    const outcome = await handleCfNamedDeleteRemote(
+      "req-d1",
+      {
+        uuid: "11111111-2222-3333-4444-555555555555",
+        name: "perplexity-mcp",
+        hostname: "mcp.example.com",
+      },
+      deps,
+    );
+    expect(outcome).toBe("ok");
+    expect(
+      (deps.disableActiveTunnelIfNeeded as any).mock.invocationCallOrder[0],
+    ).toBeLessThan((deps.deleteCfNamedTunnel as any).mock.invocationCallOrder[0]);
+    expect(deps.deleteCfNamedTunnel).toHaveBeenCalledWith("11111111-2222-3333-4444-555555555555");
+    expect(deps.clearCfNamedConfig).toHaveBeenCalledOnce();
+    expect(deps.posted[0]).toEqual({
+      type: "daemon:cf-named-delete-remote:result",
+      id: "req-d1",
+      payload: {
+        ok: true,
+        uuid: "11111111-2222-3333-4444-555555555555",
+        hostname: "mcp.example.com",
+        localConfigCleared: true,
+        dnsCleanupUrl: "https://dash.cloudflare.com/?to=/:account/:zone/dns",
+      },
+    });
+  });
+
+  it("remote delete failure keeps tunnel disabled and returns active-connections reason", async () => {
+    const err = Object.assign(new Error("remove DNS first"), { reason: "active-connections" as const });
+    const deps = makeDeps({
+      showWarningMessage: vi.fn(async () => "Delete remote tunnel"),
+      deleteCfNamedTunnel: vi.fn(async () => {
+        throw err;
+      }),
+    });
+    const outcome = await handleCfNamedDeleteRemote(
+      "req-d2",
+      {
+        uuid: "11111111-2222-3333-4444-555555555555",
+        name: "perplexity-mcp",
+        hostname: "mcp.example.com",
+      },
+      deps,
+    );
+    expect(outcome).toBe("error");
+    expect(deps.disableActiveTunnelIfNeeded).toHaveBeenCalledOnce();
+    expect(deps.clearCfNamedConfig).not.toHaveBeenCalled();
+    expect(deps.posted[0]).toEqual({
+      type: "daemon:cf-named-delete-remote:result",
+      id: "req-d2",
+      payload: { ok: false, error: "remove DNS first", reason: "active-connections" },
+    });
   });
 });

@@ -43,6 +43,8 @@ import {
   runCloudflaredLogin,
   listNamedTunnels,
   createNamedTunnel,
+  deleteNamedTunnel,
+  clearNamedTunnelConfig,
   writeTunnelConfig,
   readNamedTunnelConfig,
   type TunnelProviderId,
@@ -52,6 +54,7 @@ import {
   type NamedTunnelSummary,
   type CreatedTunnel,
   type NamedTunnelConfig,
+  type DeletedNamedTunnel,
 } from "perplexity-user-mcp/daemon/tunnel-providers";
 import { existsSync as fsExistsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -227,6 +230,11 @@ export async function listCfNamedTunnels(): Promise<NamedTunnelSummary[]> {
   return listNamedTunnels({ configDir: config.configDir });
 }
 
+export async function deleteCfNamedTunnel(uuid: string): Promise<DeletedNamedTunnel> {
+  const config = requireRuntimeConfig();
+  return deleteNamedTunnel({ configDir: config.configDir, uuid });
+}
+
 /**
  * Either create a fresh tunnel (runs `cloudflared tunnel create` + DNS route)
  * OR bind the managed YAML to an existing tunnel UUID the user already set up
@@ -294,6 +302,27 @@ export async function createCfNamedTunnel(params: {
 export async function readCfNamedConfig(): Promise<NamedTunnelConfig | null> {
   const config = requireRuntimeConfig();
   return readNamedTunnelConfig(config.configDir);
+}
+
+export function clearCfNamedConfig(): boolean {
+  const config = requireRuntimeConfig();
+  return clearNamedTunnelConfig(config.configDir);
+}
+
+export function getBundledCfNamedState(): {
+  config: { uuid: string; hostname: string; configPath: string; credentialsPresent: boolean } | null;
+} {
+  const config = requireRuntimeConfig();
+  const managed = readNamedTunnelConfig(config.configDir);
+  if (!managed) return { config: null };
+  return {
+    config: {
+      uuid: managed.uuid,
+      hostname: managed.hostname,
+      configPath: managed.configPath,
+      credentialsPresent: fsExistsSync(managed.credentialsPath),
+    },
+  };
 }
 
 export function readBundledDaemonAuditTail(limit = 50) {

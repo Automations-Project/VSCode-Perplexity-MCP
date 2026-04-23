@@ -6,7 +6,10 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import {
   createNamedTunnel,
+  clearNamedTunnelConfig,
+  deleteNamedTunnel,
   getNamedTunnelConfigPath,
+  isActiveConnectionDeleteFailure,
   listNamedTunnels,
   readNamedTunnelConfig,
   runCloudflaredLogin,
@@ -433,6 +436,82 @@ describe("createNamedTunnel", () => {
   });
 });
 
+describe("deleteNamedTunnel", () => {
+  it("spawns cloudflared tunnel delete --force <uuid>", async () => {
+    installFakeBinary(configDir);
+    const uuid = "11111111-2222-3333-4444-555555555555";
+    const calls = [];
+    const fakeSpawn = (_cmd, args) => {
+      calls.push(args);
+      const child = makeFakeChild();
+      queueMicrotask(() => {
+        child.stdout.write(`Deleted tunnel ${uuid}\n`);
+        child.stdout.end();
+        child.emit("exit", 0, null);
+      });
+      return child;
+    };
+
+    await expect(
+      deleteNamedTunnel({ configDir, uuid, dependencies: { spawn: fakeSpawn } }),
+    ).resolves.toEqual({ uuid });
+    expect(calls).toEqual([["tunnel", "delete", "--force", uuid]]);
+  });
+
+  it("maps active-connection delete failures to a targeted error", async () => {
+    installFakeBinary(configDir);
+    const fakeSpawn = () => {
+      const child = makeFakeChild();
+      queueMicrotask(() => {
+        child.stderr.write("Cannot delete tunnel because it has active connections");
+        child.stderr.end();
+        child.emit("exit", 1, null);
+      });
+      return child;
+    };
+
+    await expect(
+      deleteNamedTunnel({
+        configDir,
+        uuid: "11111111-2222-3333-4444-555555555555",
+        dependencies: { spawn: fakeSpawn },
+      }),
+    ).rejects.toMatchObject({
+      reason: "active-connections",
+      message: expect.stringMatching(/Remove the DNS route\/CNAME/i),
+    });
+  });
+
+  it("surfaces unknown non-zero stderr", async () => {
+    installFakeBinary(configDir);
+    const fakeSpawn = () => {
+      const child = makeFakeChild();
+      queueMicrotask(() => {
+        child.stderr.write("tunnel not found");
+        child.stderr.end();
+        child.emit("exit", 1, null);
+      });
+      return child;
+    };
+
+    await expect(
+      deleteNamedTunnel({
+        configDir,
+        uuid: "11111111-2222-3333-4444-555555555555",
+        dependencies: { spawn: fakeSpawn },
+      }),
+    ).rejects.toMatchObject({
+      reason: "unknown",
+      message: expect.stringMatching(/tunnel not found/i),
+    });
+  });
+
+  it("detects active-connection output variants", () => {
+    expect(isActiveConnectionDeleteFailure("Tunnel still has connections")).toBe(true);
+    expect(isActiveConnectionDeleteFailure("unrelated failure")).toBe(false);
+  });
+});
+
 describe("writeTunnelConfig + readNamedTunnelConfig", () => {
   it("writes a YAML config with expected keys and mode 0600 on POSIX", () => {
     const result = writeTunnelConfig({
@@ -529,5 +608,18 @@ describe("writeTunnelConfig + readNamedTunnelConfig", () => {
 
   it("getNamedTunnelConfigPath returns <configDir>/cloudflared-named.yml", () => {
     expect(getNamedTunnelConfigPath(configDir)).toBe(join(configDir, "cloudflared-named.yml"));
+  });
+
+  it("clearNamedTunnelConfig removes only the managed config", () => {
+    const written = writeTunnelConfig({
+      configDir,
+      uuid: "clear-uuid",
+      hostname: "clear.example.com",
+      port: 55555,
+      credentialsPath: "/data/creds.json",
+    });
+    expect(clearNamedTunnelConfig(configDir)).toBe(true);
+    expect(existsSync(written.configPath)).toBe(false);
+    expect(clearNamedTunnelConfig(configDir)).toBe(false);
   });
 });

@@ -65,6 +65,22 @@ export interface NamedTunnelConfig {
   credentialsPath: string;
 }
 
+export interface DeletedNamedTunnel {
+  uuid: string;
+}
+
+export type DeleteNamedTunnelFailureReason = "active-connections" | "unknown";
+
+export class DeleteNamedTunnelError extends Error {
+  constructor(
+    message: string,
+    readonly reason: DeleteNamedTunnelFailureReason,
+  ) {
+    super(message);
+    this.name = "DeleteNamedTunnelError";
+  }
+}
+
 const CONFIG_FILENAME = "cloudflared-named.yml";
 const DEFAULT_LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
 const CERT_POLL_INTERVAL_MS = 250;
@@ -366,6 +382,60 @@ export async function createNamedTunnel(options: {
     });
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// cloudflared tunnel delete
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Deletes a remote Cloudflare named tunnel. This is intentionally separate
+ * from clearNamedTunnelConfig(): remote delete can fail even with --force
+ * when DNS still routes traffic and active connections keep the tunnel alive.
+ */
+export async function deleteNamedTunnel(options: {
+  configDir: string;
+  uuid: string;
+  binaryPath?: string;
+  signal?: AbortSignal;
+  dependencies?: { spawn?: SpawnFn };
+}): Promise<DeletedNamedTunnel> {
+  const uuid = options.uuid.trim();
+  if (!uuid) throw new Error("deleteNamedTunnel: uuid is required.");
+  const binaryPath = options.binaryPath ?? getTunnelBinaryPath(options.configDir);
+  assertBinaryExists(binaryPath);
+  const spawnImpl = options.dependencies?.spawn ?? nodeSpawn;
+
+  const { code, stdout, stderr } = await runCapture(
+    spawnImpl,
+    binaryPath,
+    ["tunnel", "delete", "--force", uuid],
+    options.signal,
+  );
+  if (code !== 0) {
+    const combined = `${stderr}\n${stdout}`.trim();
+    if (isActiveConnectionDeleteFailure(combined)) {
+      throw new DeleteNamedTunnelError(
+        "cloudflared could not delete the tunnel because it still has active connections. Remove the DNS route/CNAME for this hostname, wait for connections to drain, then retry delete.",
+        "active-connections",
+      );
+    }
+    throw new DeleteNamedTunnelError(
+      `cloudflared tunnel delete exited with code ${code}: ${combined}`,
+      "unknown",
+    );
+  }
+  return { uuid };
+}
+
+export function isActiveConnectionDeleteFailure(output: string): boolean {
+  const normalized = output.toLowerCase();
+  return (
+    /active connection/.test(normalized) ||
+    /still has connections/.test(normalized) ||
+    /cannot.*delete.*connections/.test(normalized) ||
+    /unable.*delete.*connections/.test(normalized)
+  );
+}
+
 function runCapture(
   spawnImpl: SpawnFn,
   command: string,
@@ -479,6 +549,13 @@ export function readNamedTunnelConfig(configDir: string): NamedTunnelConfig | nu
     credentialsPath: parsed.credentialsPath,
     configPath,
   };
+}
+
+export function clearNamedTunnelConfig(configDir: string): boolean {
+  const configPath = getNamedTunnelConfigPath(configDir);
+  const existed = existsSync(configPath);
+  rmSync(configPath, { force: true });
+  return existed;
 }
 
 // ─────────────────────────────────────────────────────────────────────

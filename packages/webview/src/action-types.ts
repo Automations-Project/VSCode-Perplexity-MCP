@@ -24,6 +24,16 @@ export const ACTION_TYPES: ReadonlySet<string> = new Set<string>([
   "daemon:rotate-token",
   "daemon:enable-tunnel",
   "daemon:disable-tunnel",
+  // UX Pass #2 — these were previously untracked so clicks showed no
+  // visual feedback during the extension-host round-trip. Each handler in
+  // DashboardProvider.ts must emit `postActionResult(message.id, ok)` for
+  // the pending-action slice to clear.
+  "daemon:restart",
+  "daemon:kill",
+  "daemon:set-tunnel-provider",
+  "daemon:set-ngrok-authtoken",
+  "daemon:set-ngrok-domain",
+  "daemon:clear-ngrok-settings",
   // H0 — bearer copy / reveal actions. Both MUST carry a generated id so
   // the extension-host handler can route the modal result back through
   // `action:result` / `daemon:bearer:reveal:response` without id=undefined.
@@ -38,6 +48,9 @@ export const ACTION_TYPES: ReadonlySet<string> = new Set<string>([
   "daemon:cf-named-login",
   "daemon:cf-named-create",
   "daemon:cf-named-list",
+  "daemon:cf-named-unbind-local",
+  "daemon:cf-named-delete-remote",
+  "daemon:tunnel-probe",
   "history:request-entry",
   "history:open-preview",
   "history:open-rich",

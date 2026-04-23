@@ -91,3 +91,275 @@ Run these on Windows 11 (primary) + macOS 14 (secondary, if available). All eigh
 When all eight are green (or explicitly waived), save the evidence file to `docs/smoke-evidence/phase-8-3-YYYY-MM-DD.md` and proceed to Task 8.3.5 (release v0.8.0).
 
 Referenced by release gate in [docs/superpowers/plans/2026-04-22-phase-8-completeness.md](superpowers/plans/2026-04-22-phase-8-completeness.md) Task 8.3.4.
+
+## Phase 8.4 — Cloudflare named tunnel provider (0.8.1)
+
+Phase 8.4 adds the `cf-named` tunnel provider: a persistent URL on a user-managed Cloudflare zone (as opposed to the ephemeral `*.trycloudflare.com` of cf-quick). Unlike Phase 8.3 — where hermetic integration tests covered the fallback path cleanly — this phase's external surface cannot be meaningfully mocked: `cloudflared tunnel login`, origin-cert placement, tunnel-creation stdout parsing, DNS CNAME creation, and named-tunnel readiness detection (a NEW `Registered tunnel connection` stderr pattern, NOT the `*.trycloudflare.com` URL-extraction used by cf-quick) ALL need to be validated against real Cloudflare APIs at least once before the first public release of this provider. The 6-step minimum-viable smoke below is the release gate for v0.8.1.
+
+Run on Windows 11 (primary) plus any second host if available.
+
+**Prereqs:**
+
+1. A Cloudflare account with an owned zone (free tier is fine; this smoke creates exactly one tunnel + one DNS CNAME and the cleanup in step 8 removes them).
+2. One pre-chosen subdomain. Use something unambiguously disposable — e.g. `mcp-smoke-<YYYYMMDD>.<zone>` so accidental orphaning is obvious.
+3. Fresh VSIX installed at v0.8.1 (filename `perplexity-vscode-0.8.1.vsix` after Task 8.4.5's bump) OR the post-8.4.4 build at HEAD `381f75c` stamped 0.8.0 (the CLI-only checks don't require the extension at all).
+4. Profile logged in (only required for step 6's end-to-end daemon-start check; steps 1-5 and 7-8 are CLI-only and don't need a profile).
+5. A browser available for step 3 (cloudflared login opens one).
+6. The chosen hostname must not be subject to Cloudflare Challenge/CAPTCHA on MCP/OAuth paths. If the zone has WAF, Security Level, Browser Integrity Check, or Super Bot Fight Mode challenge rules, create a higher-priority Skip rule for this smoke hostname before step 6.
+
+**Placeholders** (substitute throughout):
+- `<sub>` — the disposable subdomain you chose (e.g. `mcp-smoke-20260423`)
+- `<zone>` — your Cloudflare-managed zone (e.g. `example.com`)
+- `<hostname>` — `<sub>.<zone>` fully qualified
+- `<uuid>` — the tunnel UUID returned by `cf-named-create` in step 5 (record it for steps 7 and 8)
+
+**Shell note:** PowerShell is the primary shell below. Git-Bash fallback is given where the syntax materially differs. Do NOT use `curl` in PowerShell (alias for `Invoke-WebRequest`, wrong output shape) — use `curl.exe` explicitly.
+
+**Before starting — guard against orphaned prior attempts:**
+
+```powershell
+npx perplexity-user-mcp daemon cf-named-list
+```
+If any `mcp-smoke-*` tunnels show up from a prior run, jump to step 8 and clean them before proceeding. A stale tunnel + DNS route blocks re-running step 5 with the same hostname.
+
+---
+
+- [ ] **Step 1 — Install cloudflared binary.**
+
+  **PowerShell:**
+  ```powershell
+  npx perplexity-user-mcp daemon install-tunnel --json
+  ```
+  **Bash:**
+  ```bash
+  npx perplexity-user-mcp daemon install-tunnel --json
+  ```
+
+  Expect: exit 0; stdout is a single JSON line containing `"ok":true` and a `binaryPath` pointing at `<configDir>/bin/cloudflared(.exe)`. The binary should be executable from that exact path in step 3.
+
+- [ ] **Step 2 — cf-named-login decline path returns 130.**
+
+  **PowerShell:**
+  ```powershell
+  "n" | npx perplexity-user-mcp daemon cf-named-login; $LASTEXITCODE
+  ```
+  **Bash:**
+  ```bash
+  echo n | npx perplexity-user-mcp daemon cf-named-login; echo "exit=$?"
+  ```
+
+  Expect: stderr shows the confirmation prompt `This opens your default browser to authorize Cloudflare. Continue? [y/N]` followed by `Cancelled.` — then the exit code printed is **130**. If you see exit 0 or 1 the confirmation wiring is wrong and this is a release blocker.
+
+- [ ] **Step 3 — cf-named-login --yes completes browser auth and cert appears.**
+
+  **PowerShell:**
+  ```powershell
+  npx perplexity-user-mcp daemon cf-named-login --yes
+  ```
+  **Bash:**
+  ```bash
+  npx perplexity-user-mcp daemon cf-named-login --yes
+  ```
+
+  A browser tab opens to `https://dash.cloudflare.com/argotunnel?...`. Authorize the zone. The CLI blocks until `~/.cloudflared/cert.pem` appears (up to 10 minutes default timeout); it should land within ~30s of clicking Authorize.
+
+  Expect: exit 0; stdout prints `cloudflared login completed. Cert at <path>`. Then verify manually:
+
+  **PowerShell:**
+  ```powershell
+  Test-Path "$env:USERPROFILE\.cloudflared\cert.pem"
+  ```
+  **Bash:**
+  ```bash
+  ls -la ~/.cloudflared/cert.pem
+  ```
+  Expect `True` / a regular file.
+
+- [ ] **Step 4 — cf-named-list works (initially empty or pre-existing-only).**
+
+  **PowerShell:**
+  ```powershell
+  npx perplexity-user-mcp daemon cf-named-list --json
+  ```
+  **Bash:**
+  ```bash
+  npx perplexity-user-mcp daemon cf-named-list --json
+  ```
+
+  Expect: exit 0; stdout is a single parseable JSON line `{"tunnels":[...]}`. If the array is empty that's fine — this confirms the plain-text formatter works (run without `--json` to see `No named tunnels.` on stdout). If you have pre-existing named tunnels from another workflow, they'll appear — that's expected, the list is cert-scoped not script-scoped.
+
+- [ ] **Step 5 — cf-named-create creates tunnel, DNS route, and managed YAML.**
+
+  **PowerShell:**
+  ```powershell
+  npx perplexity-user-mcp daemon cf-named-create --name "mcp-smoke-$(Get-Date -Format yyyyMMdd)" --hostname "<sub>.<zone>" --yes --json
+  ```
+  **Bash:**
+  ```bash
+  npx perplexity-user-mcp daemon cf-named-create --name "mcp-smoke-$(date +%Y%m%d)" --hostname "<sub>.<zone>" --yes --json
+  ```
+
+  Expect: exit 0; stdout is a single JSON line `{"ok":true,"hostname":"<sub>.<zone>","uuid":"<uuid>","configPath":"<configDir>/cloudflared-named.yml"}`. Record `<uuid>` for step 7 and step 8 cleanup.
+
+  Then verify manually:
+
+  **PowerShell:**
+  ```powershell
+  Get-Content "$env:USERPROFILE\.perplexity-mcp\cloudflared-named.yml"
+  Test-Path "$env:USERPROFILE\.cloudflared\<uuid>.json"
+  ```
+  **Bash:**
+  ```bash
+  cat ~/.perplexity-mcp/cloudflared-named.yml
+  ls -la ~/.cloudflared/<uuid>.json
+  ```
+  Expect the YAML contains `tunnel: <uuid>` and `hostname: <sub>.<zone>` and `service: http://127.0.0.1:1` (port=1 placeholder — real port is rewritten by the provider at daemon start; see step 6). Expect the `<uuid>.json` credentials file exists.
+
+  **DNS cross-check** (optional but recommended):
+
+  **PowerShell:**
+  ```powershell
+  Resolve-DnsName "<sub>.<zone>" -Type CNAME
+  ```
+  **Bash:**
+  ```bash
+  dig +short CNAME <sub>.<zone>
+  ```
+  Expect a CNAME pointing at `<uuid>.cfargotunnel.com`. If DNS hasn't propagated within ~2 minutes, Cloudflare's side of the route creation failed and step 6 will not reach the hostname.
+
+- [ ] **Step 6 — set-provider cf-named + daemon start --tunnel reaches the named URL.**
+
+  **PowerShell:**
+  ```powershell
+  npx perplexity-user-mcp daemon set-provider cf-named
+  npx perplexity-user-mcp daemon start --tunnel
+  ```
+  **Bash:**
+  ```bash
+  npx perplexity-user-mcp daemon set-provider cf-named
+  npx perplexity-user-mcp daemon start --tunnel
+  ```
+
+  The daemon starts, writes the lockfile at the OS-assigned loopback port, rewrites `cloudflared-named.yml` with that port (replacing the port=1 placeholder from step 5 — this is the load-bearing 8.4.2 port-drift rewrite), and spawns cloudflared with `tunnel --no-autoupdate --config <managed-yml> run`. Wait ~15s for the first `Registered tunnel connection` line in the daemon log.
+
+  In a **second terminal**, probe the public URL via the allowlisted tunnel endpoints. **Do not** try `/daemon/*` through the tunnel — v0.7.4's H11 hardening returns 404 to all `/daemon/*` routes on the tunnel regardless of bearer, and the security regression check below verifies that still holds.
+
+  **Primary probe: protected-resource metadata (allowlisted public endpoint).**
+
+  **PowerShell:**
+  ```powershell
+  curl.exe -i "https://<sub>.<zone>/.well-known/oauth-protected-resource"
+  ```
+  **Bash:**
+  ```bash
+  curl -i "https://<sub>.<zone>/.well-known/oauth-protected-resource"
+  ```
+  Expect: HTTP 200. Response body is JSON containing `"resource": "https://<sub>.<zone>/mcp"` and `"resource_name": "Perplexity MCP"`. The host-aware `resource` URL proves (a) the named tunnel is up, (b) traffic reaches the local daemon on the LIVE port (not the port=1 placeholder), (c) the OAuth resource-binding logic correctly reflects the incoming Host header rather than 127.0.0.1.
+
+  **Cloudflare edge challenge check (release blocker if present).**
+
+  **PowerShell:**
+  ```powershell
+  curl.exe -i -X POST "https://<sub>.<zone>/mcp" -H "Content-Type: application/json" -H "Accept: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"initialize"}'
+  ```
+  **Bash:**
+  ```bash
+  curl -i -X POST "https://<sub>.<zone>/mcp" -H "Content-Type: application/json" -H "Accept: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"initialize"}'
+  ```
+
+  Expect: **not** `403` and **no** `Cf-Mitigated: challenge` response header. Cloudflare Challenge/CAPTCHA pages are returned as `text/html` before the request reaches the local daemon; MCP clients cannot solve them and will report the server as unreachable.
+
+  If this probe is challenged, add or fix a Cloudflare WAF Custom Rule above the challenge rule:
+
+  ```text
+  http.host eq "<sub>.<zone>" and (
+    http.request.uri.path eq "/" or
+    starts_with(http.request.uri.path, "/mcp") or
+    starts_with(http.request.uri.path, "/.well-known/") or
+    http.request.uri.path in {"/authorize" "/token" "/register" "/revoke"}
+  )
+  ```
+
+  Action: `Skip`. Select the products/phases that are issuing the challenge for this hostname: all remaining custom rules, managed rules, Super Bot Fight Mode, Browser Integrity Check, Security Level, and rate limiting rules as applicable. If legacy Bot Fight Mode is the source, it cannot be skipped; disable it for the zone or use a hostname/zone that does not challenge MCP traffic.
+
+  **Optional: unauthenticated /mcp POST returns 401 with correct WWW-Authenticate.**
+
+  **PowerShell:**
+  ```powershell
+  curl.exe -i -X POST "https://<sub>.<zone>/mcp" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"initialize"}'
+  ```
+  **Bash:**
+  ```bash
+  curl -i -X POST "https://<sub>.<zone>/mcp" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"initialize"}'
+  ```
+  Expect: HTTP 401 with a `WWW-Authenticate` response header that contains `resource_metadata="https://<sub>.<zone>/.well-known/oauth-protected-resource"` (host-aware — MUST match the tunnel hostname, NOT 127.0.0.1).
+
+  **Security regression check (H11 holds through the named tunnel).**
+
+  **PowerShell:**
+  ```powershell
+  $bearer = (Get-Content "$env:USERPROFILE\.perplexity-mcp\daemon.token" | ConvertFrom-Json).bearerToken
+  curl.exe -i -H "Authorization: Bearer $bearer" "https://<sub>.<zone>/daemon/health"
+  ```
+  **Bash:**
+  ```bash
+  curl -i -H "Authorization: Bearer $(jq -r .bearerToken ~/.perplexity-mcp/daemon.token)" "https://<sub>.<zone>/daemon/health"
+  ```
+  Expect: **HTTP 404**, not 200. Even with the correct daemon bearer, tunnel callers must be blocked from all `/daemon/*` admin routes. This is the v0.7.4 H11 contract — if the response is 200 OR 401, the H11 hardening regressed under the cf-named provider and this is a release blocker.
+
+  **Port-drift YAML verification (load-bearing — 8.4.2 contract).**
+
+  **PowerShell:**
+  ```powershell
+  Select-String "service: http" "$env:USERPROFILE\.perplexity-mcp\cloudflared-named.yml"
+  ```
+  Expect a line like `    service: http://127.0.0.1:<live-port>` where `<live-port>` ≠ 1. If it still reads port=1, the port-drift rewrite regressed — release blocker.
+
+  Stop the daemon (Ctrl-C in the first terminal, or `npx perplexity-user-mcp daemon stop` from another) before step 7.
+
+- [ ] **Step 7 — cf-named-list confirms the UUID appears.**
+
+  **PowerShell:**
+  ```powershell
+  npx perplexity-user-mcp daemon cf-named-list --json
+  ```
+
+  Expect: stdout JSON `tunnels` array now includes an object with `uuid == <uuid>` and `name == "mcp-smoke-<date>"`. `connections` will be 0 now that the daemon has stopped.
+
+- [ ] **Step 8 — CLEANUP. Delete the smoke tunnel + DNS route.**
+
+  **Always run this step, whether the smoke passed or failed midway.** A stale tunnel + DNS route costs nothing but clutters your zone and blocks re-running the smoke with the same hostname.
+
+  The `cloudflared` binary that landed in step 1 includes delete/route commands — our CLI doesn't surface delete yet (that's a future enhancement), so drive it directly.
+
+  **PowerShell:**
+  ```powershell
+  $cf = "$env:USERPROFILE\.perplexity-mcp\bin\cloudflared.exe"
+  & $cf tunnel delete <uuid>                 # if this fails with "has active connections", ensure daemon is stopped and retry; add --force as last resort
+  # DNS route: cloudflared doesn't have a direct "delete route" for CNAMEs created via `tunnel route dns`.
+  # Delete the `<sub>` CNAME manually in the Cloudflare dashboard: zone -> DNS -> Records -> find <sub>.<zone> -> Delete.
+  Remove-Item "$env:USERPROFILE\.cloudflared\<uuid>.json" -ErrorAction SilentlyContinue
+  Remove-Item "$env:USERPROFILE\.perplexity-mcp\cloudflared-named.yml" -ErrorAction SilentlyContinue
+  npx perplexity-user-mcp daemon set-provider cf-quick   # reset active provider so the daemon doesn't try to start a deleted tunnel on next `daemon start`
+  ```
+  **Bash:**
+  ```bash
+  cf=~/.perplexity-mcp/bin/cloudflared
+  "$cf" tunnel delete <uuid>
+  rm -f ~/.cloudflared/<uuid>.json ~/.perplexity-mcp/cloudflared-named.yml
+  npx perplexity-user-mcp daemon set-provider cf-quick
+  ```
+
+  **Verify cleanup:**
+  ```powershell
+  npx perplexity-user-mcp daemon cf-named-list --json
+  ```
+  Expect the `<uuid>` is gone from the array (if the smoke tunnel was the only one, the array is empty). Also open the Cloudflare dashboard → DNS → confirm `<sub>.<zone>` is gone; if it lingers, delete it manually.
+
+  The origin cert at `~/.cloudflared/cert.pem` is zone-scoped and is safe to keep for future smokes; delete it only if you want to fully reset the machine's Cloudflare trust.
+
+---
+
+**Release gate for v0.8.1:** all 8 boxes checked OR step 8 cleanup executed AND a distinct waiver recorded in `docs/smoke-evidence/` + the release commit body stating that external provider smoke was not performed (stronger language than v0.8.0's waiver because the risk is external-API, not code-only).
+
+Referenced by Task 8.4.5 in [docs/superpowers/plans/2026-04-22-phase-8-completeness.md](superpowers/plans/2026-04-22-phase-8-completeness.md).

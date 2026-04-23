@@ -7,6 +7,8 @@ import {
   type DaemonTunnelState,
   type DashboardState,
   type ExtensionMessage,
+  type TunnelProbeResult,
+  type TunnelProbeTarget,
   type WebviewMessage
 } from "@perplexity-user-mcp/shared";
 import type { AuthManager, AuthState } from "../mcp/auth-manager.js";
@@ -25,8 +27,10 @@ import { redactMessage, redactObject } from "../redact.js";
 import { REVEAL_CONFIRM_LABEL, runBearerRevealGate } from "./bearer-reveal-gate.js";
 import {
   handleCfNamedCreate,
+  handleCfNamedDeleteRemote,
   handleCfNamedList,
   handleCfNamedLogin,
+  handleCfNamedUnbindLocal,
   type CfNamedDeps,
 } from "./cf-named-handlers.js";
 import type { DebugCollector } from "../debug/collector.js";
@@ -60,11 +64,14 @@ import {
 } from "../history/open-handlers.js";
 import {
   clearBundledNgrokSettings,
+  clearCfNamedConfig,
   createCfNamedTunnel,
+  deleteCfNamedTunnel,
   disableBundledDaemonTunnel,
   enableBundledDaemonTunnel,
   ensureBundledDaemon,
   getBundledActiveTunnelProvider,
+  getBundledCfNamedState,
   getBundledDaemonStatus,
   getBundledNgrokSettings,
   installBundledCloudflared,
@@ -597,9 +604,16 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
           }
           case "daemon:clear-ngrok-settings": {
             try {
+              const activeProvider = getBundledActiveTunnelProvider();
+              const status = await getBundledDaemonStatus();
+              const hasTunnel = Boolean(status.health?.tunnel?.url ?? status.record?.tunnelUrl);
+              if (activeProvider === "ngrok" && hasTunnel) {
+                await disableBundledDaemonTunnel();
+              }
               clearBundledNgrokSettings();
               await this.postTunnelProviders();
-              await this.postNotice("info", "ngrok settings cleared. Paste your authtoken again to re-enable.");
+              await this.postDaemonState({ restartEvents: true });
+              await this.postNotice("info", "ngrok local settings deleted. Remote ngrok endpoints/domains remain in the ngrok dashboard.");
               await this.postActionResult(message.id, true);
             } catch (err) {
               await this.postActionResult(message.id, false, (err as Error).message);
@@ -671,6 +685,38 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             const deps = this.makeCfNamedDeps();
             const outcome = await handleCfNamedList(message.id, deps);
             await this.postActionResult(message.id, outcome === "ok");
+            break;
+          }
+          case "daemon:cf-named-unbind-local": {
+            const deps = this.makeCfNamedDeps();
+            const outcome = await handleCfNamedUnbindLocal(message.id, message.payload, deps);
+            if (outcome === "ok") {
+              await this.postTunnelProviders();
+              await this.postDaemonState({ restartEvents: true });
+              await this.postNotice("info", "Cloudflare named tunnel local config unbound.");
+              await this.postActionResult(message.id, true);
+            } else {
+              await this.postActionResult(message.id, false, outcome);
+            }
+            break;
+          }
+          case "daemon:cf-named-delete-remote": {
+            const deps = this.makeCfNamedDeps();
+            const outcome = await handleCfNamedDeleteRemote(message.id, message.payload, deps);
+            if (outcome === "ok") {
+              await this.postTunnelProviders();
+              await this.postDaemonState({ restartEvents: true });
+              await this.postNotice("warning", `Deleted remote Cloudflare tunnel "${message.payload.name}". Remove the DNS CNAME for ${message.payload.hostname ?? "the hostname"} in Cloudflare DNS if it still exists.`);
+              await this.postActionResult(message.id, true);
+            } else {
+              await this.postTunnelProviders();
+              await this.postDaemonState({ restartEvents: true });
+              await this.postActionResult(message.id, false, outcome);
+            }
+            break;
+          }
+          case "daemon:tunnel-probe": {
+            await this.handleTunnelProbe(message);
             break;
           }
           case "daemon:kill": {
@@ -1333,6 +1379,9 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       createCfNamedTunnel: (params) => createCfNamedTunnel(params),
       listCfNamedTunnels: () => listCfNamedTunnels(),
       readCfNamedConfig: () => readCfNamedConfig(),
+      clearCfNamedConfig: () => clearCfNamedConfig(),
+      deleteCfNamedTunnel: (uuid) => deleteCfNamedTunnel(uuid),
+      disableActiveTunnelIfNeeded: () => this.disableActiveTunnelIfNeeded(),
       showWarningMessage: async (msg, options, ...items) =>
         vscode.window.showWarningMessage(msg, options, ...items),
       post: async (m) => {
@@ -1342,6 +1391,56 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
     };
   }
 
+  private async disableActiveTunnelIfNeeded(): Promise<void> {
+    const status = await getBundledDaemonStatus();
+    const tunnelStatus = status.health?.tunnel?.status;
+    const hasUrl = Boolean(status.health?.tunnel?.url ?? status.record?.tunnelUrl);
+    if (hasUrl || tunnelStatus === "enabled" || tunnelStatus === "starting") {
+      await disableBundledDaemonTunnel();
+    }
+  }
+
+  private async handleTunnelProbe(message: Extract<WebviewMessage, { type: "daemon:tunnel-probe" }>): Promise<void> {
+    const timeoutMs = 5000 as const;
+    const targets = normalizeProbeTargets(message.payload?.targets);
+    try {
+      const status = await getBundledDaemonStatus();
+      const baseUrl = status.health?.tunnel?.url ?? status.record?.tunnelUrl ?? null;
+      if (!baseUrl) {
+        const checkedAt = new Date().toISOString();
+        const results: TunnelProbeResult[] = targets.map((target) => ({
+          target,
+          cfMitigated: false,
+          verdict: "retryable",
+          checkedAt,
+          error: "no-tunnel-url",
+        }));
+        await this.view?.webview.postMessage({
+          type: "daemon:tunnel-probe:result",
+          id: message.id,
+          payload: { ok: false, results, timeoutMs, error: "no-tunnel-url" },
+        } satisfies ExtensionMessage);
+        await this.postActionResult(message.id, false, "no-tunnel-url");
+        return;
+      }
+
+      const results = await Promise.all(targets.map((target) => probeTunnelTarget(baseUrl, target, timeoutMs)));
+      await this.view?.webview.postMessage({
+        type: "daemon:tunnel-probe:result",
+        id: message.id,
+        payload: { ok: true, results, timeoutMs },
+      } satisfies ExtensionMessage);
+      await this.postActionResult(message.id, true);
+    } catch (err) {
+      await this.view?.webview.postMessage({
+        type: "daemon:tunnel-probe:result",
+        id: message.id,
+        payload: { ok: false, timeoutMs, error: err instanceof Error ? err.message : String(err) },
+      } satisfies ExtensionMessage);
+      await this.postActionResult(message.id, false, err instanceof Error ? err.message : String(err));
+    }
+  }
+
   private async postTunnelProviders(): Promise<void> {
     if (!this.view) return;
     try {
@@ -1349,6 +1448,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       const providers = await listBundledTunnelProviders();
       const activeProvider = getBundledActiveTunnelProvider();
       const ngrok = getBundledNgrokSettings();
+      const cfNamed = getBundledCfNamedState();
       await this.view.webview.postMessage({
         type: "daemon:tunnel-providers",
         payload: {
@@ -1361,6 +1461,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             setup: p.setup,
           })),
           ngrok,
+          cfNamed,
         },
       } satisfies ExtensionMessage);
       debug(`[trace] postTunnelProviders exit OK active=${activeProvider} count=${providers.length} cf-named.ready=${providers.find((p) => p.id === "cf-named")?.setup.ready ?? "n/a"}`);
@@ -1724,6 +1825,65 @@ function normalizeTunnelState(payload: Record<string, unknown>): DaemonTunnelSta
     pid: typeof payload.pid === "number" ? payload.pid : null,
     error: typeof payload.error === "string" && payload.error.length > 0 ? payload.error : null,
   };
+}
+
+function normalizeProbeTargets(targets: TunnelProbeTarget[] | undefined): TunnelProbeTarget[] {
+  const allowed = new Set<TunnelProbeTarget>(["/", "/mcp"]);
+  const normalized = (targets ?? ["/", "/mcp"]).filter((target): target is TunnelProbeTarget => allowed.has(target));
+  return normalized.length > 0 ? normalized : ["/", "/mcp"];
+}
+
+async function probeTunnelTarget(
+  baseUrl: string,
+  target: TunnelProbeTarget,
+  timeoutMs: 5000,
+): Promise<TunnelProbeResult> {
+  const checkedAt = new Date().toISOString();
+  const url = new URL(target, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`).toString();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      redirect: "manual",
+      signal: controller.signal,
+    });
+    // Deliberately do not read the response body. Only status + headers cross
+    // the webview boundary so challenge pages and daemon payloads never leak.
+    void response.body?.cancel().catch(() => undefined);
+    const cfMitigated = response.headers.get("cf-mitigated") === "challenge";
+    return {
+      target,
+      status: response.status,
+      cfMitigated,
+      verdict: classifyProbeVerdict(target, response.status, cfMitigated),
+      checkedAt,
+    };
+  } catch (err) {
+    const aborted = err instanceof Error && err.name === "AbortError";
+    return {
+      target,
+      cfMitigated: false,
+      verdict: "retryable",
+      checkedAt,
+      error: aborted ? "timeout" : "network",
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function classifyProbeVerdict(
+  target: TunnelProbeTarget,
+  status: number,
+  cfMitigated: boolean,
+): TunnelProbeResult["verdict"] {
+  if (cfMitigated && status === 403) return "challenge";
+  if (target === "/mcp" && status === 200) return "security-flag";
+  if (target === "/mcp" && status === 401) return "ok";
+  if (status >= 500) return "retryable";
+  if (target === "/" && status >= 200 && status < 400) return "ok";
+  return "unknown";
 }
 
 function consumeSseFrames(

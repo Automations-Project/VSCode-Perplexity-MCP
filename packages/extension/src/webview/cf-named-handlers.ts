@@ -26,6 +26,9 @@ export interface CfNamedDeps {
   }) => Promise<{ uuid: string; name?: string; credentialsPath?: string } | { uuid: string; hostname: string; configPath: string }>;
   listCfNamedTunnels: () => Promise<Array<{ uuid: string; name: string; connections?: number }>>;
   readCfNamedConfig: () => Promise<{ uuid: string; configPath: string; hostname: string } | null>;
+  clearCfNamedConfig: () => Promise<boolean> | boolean;
+  deleteCfNamedTunnel: (uuid: string) => Promise<{ uuid: string }>;
+  disableActiveTunnelIfNeeded: () => Promise<void>;
   /**
    * vscode.window.showWarningMessage shim. Returns the clicked-button label
    * OR undefined when the user cancelled / dismissed the modal. The modal's
@@ -192,6 +195,103 @@ export async function handleCfNamedList(
       type: "daemon:cf-named-list:result",
       id,
       payload: { ok: false, error: errorMessage(err) },
+    });
+    return "error";
+  }
+}
+
+export async function handleCfNamedUnbindLocal(
+  id: string,
+  payload: Extract<WebviewMessage, { type: "daemon:cf-named-unbind-local" }>["payload"],
+  deps: CfNamedDeps,
+): Promise<"cancelled" | "ok" | "error"> {
+  const confirm = await deps.showWarningMessage(
+    "Unbind local Cloudflare named tunnel config?",
+    {
+      modal: true,
+      detail:
+        `This removes only the local managed config for tunnel UUID ${payload.uuid}. The remote Cloudflare tunnel and DNS records are left untouched. Continue?`,
+    },
+    "Unbind local config",
+  );
+  if (confirm !== "Unbind local config") {
+    await deps.post({
+      type: "daemon:cf-named-unbind-local:result",
+      id,
+      payload: { ok: false, error: "cancelled" },
+    });
+    return "cancelled";
+  }
+  try {
+    await deps.disableActiveTunnelIfNeeded();
+    const configCleared = await deps.clearCfNamedConfig();
+    await deps.post({
+      type: "daemon:cf-named-unbind-local:result",
+      id,
+      payload: { ok: true, uuid: payload.uuid, configCleared },
+    });
+    return "ok";
+  } catch (err) {
+    await deps.post({
+      type: "daemon:cf-named-unbind-local:result",
+      id,
+      payload: { ok: false, error: errorMessage(err) },
+    });
+    return "error";
+  }
+}
+
+export async function handleCfNamedDeleteRemote(
+  id: string,
+  payload: Extract<WebviewMessage, { type: "daemon:cf-named-delete-remote" }>["payload"],
+  deps: CfNamedDeps,
+): Promise<"cancelled" | "ok" | "error"> {
+  const confirm = await deps.showWarningMessage(
+    "Delete remote Cloudflare named tunnel?",
+    {
+      modal: true,
+      detail:
+        `This deletes the remote Cloudflare tunnel "${payload.name}" (${payload.uuid}). The tunnel will stay disabled even if deletion fails. You may still need to remove the DNS CNAME for ${payload.hostname ?? "the hostname"} afterwards.`,
+    },
+    "Delete remote tunnel",
+  );
+  if (confirm !== "Delete remote tunnel") {
+    await deps.post({
+      type: "daemon:cf-named-delete-remote:result",
+      id,
+      payload: { ok: false, error: "cancelled", reason: "unknown" },
+    });
+    return "cancelled";
+  }
+  try {
+    await deps.disableActiveTunnelIfNeeded();
+    const before = await deps.readCfNamedConfig();
+    await deps.deleteCfNamedTunnel(payload.uuid);
+    const localConfigCleared = before?.uuid === payload.uuid ? await deps.clearCfNamedConfig() : false;
+    await deps.post({
+      type: "daemon:cf-named-delete-remote:result",
+      id,
+      payload: {
+        ok: true,
+        uuid: payload.uuid,
+        ...(payload.hostname ? { hostname: payload.hostname } : {}),
+        localConfigCleared,
+        dnsCleanupUrl: "https://dash.cloudflare.com/?to=/:account/:zone/dns",
+      },
+    });
+    return "ok";
+  } catch (err) {
+    const reason = typeof err === "object" && err !== null && "reason" in err
+      ? (err as { reason?: "active-connections" | "unknown" }).reason
+      : undefined;
+    await deps.post({
+      type: "daemon:cf-named-delete-remote:result",
+      id,
+      payload: {
+        ok: false,
+        error: errorMessage(err),
+        reason: reason === "active-connections" ? "active-connections" : "unknown",
+      },
     });
     return "error";
   }

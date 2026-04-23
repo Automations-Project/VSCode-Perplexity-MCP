@@ -95,6 +95,31 @@ export interface DaemonAuditEntry {
   error?: string;
 }
 
+export type TunnelProbeTarget = "/" | "/mcp";
+export type TunnelProbeVerdict = "ok" | "security-flag" | "challenge" | "retryable" | "unknown";
+
+export interface TunnelProbeResult {
+  target: TunnelProbeTarget;
+  status?: number;
+  cfMitigated: boolean;
+  verdict: TunnelProbeVerdict;
+  checkedAt: string;
+  error?: "timeout" | "network" | "no-tunnel-url" | "unsupported";
+}
+
+export interface CfNamedManagedConfig {
+  uuid: string;
+  hostname: string;
+  configPath: string;
+  credentialsPresent: boolean;
+}
+
+export interface CfNamedTunnelSummary {
+  uuid: string;
+  name: string;
+  connections?: number;
+}
+
 export type AuthStatus =
   | "unknown" | "checking" | "valid" | "expired" | "error"
   | "logging-in" | "awaiting_otp" | "chrome_missing" | "sso_required";
@@ -271,6 +296,12 @@ export type ExtensionMessage =
           };
         }>;
         ngrok: { configured: boolean; domain?: string; updatedAt?: string };
+        cfNamed?: {
+          config: CfNamedManagedConfig | null;
+          tunnels?: CfNamedTunnelSummary[];
+          lastListedAt?: string;
+          lastListError?: string;
+        };
       };
     }
   | {
@@ -289,8 +320,35 @@ export type ExtensionMessage =
       type: "daemon:cf-named-list:result";
       id: string;
       payload:
-        | { ok: true; tunnels: Array<{ uuid: string; name: string; connections?: number }> }
+        | { ok: true; tunnels: CfNamedTunnelSummary[] }
         | { ok: false; error: string };
+    }
+  | {
+      type: "daemon:cf-named-unbind-local:result";
+      id: string;
+      payload:
+        | { ok: true; uuid: string; configCleared: boolean }
+        | { ok: false; error: string };
+    }
+  | {
+      type: "daemon:cf-named-delete-remote:result";
+      id: string;
+      payload:
+        | {
+            ok: true;
+            uuid: string;
+            hostname?: string;
+            localConfigCleared: boolean;
+            dnsCleanupUrl: string;
+          }
+        | { ok: false; error: string; reason?: "active-connections" | "unknown" };
+    }
+  | {
+      type: "daemon:tunnel-probe:result";
+      id: string;
+      payload:
+        | { ok: true; results: TunnelProbeResult[]; timeoutMs: 5000 }
+        | { ok: false; results?: TunnelProbeResult[]; timeoutMs: 5000; error: string };
     }
   | { type: "history:list"; payload: { items: HistoryItem[] } }
   | { type: "history:entry"; payload: HistoryEntryDetail }
@@ -382,6 +440,21 @@ export type WebviewMessage =
   | {
       type: "daemon:cf-named-list";
       id: string;
+    }
+  | {
+      type: "daemon:cf-named-unbind-local";
+      id: string;
+      payload: { uuid: string };
+    }
+  | {
+      type: "daemon:cf-named-delete-remote";
+      id: string;
+      payload: { uuid: string; name: string; hostname?: string };
+    }
+  | {
+      type: "daemon:tunnel-probe";
+      id: string;
+      payload?: { targets?: TunnelProbeTarget[]; timeoutMs?: 5000 };
     }
   | {
       type: "daemon:set-ngrok-authtoken";

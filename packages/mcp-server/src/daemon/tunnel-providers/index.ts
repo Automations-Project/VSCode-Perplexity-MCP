@@ -17,15 +17,21 @@ export {
   runCloudflaredLogin,
   listNamedTunnels,
   createNamedTunnel,
+  deleteNamedTunnel,
+  clearNamedTunnelConfig,
   writeTunnelConfig,
   readNamedTunnelConfig,
   getNamedTunnelConfigPath,
+  isActiveConnectionDeleteFailure,
+  DeleteNamedTunnelError,
 } from "./cloudflared-named-setup.js";
 export type {
   CloudflaredLoginResult,
   NamedTunnelSummary,
   CreatedTunnel,
   NamedTunnelConfig,
+  DeletedNamedTunnel,
+  DeleteNamedTunnelFailureReason,
 } from "./cloudflared-named-setup.js";
 
 const REGISTRY: Record<TunnelProviderId, TunnelProvider> = {

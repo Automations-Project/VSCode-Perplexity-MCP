@@ -415,4 +415,83 @@ describe("cf-named widget — send message wiring (jsdom)", () => {
     expect(send).toHaveBeenCalledWith({ type: "daemon:cf-named-list" });
     cleanup();
   });
+
+  it("ready state → remote delete requires exact name or full UUID before dispatch", async () => {
+    const { render, fireEvent, cleanup } = await import("@testing-library/react");
+    const send = vi.fn();
+    const uuid = "11111111-2222-3333-4444-555555555555";
+    const { container } = render(
+      <DaemonStatusView
+        status={baseStatus}
+        auditTail={[]}
+        tokenRotatedAt={null}
+        tunnelProviders={{
+          ...cfNamedProviders({ ready: true }),
+          cfNamed: {
+            config: {
+              uuid,
+              hostname: "mcp.example.com",
+              configPath: "C:/Users/admin/.perplexity-mcp/cloudflared-named.yml",
+              credentialsPresent: true,
+            },
+            tunnels: [{ uuid, name: "perplexity-mcp", connections: 1 }],
+          },
+        }}
+        send={send}
+      />,
+    );
+    const confirmInput = container.querySelector(".cf-named-card-list input") as HTMLInputElement;
+    const deleteBtn = Array.from(container.querySelectorAll(".cf-named-card-list button"))
+      .find((button) => button.textContent?.includes("Delete remote")) as HTMLButtonElement;
+
+    expect(deleteBtn.disabled).toBe(true);
+    fireEvent.change(confirmInput, { target: { value: "11111111" } });
+    expect(deleteBtn.disabled).toBe(true);
+    fireEvent.change(confirmInput, { target: { value: uuid } });
+    expect(deleteBtn.disabled).toBe(false);
+    fireEvent.click(deleteBtn);
+    expect(send).toHaveBeenCalledWith({
+      type: "daemon:cf-named-delete-remote",
+      payload: { uuid, name: "perplexity-mcp", hostname: "mcp.example.com" },
+    });
+    cleanup();
+  });
+
+  it("renders probe verdicts without response body content", () => {
+    const tunnelProbe = {
+      timeoutMs: 5000 as const,
+      results: [
+        {
+          target: "/mcp" as const,
+          status: 200,
+          cfMitigated: false,
+          verdict: "security-flag" as const,
+          checkedAt: "2026-04-23T12:00:00.000Z",
+        },
+        {
+          target: "/" as const,
+          status: 403,
+          cfMitigated: true,
+          verdict: "challenge" as const,
+          checkedAt: "2026-04-23T12:00:00.000Z",
+        },
+      ],
+    };
+    const markup = renderToStaticMarkup(
+      <DaemonStatusView
+        status={{
+          ...baseStatus,
+          tunnel: { status: "enabled", url: "https://mcp.example.com", pid: 5151, error: null },
+        }}
+        auditTail={[]}
+        tokenRotatedAt={null}
+        tunnelProbe={tunnelProbe}
+        tunnelProviders={cfNamedProviders({ ready: true })}
+        send={vi.fn()}
+      />,
+    );
+    expect(markup).toContain("security flag");
+    expect(markup).toContain("Cloudflare challenge");
+    expect(markup).not.toContain("<html");
+  });
 });

@@ -41,7 +41,7 @@ describe("AuthorizedClients panel", () => {
     expect(screen.getByText("Claude Desktop")).toBeDefined();
     expect(screen.getByText("Cursor")).toBeDefined();
     expect(screen.getByText(/pplx-abc123/)).toBeDefined();
-    expect(screen.getByText(/2 tokens/)).toBeDefined();
+    expect(screen.getByText(/2 active tokens/)).toBeDefined();
   });
 
   it("clicking Revoke on a row calls onRevoke with that clientId", () => {

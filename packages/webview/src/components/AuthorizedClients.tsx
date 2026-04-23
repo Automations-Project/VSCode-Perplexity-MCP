@@ -1,4 +1,4 @@
-import React from "react";
+import { ShieldX } from "lucide-react";
 
 export interface AuthorizedClientRow {
   clientId: string;
@@ -30,44 +30,52 @@ function formatDate(iso?: string): string {
 }
 
 export function AuthorizedClients({ clients, onRevoke, onRevokeAll }: AuthorizedClientsProps) {
-  if (!clients || clients.length === 0) {
-    return (
-      <section className="pplx-card" aria-labelledby="authorized-clients-heading">
-        <h2 id="authorized-clients-heading">Authorized OAuth clients</h2>
-        <p className="pplx-empty-state">No external MCP clients have registered yet.</p>
-      </section>
-    );
-  }
   return (
-    <section className="pplx-card" aria-labelledby="authorized-clients-heading">
-      <header className="pplx-card-header">
-        <h2 id="authorized-clients-heading">Authorized OAuth clients</h2>
-        <button type="button" onClick={onRevokeAll}>Revoke all</button>
-      </header>
-      <table className="pplx-client-table">
-        <thead>
-          <tr>
-            <th scope="col">Client</th>
-            <th scope="col">Client ID</th>
-            <th scope="col">Last used</th>
-            <th scope="col">Consent approved</th>
-            <th scope="col">Active tokens</th>
-            <th scope="col" aria-label="Actions"></th>
-          </tr>
-        </thead>
-        <tbody>
+    <div className="glass-panel section-panel" aria-labelledby="authorized-clients-heading">
+      <div className="section-header" style={{ marginBottom: 10 }}>
+        <div className="eyebrow">Security</div>
+        <div className="title" id="authorized-clients-heading">Authorized OAuth clients</div>
+      </div>
+
+      {clients.length === 0 ? (
+        <div className="empty-state">No external MCP clients have registered yet.</div>
+      ) : (
+        <div className="flex flex-col gap-2">
           {clients.map((c) => (
-            <tr key={c.clientId}>
-              <td>{c.clientName ?? "(unnamed)"}</td>
-              <td><code title={c.clientId}>{truncate(c.clientId)}</code></td>
-              <td>{formatDate(c.lastUsedAt)}</td>
-              <td>{formatDate(c.consentLastApprovedAt)}</td>
-              <td>{c.activeTokens} tokens</td>
-              <td><button type="button" onClick={() => onRevoke(c.clientId)}>Revoke</button></td>
-            </tr>
+            <div key={c.clientId} className="list-row" style={{ alignItems: "flex-start" }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: "0.75rem", fontWeight: 600 }} className="text-[var(--text-primary)]">
+                  {c.clientName ?? "(unnamed)"}
+                </div>
+                <div style={{ fontSize: "0.66rem", marginTop: 2, fontFamily: "var(--font-mono)", overflowWrap: "anywhere" }} className="text-[var(--text-muted)]">
+                  <code title={c.clientId}>{truncate(c.clientId)}</code>
+                </div>
+                <div style={{ fontSize: "0.62rem", marginTop: 2 }} className="text-[var(--text-muted)]">
+                  Last used {formatDate(c.lastUsedAt)} · Consent {formatDate(c.consentLastApprovedAt)} · {c.activeTokens} active token{c.activeTokens === 1 ? "" : "s"}
+                </div>
+              </div>
+              <button
+                className="danger-button btn-sm"
+                onClick={() => onRevoke(c.clientId)}
+                title={`Revoke ${c.clientName ?? c.clientId}`}
+              >
+                <ShieldX size={11} />
+                Revoke
+              </button>
+            </div>
           ))}
-        </tbody>
-      </table>
-    </section>
+          <div className="daemon-section-divider" aria-hidden="true" />
+          <div className="flex items-center gap-2" style={{ justifyContent: "flex-end" }}>
+            <span style={{ fontSize: "0.66rem" }} className="text-[var(--text-muted)]">
+              {clients.length} client{clients.length === 1 ? "" : "s"}
+            </span>
+            <button className="danger-button btn-sm" onClick={onRevokeAll}>
+              <ShieldX size={11} />
+              Revoke all
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

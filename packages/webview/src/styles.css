@@ -23,6 +23,8 @@
   --bg-err:   rgba(248, 113, 113, 0.10);
   --bg-info:  rgba(56, 189, 248, 0.10);
   --bg-ai:    rgba(192, 38, 211, 0.07);
+  --text-accent: var(--accent);
+  --font-mono: "Cascadia Code", "SFMono-Regular", ui-monospace, monospace;
 
   color-scheme: dark;
 }
@@ -118,6 +120,80 @@ a {
 .notice {
   border-radius: 14px;
   padding: 12px;
+}
+
+/* ── Daemon nested inset panels (no double glass) ── */
+.daemon-inset-panel {
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.daemon-section-divider {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  margin: 8px 0;
+}
+
+/* <details>/<summary> disclosure pattern used by the daemon card's
+   Audit Tail and managed-caveat panels. `listStyle: none` removes the
+   native marker — the rotating ChevronDown provides a cleaner affordance. */
+.daemon-disclosure-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+}
+
+.daemon-disclosure-summary::-webkit-details-marker {
+  display: none;
+}
+
+.daemon-disclosure-icon {
+  transition: transform 150ms ease;
+  flex-shrink: 0;
+}
+
+details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
+  transform: rotate(180deg);
+}
+
+.cf-named-tunnel-list {
+  container-type: inline-size;
+}
+
+.cf-named-card-list {
+  display: grid;
+  gap: 8px;
+}
+
+.cf-named-tunnel-table {
+  display: none;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.66rem;
+}
+
+.cf-named-tunnel-table th,
+.cf-named-tunnel-table td {
+  padding: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  text-align: left;
+  vertical-align: top;
+}
+
+.dns-cleanup-callout {
+  border-color: rgba(255, 180, 80, 0.32);
+}
+
+@container (min-width: 480px) {
+  .cf-named-card-list {
+    display: none;
+  }
+
+  .cf-named-tunnel-table {
+    display: table;
+  }
 }
 
 .header-panel {
