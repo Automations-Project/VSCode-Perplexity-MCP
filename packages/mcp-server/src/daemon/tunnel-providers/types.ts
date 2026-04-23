@@ -1,6 +1,6 @@
 import type { StartedTunnel, TunnelState } from "../tunnel.js";
 
-export type TunnelProviderId = "cf-quick" | "ngrok";
+export type TunnelProviderId = "cf-quick" | "ngrok" | "cf-named";
 
 export interface TunnelProviderStartOptions {
   port: number;

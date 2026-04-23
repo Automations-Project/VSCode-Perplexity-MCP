@@ -2,16 +2,19 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, join } from "node:path";
 
 import { cloudflaredQuickProvider } from "./cloudflared-quick.js";
+import { cloudflaredNamedProvider, createCloudflaredNamedProvider } from "./cloudflared-named.js";
 import { ngrokProvider } from "./ngrok.js";
 import type { TunnelProvider, TunnelProviderId, TunnelProviderStatus } from "./types.js";
 
 export { readNgrokSettings, writeNgrokSettings, clearNgrokSettings, getNgrokConfigPath } from "./ngrok-config.js";
 export type { NgrokSettings } from "./ngrok-config.js";
 export type { TunnelProvider, TunnelProviderId, TunnelProviderStatus, SetupCheck } from "./types.js";
+export { createCloudflaredNamedProvider };
 
 const REGISTRY: Record<TunnelProviderId, TunnelProvider> = {
   "cf-quick": cloudflaredQuickProvider,
   ngrok: ngrokProvider,
+  "cf-named": cloudflaredNamedProvider,
 };
 
 export function getTunnelProvider(id: TunnelProviderId): TunnelProvider {
