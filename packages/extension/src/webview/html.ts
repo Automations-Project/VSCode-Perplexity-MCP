@@ -1,10 +1,11 @@
+import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as vscode from "vscode";
 import type { DashboardState } from "@perplexity-user-mcp/shared";
 
 function createNonce(): string {
-  return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+  return randomBytes(16).toString("base64");
 }
 
 export function renderWebviewHtml(
