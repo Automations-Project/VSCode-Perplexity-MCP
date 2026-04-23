@@ -38,6 +38,13 @@ export interface CfNamedDeps {
     ...items: string[]
   ) => Promise<string | undefined>;
   post: (message: ExtensionMessage) => void | Promise<void>;
+  /**
+   * Optional debug trace sink. Production wires this to the extension's
+   * `debug()` output channel so each step of the cf-named flow is visible in
+   * the Perplexity Internal MCP log — critical for diagnosing why a login
+   * call stalls (pre-modal vs mid-modal vs mid-spawn). Tests omit this.
+   */
+  log?: (message: string) => void;
 }
 
 const ERROR_MAX = 200;
@@ -62,6 +69,7 @@ export async function handleCfNamedLogin(
   id: string,
   deps: CfNamedDeps,
 ): Promise<"cancelled" | "ok" | "error"> {
+  deps.log?.(`cf-named-login id=${id}: before modal`);
   const confirm = await deps.showWarningMessage(
     "Run cloudflared login?",
     {
@@ -71,6 +79,7 @@ export async function handleCfNamedLogin(
     },
     "Continue",
   );
+  deps.log?.(`cf-named-login id=${id}: modal result=${confirm === "Continue" ? "Continue" : "cancelled-or-dismissed"}`);
   if (confirm !== "Continue") {
     await deps.post({
       type: "daemon:cf-named-login:result",
@@ -80,7 +89,9 @@ export async function handleCfNamedLogin(
     return "cancelled";
   }
   try {
+    deps.log?.(`cf-named-login id=${id}: calling runCfNamedLogin`);
     const result = await deps.runCfNamedLogin();
+    deps.log?.(`cf-named-login id=${id}: runCfNamedLogin ok certPath=${result.certPath}`);
     await deps.post({
       type: "daemon:cf-named-login:result",
       id,
@@ -88,6 +99,7 @@ export async function handleCfNamedLogin(
     });
     return "ok";
   } catch (err) {
+    deps.log?.(`cf-named-login id=${id}: runCfNamedLogin error=${errorMessage(err)}`);
     await deps.post({
       type: "daemon:cf-named-login:result",
       id,

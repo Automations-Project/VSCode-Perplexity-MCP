@@ -1334,6 +1334,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       post: async (m) => {
         await this.view?.webview.postMessage(m);
       },
+      log: (msg) => debug(`[cf-named] ${msg}`),
     };
   }
 
