@@ -684,9 +684,18 @@ export function deriveCfNamedState(setup: { ready: boolean; reason?: string } | 
   if (!setup) return "unknown";
   if (setup.ready) return "ready";
   const reason = (setup.reason ?? "").toLowerCase();
+  // IMPORTANT: check the most-specific unready states FIRST. The
+  // `credentials file not found` reason sometimes embeds the credentials
+  // path which (due to an earlier parser bug) can contain cloudflared's
+  // prose including the phrase "origin certificate". Testing missing-cert
+  // first with a loose substring like `/origin cert/` would then misroute
+  // a credentials-file error as a login error, trapping the user in a
+  // "Run cloudflared login" loop. Keeping credentials-check before
+  // cert-check eliminates that ambiguity; we also tighten cert-detection
+  // to the exact suffix the provider emits ("origin cert not found").
   if (/not installed/.test(reason)) return "missing-binary";
-  if (/login required|cert\.pem|cert not found|origin cert/.test(reason)) return "missing-cert";
   if (/credentials file not found/.test(reason)) return "missing-credentials";
+  if (/login required|cert\.pem|origin cert not found/.test(reason)) return "missing-cert";
   if (/not configured|run the setup flow|named tunnel/.test(reason)) return "missing-config";
   return "missing-config";
 }

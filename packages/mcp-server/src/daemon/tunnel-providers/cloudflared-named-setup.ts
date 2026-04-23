@@ -295,10 +295,16 @@ export function listNamedTunnels(options: {
 // ─────────────────────────────────────────────────────────────────────
 
 const CREATE_ID_REGEX = /Created tunnel\s+(\S+)\s+with id\s+([0-9a-f-]{8,})/i;
-// Matches everything up to the end-of-line period cloudflared prints. Paths
-// can contain dots, so we only strip a trailing `.` followed by whitespace /
-// line end, not the first dot we see.
-const CREDENTIALS_REGEX = /Tunnel credentials written to\s+(.+?)\.?(?:\r?\n|$)/i;
+// Anchor the capture on the `.json` extension cloudflared always emits.
+// Previous `/to\s+(.+?)\.?(?:\r?\n|$)/i` over-captured when cloudflared ran
+// its "cloudflared chose this file based on where your origin certificate
+// was found. Keep this file secret. To revoke…" advisory text onto the same
+// output line (seen on Windows). The non-greedy `(.+?)` backed off only far
+// enough to find a newline, and when no newline appeared before the advisory
+// terminator it swept in all of it — landing the full prose inside the
+// managed YAML's `credentials-file` value. Anchoring on `.json` stops the
+// capture at the actual file boundary.
+const CREDENTIALS_REGEX = /Tunnel credentials written to\s+(.+?\.json)/i;
 
 /**
  * Runs `cloudflared tunnel create <name>`, parses the UUID + credentials

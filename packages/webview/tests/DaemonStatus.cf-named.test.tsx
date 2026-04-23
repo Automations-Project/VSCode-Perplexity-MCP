@@ -68,6 +68,25 @@ describe("deriveCfNamedState", () => {
       deriveCfNamedState({ ready: false, reason: "credentials file not found at /x.json." }),
     ).toBe("missing-credentials");
   });
+
+  it("regression: credentials-not-found reason embedding cloudflared advisory prose (contains 'origin certificate') stays missing-credentials, not missing-cert", () => {
+    // A prior parser bug corrupted the managed YAML's credentials-file value
+    // by swallowing cloudflared's trailing advisory text ("cloudflared chose
+    // this file based on where your origin certificate was found..."). When
+    // the provider's isSetupComplete then reported
+    //   "credentials file not found at <that corrupted path>"
+    // the widget's loose `/origin cert/` substring test matched "origin
+    // certificate" inside the embedded prose and misrouted the state to
+    // missing-cert — trapping the user in a 'Run cloudflared login' loop
+    // because clicking login was correctly rejected by the helper (cert
+    // already existed) yet the UI never offered a different action.
+    // deriveCfNamedState now checks credentials-file-not-found BEFORE any
+    // cert keyword check and tightens the cert regex to the exact
+    // provider-emitted suffix "origin cert not found".
+    const corruptedReason =
+      "credentials file not found at C:\\Users\\admin\\.cloudflared\\c4175c8c-9ad7-4ccd-9d51-16d6d2b42c2e.json. cloudflared chose this file based on where your origin certificate was found. Keep this file secret. To revoke these credentials, delete the tunnel.";
+    expect(deriveCfNamedState({ ready: false, reason: corruptedReason })).toBe("missing-credentials");
+  });
   it("maps ready=true → ready (reason ignored)", () => {
     expect(deriveCfNamedState({ ready: true })).toBe("ready");
   });

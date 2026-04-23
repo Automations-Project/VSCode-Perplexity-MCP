@@ -345,6 +345,51 @@ describe("createNamedTunnel", () => {
     expect(result).toEqual({ uuid, name, credentialsPath });
   });
 
+  it("captures credentials path cleanly when cloudflared advisory prose follows on the same line (regression)", async () => {
+    // Real cloudflared on Windows was observed emitting the advisory text on
+    // the SAME line as the credentials-written line, e.g.
+    //   "Tunnel credentials written to C:\...\<uuid>.json. cloudflared chose
+    //    this file based on where your origin certificate was found. Keep this
+    //    file secret. To revoke these credentials, delete the tunnel"
+    // The previous regex /to\s+(.+?)\.?(?:\r?\n|$)/ kept extending the capture
+    // until it hit a newline (or EOS) and dragged the full advisory into the
+    // credentials-file value written to the managed YAML. The path-boundary
+    // fix anchors on the `.json` extension.
+    installFakeBinary(configDir);
+    const name = "mcp-smoke";
+    const uuid = "c4175c8c-9ad7-4ccd-9d51-16d6d2b42c2e";
+    const credentialsPath = join(homeDir, ".cloudflared", `${uuid}.json`);
+    const fakeSpawn = (_cmd, args) => {
+      const child = makeFakeChild();
+      queueMicrotask(() => {
+        if (args.includes("create")) {
+          // All on ONE LINE — no newline between the path and the advisory.
+          child.stdout.write(
+            `Tunnel credentials written to ${credentialsPath}. cloudflared chose this file based on where your origin certificate was found. Keep this file secret. To revoke these credentials, delete the tunnel\n` +
+              `Created tunnel ${name} with id ${uuid}\n`,
+          );
+        } else {
+          child.stdout.write(`Added CNAME\n`);
+        }
+        child.stdout.end();
+        child.emit("exit", 0, null);
+      });
+      return child;
+    };
+
+    const result = await createNamedTunnel({
+      configDir,
+      name,
+      hostname: "mcp.example.com",
+      dependencies: { spawn: fakeSpawn },
+    });
+
+    expect(result.credentialsPath).toBe(credentialsPath);
+    expect(result.credentialsPath).not.toMatch(/cloudflared chose/);
+    expect(result.credentialsPath).not.toMatch(/revoke these credentials/);
+    expect(result.credentialsPath.endsWith(".json")).toBe(true);
+  });
+
   it("throws when the credentials-path line is missing", async () => {
     installFakeBinary(configDir);
     const fakeSpawn = () => {
