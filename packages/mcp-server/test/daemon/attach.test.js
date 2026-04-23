@@ -75,6 +75,70 @@ describe("daemon attach", () => {
     clientOutput.end();
     await withTimeout(attachPromise, "attachPromise");
   }, 15_000);
+
+  it("falls back to in-process stdio main() when daemon cannot start and fallbackStdio is true", async () => {
+    const ensureError = new Error("boom: daemon refused to start");
+    let ensureCalls = 0;
+    let mainCalls = 0;
+
+    const stderrChunks = [];
+    const origStderrWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk, ...rest) => {
+      stderrChunks.push(typeof chunk === "string" ? chunk : chunk.toString());
+      return true;
+    };
+
+    try {
+      await attachToDaemon({
+        configDir,
+        stdin: new PassThrough(),
+        stdout: new PassThrough(),
+        fallbackStdio: true,
+        dependencies: {
+          ensureDaemon: async () => {
+            ensureCalls += 1;
+            throw ensureError;
+          },
+          runStdioMain: async () => {
+            mainCalls += 1;
+          },
+        },
+      });
+    } finally {
+      process.stderr.write = origStderrWrite;
+    }
+
+    expect(ensureCalls).toBe(1);
+    expect(mainCalls).toBe(1);
+    const warning = stderrChunks.join("");
+    expect(warning).toContain("[perplexity-mcp] daemon unreachable");
+    expect(warning).toContain("boom: daemon refused to start");
+    expect(warning).toContain("falling back to in-process stdio");
+    expect(warning.endsWith("\n")).toBe(true);
+  });
+
+  it("rejects with the underlying error when fallbackStdio is false and daemon cannot start", async () => {
+    const ensureError = new Error("no daemon here");
+    let mainCalls = 0;
+
+    await expect(
+      attachToDaemon({
+        configDir,
+        stdin: new PassThrough(),
+        stdout: new PassThrough(),
+        fallbackStdio: false,
+        dependencies: {
+          ensureDaemon: async () => {
+            throw ensureError;
+          },
+          runStdioMain: async () => {
+            mainCalls += 1;
+          },
+        },
+      }),
+    ).rejects.toBe(ensureError);
+    expect(mainCalls).toBe(0);
+  });
 });
 
 async function withTimeout(promise, label) {

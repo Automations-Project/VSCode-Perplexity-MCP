@@ -181,9 +181,16 @@ export async function routeCommand(parsed) {
 
   if (command === "daemon:attach") {
     const { attachToDaemon } = await import("./daemon/attach.js");
+    const ensureTimeoutRaw = flags["ensure-timeout-ms"];
+    const ensureTimeoutMs =
+      typeof ensureTimeoutRaw === "string" && /^\d+$/.test(ensureTimeoutRaw)
+        ? Number(ensureTimeoutRaw)
+        : undefined;
     await attachToDaemon({
       configDir: process.env.PERPLEXITY_CONFIG_DIR,
       clientId: "daemon-attach-cli",
+      fallbackStdio: !!flags["fallback-stdio"],
+      ensureTimeoutMs,
     });
     return { code: 0, stdout: "", stderr: "" };
   }
@@ -614,7 +621,7 @@ Usage:
   npx perplexity-user-mcp daemon start [--port N] [--tunnel]
   npx perplexity-user-mcp daemon stop
   npx perplexity-user-mcp daemon status [--json]
-  npx perplexity-user-mcp daemon attach
+  npx perplexity-user-mcp daemon attach [--fallback-stdio] [--ensure-timeout-ms N]
   npx perplexity-user-mcp daemon rotate-token
   npx perplexity-user-mcp login [--profile X] [--mode auto|manual] [--plain-cookies]
   npx perplexity-user-mcp logout [--profile X] [--purge]
@@ -643,7 +650,7 @@ Usage:
   npx perplexity-user-mcp daemon start [--port N] [--tunnel]
   npx perplexity-user-mcp daemon stop
   npx perplexity-user-mcp daemon status [--json]
-  npx perplexity-user-mcp daemon attach
+  npx perplexity-user-mcp daemon attach [--fallback-stdio] [--ensure-timeout-ms N]
   npx perplexity-user-mcp daemon rotate-token
   npx perplexity-user-mcp daemon install-tunnel
   npx perplexity-user-mcp daemon enable-tunnel
