@@ -4,6 +4,27 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [0.8.0] — 2026-04-23 — Phase 8.3: stdio launcher → daemon-proxy
+
+### Added
+- **`attachToDaemon` programmatic API re-exported from `perplexity-user-mcp`'s main entrypoint.** The bundled `dist/mcp/server.mjs` now exposes it so the extension launcher can reach it via the `bundled-path.json` indirection without adding a CLI child-process.
+- **`--fallback-stdio` and `--ensure-timeout-ms <N>` flags on `daemon attach`.** When `--fallback-stdio` is set and the daemon cannot be reached within the ensure-timeout, the CLI writes a single stderr warning (`[perplexity-mcp] daemon unreachable (...); falling back to in-process stdio`) and drops through to the in-process stdio `main()` so the client still gets a working server.
+- **`PERPLEXITY_NO_DAEMON` env opt-out.** When set to `1` / `true` (case-insensitive, trimmed), both the stdio launcher AND `daemon attach` CLI bypass the daemon and run a pure in-process stdio server. Warning goes to stderr only (stdout is reserved for MCP JSON-RPC framing).
+
+### Changed
+- **Generated stdio launcher (`~/.perplexity-mcp/start.mjs`) now multiplexes every external stdio MCP client (Claude Desktop, Cursor, Cline, Codex CLI, Amp, …) onto the shared daemon via `attachToDaemon({ fallbackStdio: true })`.** Pre-0.8.0, each client spawned its own in-process stdio server + Chromium. Post-0.8.0, N clients = 1 daemon + 1 Chromium. The launcher passes a `runStdioMain` DI shim pointing at the already-loaded `server.main` so the fallback path works correctly in the extension-bundled layout (where `attach.ts` is inlined into `server.mjs` and the default `import("../index.js")` would resolve to a nonexistent sibling).
+- **`ensureLauncher` now force-updates stale `start.mjs` content.** Byte-for-byte comparison + rewrite on mismatch. Users upgrading from 0.7.x will automatically migrate to the new daemon-proxy launcher on next activation, without needing to reinstall the extension.
+- `packages/mcp-server` + `packages/extension` bump to `0.8.0`.
+
+### Tests
+- 13 new tests across the phase (8.3.1–8.3.3): 2 in `packages/mcp-server/test/daemon/attach.test.js` (fallback-stdio path + hard-failure preservation when fallback is disabled), 5 in `packages/mcp-server/test/cli.test.js` (PERPLEXITY_NO_DAEMON opt-out contract + stdout discipline), 6 in `packages/extension/tests/write-launcher.test.ts` (launcher content shape + force-migration from 0.7.x). Total: 433 passed / 60 files (up from 420 / 59 at start of Phase 8.3).
+
+### Release gate
+- Typecheck: green across all 4 packages.
+- Full suite: 433 passed / 60 files.
+- VSIX: `packages/extension/perplexity-vscode-0.8.0.vsix`, ~11.7 MB (12,252,644 bytes), 3419 files. `grep -c "attachToDaemon" dist/mcp/server.mjs` = 2 (confirms the re-export reached the bundle).
+- **Manual 3-client smoke: waived by owner due to time constraints.** Release proceeds on automated gates + rebuilt VSIX + checklist documentation in `docs/smoke-tests.md` only. The Phase 8.3 smoke checklist is tracked at `docs/smoke-tests.md` § Phase 8.3; a pre-seeded evidence stub lives locally at `docs/smoke-evidence/2026-04-23-phase-8-3-3-client-smoke.md` (git-ignored per repo policy).
+
 ## [0.7.4] — 2026-04-23 — Phase 8.2: security hardening + authorized clients panel
 
 ### Security

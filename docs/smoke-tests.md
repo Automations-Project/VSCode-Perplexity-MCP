@@ -54,3 +54,40 @@ Run these before tagging `v0.5.0`.
 - [ ] **Pin and tag changes round-trip.** Pin an entry in Rich View, add/update tags, refresh the dashboard, and confirm the card and Rich View metadata stay in sync.
 - [ ] **Rebuild index recovers history.** Run `Perplexity: Rebuild History Index` or `npx perplexity-user-mcp rebuild-history-index --json` and confirm it reports scan counts and the History tab still loads.
 - [ ] **Doctor reports viewer detection.** Run `npx perplexity-user-mcp doctor` and confirm the `ide.mdViewers` check reports detected viewers without failing when none are installed.
+
+## Phase 8.3 — stdio launcher → daemon-proxy (0.8.0)
+
+Phase 8.3 flips every auto-configured external stdio MCP client (Claude Desktop, Cursor, Cline, Codex CLI, Amp, …) onto the shared daemon. Pre-8.3.0, each client spawned its own in-process stdio server + Chromium; post-8.3.0, they all multiplex onto one daemon + one Chromium. The integration suite covers the CLI/launcher-generator paths but cannot exercise three real clients opening Chromium simultaneously — this checklist is gating for v0.8.0.
+
+Prereqs before running:
+
+1. Install the fresh smoke VSIX: `code --install-extension packages/extension/perplexity-vscode-0.7.4.vsix --force`. The VSIX still carries the **0.7.4** version stamp deliberately — the bump to 0.8.0 happens in Task 8.3.5 **after** this smoke passes. The artifact at HEAD `d987f60` contains the 8.3.1–8.3.3 code and is the correct smoke target; the filename only becomes `perplexity-vscode-0.8.0.vsix` during release prep.
+2. Reload the VS Code window.
+3. Profile must already be logged in (daemon needs cookies in `~/.perplexity-mcp/profiles/<active>/vault.enc`).
+4. Claude Desktop, Cursor, and Cline all installed. (If any is unavailable, substitute another stdio MCP client but note the substitution in the smoke-evidence file.)
+
+Run these on Windows 11 (primary) + macOS 14 (secondary, if available). All eight must pass or be explicitly waived before tagging v0.8.0.
+
+- [ ] **Migration — stale launcher is rewritten.** Before installing 0.8.0, note the current contents of `~/.perplexity-mcp/start.mjs` (should be the pre-8.3.3 one-liner `await import(config.serverPath)`). Install the 0.8.0 VSIX and reload VS Code. Re-open `start.mjs` — it must now contain the literal substring `attachToDaemon` AND `fallbackStdio: true`. Fresh installs (no pre-existing file) are also acceptable; in that case, note "fresh install" in the evidence.
+- [ ] **Configs generated.** Run command `Perplexity: Generate MCP Configs` from the command palette. Select at least Claude Desktop, Cursor, and Cline (add more if configured). Each target's config file (`claude_desktop_config.json`, `.cursor/mcp.json`, `.cline/mcp_config.json` or equivalent) points `args` at `~/.perplexity-mcp/start.mjs`.
+- [ ] **One daemon + one Chromium invariant.** Launch Claude Desktop, Cursor, and Cline in sequence (give each ~5s to hand-shake). Open Task Manager (Windows) or Activity Monitor (macOS). Filter by process tree. Assert: **exactly one `node` process holding `daemon.lock`'s PID** AND **exactly one Chromium tree** (one parent + N renderer children is fine — "one tree" means one parent PID). Attach a screenshot or copy the process table into the evidence file. If you see three Chromium parents, the consolidation failed.
+- [ ] **Distinct launcher client IDs in audit.** Open `~/.perplexity-mcp/audit.log` (or wherever the daemon writes OAuth/request audit entries — check the daemon's startup banner). Each of the three clients should have stamped a distinct `x-perplexity-client-id` header with prefix `perplexity-launcher-<pid>`. Count the distinct PIDs: expect exactly three (one per client's launcher process).
+- [ ] **End-to-end tool call.** From each of the three clients, trigger a `perplexity_models` or simple `perplexity_search` tool call. All three responses must succeed and include model/account-tier data. This proves the stdio↔HTTP proxy path is fully wired across all three launchers simultaneously.
+- [ ] **PERPLEXITY_NO_DAEMON opt-out.** Edit one client's `mcp.json` to add `"env": { "PERPLEXITY_NO_DAEMON": "1" }` alongside the existing env block. Restart that client only. Assert: that client's process inventory shows a **new** Chromium tree (its own, not shared with the daemon). Its stderr (visible in the client's MCP log) contains the literal line `[perplexity-mcp] PERPLEXITY_NO_DAEMON=1 set; running in-process stdio (daemon bypass)`. A `perplexity_models` call from that client still succeeds. Revert the edit before moving on.
+- [ ] **Stdout discipline.** Enable MCP protocol logging in one client (e.g., Claude Desktop: `MCP_LOGS=1` or check the view logs menu). After a tool call, inspect the MCP session log — it must contain zero `Parse error` / `SyntaxError` / `Unexpected token` entries. If the launcher ever writes to stdout, JSON-RPC framing breaks and these errors appear.
+- [ ] **Fallback-stdio path — best-effort manual.** Naively killing the running daemon does NOT reliably exercise the fallback path: `ensureDaemon` has a 15s retry loop that cheerfully re-spawns a fresh daemon on the next poll, so a restarted client will just re-attach to the respawned daemon and never enter the fallback branch. The **authoritative evidence** for the fallback path is the automated integration test `packages/mcp-server/test/daemon/attach.test.js` (fallback-stdio case added in Task 8.3.1), which the headless release gate (`npx vitest run`) proves on every commit — re-run it here and record the count:
+  ```
+  npx vitest run packages/mcp-server/test/daemon/attach.test.js
+  ```
+  Expect: 3 passed / 1 file. Paste the output in the evidence file.
+
+  **Optional best-effort manual recipe** (skip if integration test is green and time is short): in ONE client's `mcp.json`, set an env block `"PERPLEXITY_CONFIG_DIR": "<userprofile>/.perplexity-mcp-smoke-blocker.txt"` where that path is a **pre-created empty file** (not a directory). The daemon can't `mkdirSync` onto a file, so `spawnDetachedDaemon`'s child crashes, `ensureDaemon` times out after 15s, and `attachToDaemon` runs the fallback. Restart that client. **Expected behavior if fallback triggers:**
+    - That client's MCP stderr contains the literal line: `[perplexity-mcp] daemon unreachable (...); falling back to in-process stdio`
+    - The in-process stdio then runs `server.main()` via the DI `runStdioMain` shim added in 8.3.3 (the default `attach.ts` fallback path — `import("../index.js")` — does NOT work in the bundled extension layout where attach.ts is inlined into `dist/mcp/server.mjs`; if you ever see `ERR_MODULE_NOT_FOUND` here instead of the fallback line, the DI shim did NOT land correctly in the bundle).
+    - `server.main()` may itself fail to find a logged-in profile under the bogus config dir — that's OK for this check. The evidence you need is the stderr line plus clean process exit (no ERR_MODULE_NOT_FOUND). If the client shows "no session" after fallback, that's a secondary confirmation that `server.main()` ran.
+
+  Revert the bogus `PERPLEXITY_CONFIG_DIR` edit before moving on. Mark this check ✅ if the integration test passed OR the manual recipe showed the stderr line.
+
+When all eight are green (or explicitly waived), save the evidence file to `docs/smoke-evidence/phase-8-3-YYYY-MM-DD.md` and proceed to Task 8.3.5 (release v0.8.0).
+
+Referenced by release gate in [docs/superpowers/plans/2026-04-22-phase-8-completeness.md](superpowers/plans/2026-04-22-phase-8-completeness.md) Task 8.3.4.
