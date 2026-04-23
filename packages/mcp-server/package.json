@@ -99,7 +99,7 @@
     "test:coverage": "cd ../.. && npx vitest run --coverage packages/mcp-server/test"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@ngrok/ngrok": "^1.7.0",
     "express": "^4.21.0",
     "got-scraping": "^4.2.1",

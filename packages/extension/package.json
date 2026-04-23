@@ -316,11 +316,11 @@
   },
   "dependencies": {},
   "devDependencies": {
-    "perplexity-user-mcp": "*",
     "@perplexity-user-mcp/shared": "*",
     "@types/vscode": "^1.100.0",
-    "@vscode/vsce": "^3.7.1",
+    "@vscode/vsce": "^3.9.1",
     "patchright": "^1.59.4",
+    "perplexity-user-mcp": "*",
     "tsup": "^8.5.1"
   }
 }
