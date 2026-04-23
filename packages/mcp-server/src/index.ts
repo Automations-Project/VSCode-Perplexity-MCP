@@ -95,6 +95,7 @@ async function runEntrypoint() {
 // Re-export public API for library consumers
 export { PerplexityClient } from "./client.js";
 export { ensureDaemon, startDaemon } from "./daemon/launcher.js";
+export { attachToDaemon } from "./daemon/attach.js";
 export { registerTools } from "./tools.js";
 export { registerPrompts } from "./prompts.js";
 export { registerResources } from "./resources.js";
