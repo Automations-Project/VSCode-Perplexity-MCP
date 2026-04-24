@@ -314,13 +314,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "package:vsix": "npm run build && npm run prepare:package-deps && npx @vscode/vsce package --allow-missing-repository --no-dependencies"
   },
-  "dependencies": {
-    "jszip": "^3.10.1"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@perplexity-user-mcp/shared": "*",
     "@types/vscode": "^1.100.0",
     "@vscode/vsce": "^3.9.1",
+    "jszip": "^3.10.1",
     "patchright": "^1.59.4",
     "perplexity-user-mcp": "*",
     "tsup": "^8.5.1"

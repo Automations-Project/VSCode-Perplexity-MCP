@@ -14,12 +14,13 @@ import { redactMessage, redactObject } from "../redact.js";
 export { redactMessage, redactObject };
 
 // Match a full armored PEM envelope (BEGIN line through END line, body
-// included). The /s flag (DOTALL) lets `.` cross newlines so the regex spans
-// multi-line bodies; /g ensures every block in a string is collapsed.
-// We match a trailing newline when present so we don't leave a dangling blank
-// line when the block was the entire content. The inner type token must match
-// between BEGIN and END so we don't accidentally join two adjacent blocks.
-const PEM_BLOCK_RE = /-----BEGIN ([A-Z0-9 ]+?)-----[\s\S]*?-----END \1-----\n?/gs;
+// included). `[\s\S]` handles the multi-line body (no DOTALL flag needed
+// because the pattern uses no bare `.`); /g ensures every block in a string
+// is collapsed. We match a trailing newline when present so we don't leave
+// a dangling blank line when the block was the entire content. The inner
+// type token must match between BEGIN and END so we don't accidentally join
+// two adjacent blocks.
+const PEM_BLOCK_RE = /-----BEGIN ([A-Z0-9 ]+?)-----[\s\S]*?-----END \1-----\n?/g;
 
 /**
  * Collapses any PEM block (`-----BEGIN ... -----` through `-----END ... -----`)

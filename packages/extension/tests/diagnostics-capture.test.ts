@@ -15,7 +15,7 @@ const SAMPLE_PEM = [
 type FakeFsEntry = { kind: "file"; content: string } | { kind: "missing" };
 
 /** Minimal fake fs that the capture accepts via dependency injection. */
-function makeFakeFs(entries: Record<string, FakeFsEntry>) {
+function makeFakeFs(entries: Record<string, FakeFsEntry>): typeof import("fs/promises") {
   return {
     readFile: async (p: string, _enc?: BufferEncoding): Promise<string> => {
       const entry = entries[normalise(p)];
@@ -27,17 +27,6 @@ function makeFakeFs(entries: Record<string, FakeFsEntry>) {
         throw err;
       }
       return entry.content;
-    },
-    stat: async (p: string): Promise<{ size: number }> => {
-      const entry = entries[normalise(p)];
-      if (!entry || entry.kind === "missing") {
-        const err: NodeJS.ErrnoException = Object.assign(
-          new Error(`ENOENT: no such file, stat '${p}'`),
-          { code: "ENOENT" },
-        );
-        throw err;
-      }
-      return { size: Buffer.byteLength(entry.content, "utf8") };
     },
     // captureDiagnostics uses writeFile on the real fs to write the zip output.
     writeFile: realFs.writeFile,
