@@ -87,7 +87,7 @@ interface AuditEntry {
   ideTag: string;
   transportId: string;
   configPath: string;
-  bearerKind: "none" | "local";
+  bearerKind: "none" | "local" | "static";
   resultCode: string;
   ts: string;
 }
@@ -164,7 +164,7 @@ describe("applyIdeConfig — Phase 8.6.4 dispatch", () => {
     expect(audit[0]?.resultCode).toBe("rejected-unsupported");
   });
 
-  it("calls warnSyncFolder for http-loopback bearer fallback and cancels on user decline", async () => {
+  it("calls warnSyncFolder for http-loopback static-bearer baseline and cancels on user decline", async () => {
     const root = makeTempRoot();
     // Ancestor name contains "OneDrive" — should trigger the built-in
     // sync-folder heuristic.
@@ -177,10 +177,7 @@ describe("applyIdeConfig — Phase 8.6.4 dispatch", () => {
         warnSyncCalls.push(args);
         return "cancel";
       },
-      issueLocalToken: () => ({
-        token: "pplx_local_cursorbearer_TESTxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-        metadata: { id: "x" },
-      }),
+      getDaemonBearer: async () => "daemon-static-bearer-uuid-v4",
     });
 
     const result = await applyIdeConfig(
@@ -200,7 +197,7 @@ describe("applyIdeConfig — Phase 8.6.4 dispatch", () => {
       expect(result.reason).toBe("sync-folder");
     }
     expect(audit[0]?.resultCode).toBe("rejected-sync");
-    expect(audit[0]?.bearerKind).toBe("local");
+    expect(audit[0]?.bearerKind).toBe("static");
   });
 
   it("proceeds past the sync-folder gate when the user overrides", async () => {
@@ -221,10 +218,7 @@ describe("applyIdeConfig — Phase 8.6.4 dispatch", () => {
         warnSyncFolder: async () => "override",
         auditGenerated: (entry) => audit.push(entry),
         getDaemonPort: () => 12345,
-        issueLocalToken: () => ({
-          token: "pplx_local_cursorbearer_TESTxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-          metadata: { id: "local-cursorbearer-test" },
-        }),
+        getDaemonBearer: async () => "daemon-static-bearer-uuid-v4",
         isGitTracked: () => false,
       }
     );
@@ -515,10 +509,11 @@ describe("applyIdeConfig — Phase 8.6.4 dispatch", () => {
     expect(audit[0]?.resultCode).toBe("rejected-tunnel-unstable");
   });
 
-  it("issues a local token only when bearerKind resolves to 'local'", async () => {
+  it("http-loopback with httpBearerLoopback: true picks bearerKind 'static' and embeds the daemon bearer", async () => {
     const root = makeTempRoot();
     const configPath = join(root, ".cursor", "mcp.json");
-    const calls: Array<{ ideTag: string; label: string }> = [];
+    const bearerCalls: number[] = [];
+    let issueCalls = 0;
 
     const result = await applyIdeConfig(
       {
@@ -530,11 +525,15 @@ describe("applyIdeConfig — Phase 8.6.4 dispatch", () => {
       {
         confirmTransport: async () => true,
         warnSyncFolder: async () => "override",
-        issueLocalToken: (input) => {
-          calls.push(input);
+        getDaemonBearer: async () => {
+          bearerCalls.push(1);
+          return "daemon-static-bearer-uuid-v4";
+        },
+        issueLocalToken: () => {
+          issueCalls += 1;
           return {
-            token: "pplx_local_cursorbearer_TESTxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-            metadata: { id: "local-cursorbearer-test" },
+            token: "should-not-be-used",
+            metadata: { id: "nope" },
           };
         },
         getDaemonPort: () => 54321,
@@ -544,15 +543,80 @@ describe("applyIdeConfig — Phase 8.6.4 dispatch", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok === true) {
-      expect(result.bearerKind).toBe("local");
+      expect(result.bearerKind).toBe("static");
     }
-    expect(calls.length).toBe(1);
+    expect(bearerCalls.length).toBe(1);
+    expect(issueCalls).toBe(0);
 
-    // Final config contains the Authorization header.
+    // Final config contains the static-bearer Authorization header.
     const final = JSON.parse(readFileSync(configPath, "utf8")) as {
       mcpServers: { Perplexity: { headers?: { Authorization?: string } } };
     };
-    expect(final.mcpServers.Perplexity.headers?.Authorization).toMatch(/^Bearer /);
+    expect(final.mcpServers.Perplexity.headers?.Authorization).toBe(
+      "Bearer daemon-static-bearer-uuid-v4"
+    );
+  });
+
+  it("returns { ok: false, reason: 'error' } when bearerKind 'static' and getDaemonBearer returns null", async () => {
+    const root = makeTempRoot();
+    const configPath = join(root, ".cursor", "mcp.json");
+    const audit: AuditEntry[] = [];
+
+    const result = await applyIdeConfig(
+      {
+        target: "cursorBearer" as never,
+        serverPath: "C:/bundle/server.mjs",
+        configPath,
+        transportId: "http-loopback",
+      },
+      {
+        confirmTransport: async () => true,
+        warnSyncFolder: async () => "override",
+        auditGenerated: (entry) => audit.push(entry),
+        getDaemonBearer: async () => null,
+        getDaemonPort: () => 54321,
+        isGitTracked: () => false,
+      }
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok === false) {
+      expect(result.reason).toBe("error");
+      expect(result.message).toMatch(/bearer unavailable/i);
+    }
+    expect(audit.at(-1)?.resultCode).toBe("error");
+    expect(audit.at(-1)?.bearerKind).toBe("static");
+  });
+
+  it("returns { ok: false, reason: 'error' } when bearerKind 'static' and getDaemonBearer is not provided", async () => {
+    const root = makeTempRoot();
+    const configPath = join(root, ".cursor", "mcp.json");
+    const audit: AuditEntry[] = [];
+
+    const result = await applyIdeConfig(
+      {
+        target: "cursorBearer" as never,
+        serverPath: "C:/bundle/server.mjs",
+        configPath,
+        transportId: "http-loopback",
+      },
+      {
+        confirmTransport: async () => true,
+        warnSyncFolder: async () => "override",
+        auditGenerated: (entry) => audit.push(entry),
+        // getDaemonBearer intentionally omitted
+        getDaemonPort: () => 54321,
+        isGitTracked: () => false,
+      }
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok === false) {
+      expect(result.reason).toBe("error");
+      expect(result.message).toMatch(/getDaemonBearer not provided/i);
+    }
+    expect(audit.at(-1)?.resultCode).toBe("error");
+    expect(audit.at(-1)?.bearerKind).toBe("static");
   });
 
   it("does NOT issue a local token when bearerKind resolves to 'none' (OAuth loopback)", async () => {
@@ -650,10 +714,7 @@ describe("applyIdeConfig — Phase 8.6.4 dispatch", () => {
       {
         confirmTransport: async () => true,
         warnSyncFolder: async () => "override",
-        issueLocalToken: () => ({
-          token: "pplx_local_cursorbearer_TESTxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-          metadata: { id: "local-cursorbearer-test" },
-        }),
+        getDaemonBearer: async () => "daemon-static-bearer-uuid-v4",
         getDaemonPort: () => 54321,
         isGitTracked: () => false,
       }

@@ -275,6 +275,14 @@ async function buildApplyIdeConfigDepsLive(
     getDaemonPort: () => daemonPort,
     getActiveTunnel: () => activeTunnel,
 
+    // v0.8.4 — http-loopback static-bearer baseline. Reads the bundled daemon's
+    // shared bearer token from the live status. Loopback-only use; builders for
+    // tunnel transports never receive this value.
+    getDaemonBearer: async () => {
+      const status = await getBundledDaemonStatus();
+      return status.record?.bearerToken ?? null;
+    },
+
     syncFolderPatterns: settings.syncFolderPatterns,
 
     homeDir: () => os.homedir(),

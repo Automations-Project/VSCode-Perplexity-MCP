@@ -67,7 +67,7 @@ export interface ApplyIdeConfigDeps {
     ideTag: IdeTarget;
     transportId: McpTransportId;
     configPath: string;
-    bearerKind: "none" | "local";
+    bearerKind: "none" | "local" | "static";
     resultCode:
       | "ok"
       | "rejected-unsupported"
@@ -82,6 +82,8 @@ export interface ApplyIdeConfigDeps {
     token: string;
     metadata: { id: string };
   };
+  /** Reads the daemon's static bearer token. Loopback-only use — tunnel paths never embed this. Default: throws "not provided". */
+  getDaemonBearer?: () => Promise<string | null>;
   getDaemonPort?: () => number | null;
   getActiveTunnel?: () => {
     providerId: "cf-quick" | "ngrok" | "cf-named";
@@ -97,7 +99,7 @@ export type ApplyIdeConfigResult =
   | {
       ok: true;
       path: string;
-      bearerKind: "none" | "local";
+      bearerKind: "none" | "local" | "static";
       transportId: McpTransportId;
       warnings: string[];
     }
@@ -438,7 +440,7 @@ export async function applyIdeConfig(
 
   const audit = (
     resultCode: Parameters<NonNullable<ApplyIdeConfigDeps["auditGenerated"]>>[0]["resultCode"],
-    bearerKind: "none" | "local"
+    bearerKind: "none" | "local" | "static"
   ): void => {
     auditSink({
       ideTag: target,
@@ -501,18 +503,28 @@ export async function applyIdeConfig(
 
   // Decide bearer fate BEFORE any prompt so the sync-folder warning below
   // can accurately skip for the no-secret-written paths.
-  const bearerKind: "none" | "local" =
-    transportId === "http-loopback" &&
-    caps.httpOAuthLoopback === false &&
-    caps.httpBearerLoopback === true
-      ? "local"
+  //
+  // Priority order for http-loopback:
+  //   1. httpOAuthLoopback → "none" (OAuth variant; no IDE has this flag yet,
+  //      but the branch stays so a future evidence-gated flip lights up cleanly).
+  //   2. httpBearerLoopback → "static" (v0.8.4 pragmatic default — embeds the
+  //      daemon's shared static bearer; accepted on loopback by the daemon).
+  //   3. fallback → "local" (per-IDE scoped; primitives stay for future flip).
+  const bearerKind: "none" | "local" | "static" =
+    transportId === "http-loopback"
+      ? caps.httpOAuthLoopback
+        ? "none"
+        : caps.httpBearerLoopback
+          ? "static"
+          : "local"
       : "none";
 
-  // H4 — sync-folder detection. Only the http-loopback bearer-fallback branch
-  // actually writes a secret to disk; stdio stores no secret at all, and
+  // H4 — sync-folder detection. Only http-loopback with a secret-bearing bearer
+  // kind actually writes a secret to disk; stdio stores no secret at all, and
   // http-tunnel intentionally refuses to bake a bearer into a public-URL config.
   const syncFolderApplies =
-    transportId === "http-loopback" && bearerKind === "local";
+    transportId === "http-loopback" &&
+    (bearerKind === "local" || bearerKind === "static");
   if (syncFolderApplies) {
     const match = detectSyncFolder(
       configPath,
@@ -567,6 +579,7 @@ export async function applyIdeConfig(
   // Issue the local token AFTER confirmation (don't mint a secret we may throw
   // away) and BEFORE the builder runs (builder needs the token in its input).
   let localToken: string | undefined;
+  let staticBearer: string | undefined;
   if (bearerKind === "local") {
     try {
       const result = issueLocalToken({
@@ -574,6 +587,30 @@ export async function applyIdeConfig(
         label: meta.displayName,
       });
       localToken = result.token;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      audit("error", bearerKind);
+      return {
+        ok: false,
+        reason: "error",
+        message,
+        transportId,
+      };
+    }
+  }
+  if (bearerKind === "static") {
+    try {
+      const bearer = await (deps.getDaemonBearer?.() ?? Promise.reject(new Error("getDaemonBearer not provided")));
+      if (!bearer) {
+        audit("error", bearerKind);
+        return {
+          ok: false,
+          reason: "error",
+          message: "Daemon bearer unavailable — start the daemon first.",
+          transportId,
+        };
+      }
+      staticBearer = bearer;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       audit("error", bearerKind);
@@ -598,6 +635,7 @@ export async function applyIdeConfig(
       tunnelReservedDomain: activeTunnel?.reservedDomain ?? false,
       bearerKind,
       ...(localToken !== undefined ? { localToken } : {}),
+      ...(staticBearer !== undefined ? { staticBearer } : {}),
       ...(options.chromePath !== undefined ? { chromePath: options.chromePath } : {}),
       ...(options.nodePath !== undefined ? { nodePath: options.nodePath } : {}),
     });

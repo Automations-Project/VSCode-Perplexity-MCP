@@ -3,13 +3,17 @@ import { StabilityGateError } from "./index.js";
 
 /**
  * http-loopback transport — points the client at a running daemon on
- * 127.0.0.1:<daemonPort>/mcp. Two bearer modes:
+ * 127.0.0.1:<daemonPort>/mcp. Three bearer modes:
  *
  *   - `bearerKind === "none"`: OAuth variant. No headers are written; the client
  *     performs OAuth discovery against the loopback daemon.
- *   - `bearerKind === "local"`: bearer fallback. A local token (minted upstream
- *     by `issueLocalToken` in `daemon/local-tokens.ts`) is embedded as the
- *     `Authorization: Bearer <token>` header.
+ *   - `bearerKind === "static"`: pragmatic default — embeds the daemon's shared
+ *     static bearer as `Authorization: Bearer <staticBearer>`. The daemon's
+ *     source-aware `verifyAccessToken` accepts the static bearer on loopback
+ *     (v0.8.4 baseline — see docs/smoke-evidence/2026-04-24-http-loopback-static-bearer.md).
+ *   - `bearerKind === "local"`: per-IDE scoped token (minted upstream by
+ *     `issueLocalToken` in `daemon/local-tokens.ts`). Primitives stay for a
+ *     future evidence-gated flip; not the default in v0.8.4.
  *
  * This transport only supports JSON config shapes — TOML clients like Codex CLI
  * don't ingest URL+headers entries. It ignores all tunnel / provider / launcher
@@ -37,7 +41,19 @@ function build(input: TransportBuildInput): McpServerEntry {
     };
   }
 
-  // bearerKind === "none" — OAuth variant. Any stray localToken is ignored.
+  if (input.bearerKind === "static") {
+    if (!input.staticBearer) {
+      throw new TypeError('bearerKind "static" requires staticBearer');
+    }
+    return {
+      url,
+      headers: {
+        Authorization: `Bearer ${input.staticBearer}`,
+      },
+    };
+  }
+
+  // bearerKind === "none" — OAuth variant. Any stray localToken / staticBearer ignored.
   return { url };
 }
 

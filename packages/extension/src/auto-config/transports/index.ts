@@ -16,7 +16,12 @@ export type McpServerEntry =
 /**
  * Inputs every builder receives. `applyIdeConfig` decides `bearerKind` BEFORE
  * calling build; builders never mint tokens themselves (that's `issueLocalToken`
- * in `daemon/local-tokens.ts`). `localToken` is required iff `bearerKind === "local"`.
+ * in `daemon/local-tokens.ts` for `"local"`, and `getDaemonBearer` for `"static"`).
+ *
+ * - `bearerKind === "local"` requires `localToken` (per-IDE scoped, revocable).
+ * - `bearerKind === "static"` requires `staticBearer` (daemon's shared static
+ *   token — accepted on loopback by the daemon's source-aware `verifyAccessToken`).
+ * - `bearerKind === "none"` is the OAuth variant (no headers written).
  */
 export interface TransportBuildInput {
   launcherPath: string;
@@ -24,8 +29,9 @@ export interface TransportBuildInput {
   tunnelUrl: string | null;
   tunnelProviderId: "cf-quick" | "ngrok" | "cf-named" | null;
   tunnelReservedDomain: boolean;
-  bearerKind: "none" | "local";
+  bearerKind: "none" | "local" | "static";
   localToken?: string;
+  staticBearer?: string;
   chromePath?: string;
   nodePath?: string;
 }

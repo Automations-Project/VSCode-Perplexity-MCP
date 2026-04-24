@@ -73,9 +73,12 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     rulesPath: ".cursor/rules/perplexity-mcp.mdc",
     capabilities: {
       stdio: true,
-      httpBearerLoopback: false,
+      httpBearerLoopback: true,
       httpOAuthLoopback: false,
       httpOAuthTunnel: false,
+      evidence: {
+        httpBearerLoopback: "docs/smoke-evidence/2026-04-24-http-loopback-static-bearer.md",
+      },
     },
   },
   windsurf: {
@@ -86,9 +89,12 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     rulesPath: ".windsurf/rules/perplexity-mcp.md",
     capabilities: {
       stdio: true,
-      httpBearerLoopback: false,
+      httpBearerLoopback: true,
       httpOAuthLoopback: false,
       httpOAuthTunnel: false,
+      evidence: {
+        httpBearerLoopback: "docs/smoke-evidence/2026-04-24-http-loopback-static-bearer.md",
+      },
     },
   },
   windsurfNext: {
@@ -99,9 +105,12 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     rulesPath: ".windsurf/rules/perplexity-mcp.md",
     capabilities: {
       stdio: true,
-      httpBearerLoopback: false,
+      httpBearerLoopback: true,
       httpOAuthLoopback: false,
       httpOAuthTunnel: false,
+      evidence: {
+        httpBearerLoopback: "docs/smoke-evidence/2026-04-24-http-loopback-static-bearer.md",
+      },
     },
   },
   claudeDesktop: {
@@ -111,9 +120,12 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     rulesFormat: "none",
     capabilities: {
       stdio: true,
-      httpBearerLoopback: false,
+      httpBearerLoopback: true,
       httpOAuthLoopback: false,
       httpOAuthTunnel: false,
+      evidence: {
+        httpBearerLoopback: "docs/smoke-evidence/2026-04-24-http-loopback-static-bearer.md",
+      },
     },
   },
   claudeCode: {
@@ -124,9 +136,12 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     rulesPath: "CLAUDE.md",
     capabilities: {
       stdio: true,
-      httpBearerLoopback: false,
+      httpBearerLoopback: true,
       httpOAuthLoopback: false,
       httpOAuthTunnel: false,
+      evidence: {
+        httpBearerLoopback: "docs/smoke-evidence/2026-04-24-http-loopback-static-bearer.md",
+      },
     },
   },
   cline: {
@@ -137,9 +152,12 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     rulesPath: ".clinerules/perplexity-mcp.md",
     capabilities: {
       stdio: true,
-      httpBearerLoopback: false,
+      httpBearerLoopback: true,
       httpOAuthLoopback: false,
       httpOAuthTunnel: false,
+      evidence: {
+        httpBearerLoopback: "docs/smoke-evidence/2026-04-24-http-loopback-static-bearer.md",
+      },
     },
   },
   amp: {
@@ -150,9 +168,12 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     rulesPath: "AGENTS.md",
     capabilities: {
       stdio: true,
-      httpBearerLoopback: false,
+      httpBearerLoopback: true,
       httpOAuthLoopback: false,
       httpOAuthTunnel: false,
+      evidence: {
+        httpBearerLoopback: "docs/smoke-evidence/2026-04-24-http-loopback-static-bearer.md",
+      },
     },
   },
   rooCode: {
@@ -163,9 +184,12 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     rulesPath: ".roo/rules/perplexity-mcp.md",
     capabilities: {
       stdio: true,
-      httpBearerLoopback: false,
+      httpBearerLoopback: true,
       httpOAuthLoopback: false,
       httpOAuthTunnel: false,
+      evidence: {
+        httpBearerLoopback: "docs/smoke-evidence/2026-04-24-http-loopback-static-bearer.md",
+      },
     },
   },
   codexCli: {
@@ -188,9 +212,12 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     rulesFormat: "yaml",
     capabilities: {
       stdio: true,
-      httpBearerLoopback: false,
+      httpBearerLoopback: true,
       httpOAuthLoopback: false,
       httpOAuthTunnel: false,
+      evidence: {
+        httpBearerLoopback: "docs/smoke-evidence/2026-04-24-http-loopback-static-bearer.md",
+      },
     },
   },
   copilot: {
@@ -215,9 +242,12 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     rulesPath: ".rules",
     capabilities: {
       stdio: true,
-      httpBearerLoopback: false,
+      httpBearerLoopback: true,
       httpOAuthLoopback: false,
       httpOAuthTunnel: false,
+      evidence: {
+        httpBearerLoopback: "docs/smoke-evidence/2026-04-24-http-loopback-static-bearer.md",
+      },
     },
   },
   geminiCli: {

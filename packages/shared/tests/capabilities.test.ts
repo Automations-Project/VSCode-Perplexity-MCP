@@ -32,12 +32,8 @@ describe("IDE_METADATA capabilities matrix", () => {
     }
   });
 
-  it("every entry has all HTTP caps false (evidence-gated at 8.6.2)", () => {
+  it("no entry has httpOAuthLoopback or httpOAuthTunnel set (still evidence-gated)", () => {
     for (const [key, meta] of entries) {
-      expect(
-        meta.capabilities.httpBearerLoopback,
-        `IDE ${key} httpBearerLoopback must be false until evidence lands`
-      ).toBe(false);
       expect(
         meta.capabilities.httpOAuthLoopback,
         `IDE ${key} httpOAuthLoopback must be false until evidence lands`
@@ -67,12 +63,35 @@ describe("IDE_METADATA capabilities matrix", () => {
     }
   });
 
-  it("no entry currently cites evidence (all HTTP caps are false)", () => {
+  it("every httpBearerLoopback-enabled IDE cites the 2026-04-24 static-bearer smoke evidence", () => {
+    const EXPECTED_EVIDENCE =
+      "docs/smoke-evidence/2026-04-24-http-loopback-static-bearer.md";
+    const bearerEnabled = entries.filter(
+      ([, m]) => m.capabilities.httpBearerLoopback === true
+    );
+    // Sanity: the v0.8.4 flip should cover at least one IDE.
+    expect(bearerEnabled.length).toBeGreaterThan(0);
+    for (const [key, meta] of bearerEnabled) {
+      const evidence = meta.capabilities.evidence;
+      expect(
+        evidence,
+        `IDE ${key} has httpBearerLoopback: true but no evidence object`
+      ).toBeDefined();
+      expect(
+        evidence?.httpBearerLoopback,
+        `IDE ${key} must cite evidence.httpBearerLoopback when the cap is true`
+      ).toBe(EXPECTED_EVIDENCE);
+    }
+  });
+
+  it("any evidence object present is non-empty (no vestigial {} entries)", () => {
     for (const [key, meta] of entries) {
       const evidence = meta.capabilities.evidence;
       if (evidence !== undefined) {
-        // If the field is present, it must not contain any keys until HTTP caps flip.
-        expect(Object.keys(evidence).length, `IDE ${key} has evidence entries but no HTTP caps are true yet`).toBe(0);
+        expect(
+          Object.keys(evidence).length,
+          `IDE ${key} has an evidence object with no entries`
+        ).toBeGreaterThan(0);
       }
     }
   });
