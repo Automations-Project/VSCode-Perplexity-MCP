@@ -19,7 +19,6 @@ const DEFAULTS: ExtensionSettingsSnapshot = {
   autoConfigureAmp: false,
   autoConfigureCodexCli: false,
   autoRefreshIntervalHours: 0,
-  debugBufferSize: 1000,
   debugVerboseHttp: false,
   oauthConsentCacheTtlHours: 24
 };
@@ -57,7 +56,6 @@ export function getSettingsSnapshot(): ExtensionSettingsSnapshot {
       DEFAULTS.autoConfigureCodexCli
     ),
     autoRefreshIntervalHours: configuration.get("autoRefreshIntervalHours", DEFAULTS.autoRefreshIntervalHours),
-    debugBufferSize: configuration.get("debugBufferSize", DEFAULTS.debugBufferSize),
     debugVerboseHttp: configuration.get("debugVerboseHttp", DEFAULTS.debugVerboseHttp),
     oauthConsentCacheTtlHours: configuration.get(
       "oauthConsentCacheTtlHours",

@@ -125,21 +125,6 @@
         "category": "Perplexity"
       },
       {
-        "command": "Perplexity.debugStartSession",
-        "title": "Perplexity: Start Debug Session",
-        "category": "Perplexity"
-      },
-      {
-        "command": "Perplexity.debugStopAndExport",
-        "title": "Perplexity: Stop & Export Debug Session",
-        "category": "Perplexity"
-      },
-      {
-        "command": "Perplexity.debugExportAll",
-        "title": "Perplexity: Export Full Debug Log",
-        "category": "Perplexity"
-      },
-      {
         "command": "Perplexity.logout",
         "title": "Perplexity: Logout",
         "category": "Perplexity"
@@ -282,11 +267,6 @@
           "minimum": 0,
           "maximum": 168,
           "description": "Hours between automatic session health checks. 0 to disable."
-        },
-        "Perplexity.debugBufferSize": {
-          "type": "number",
-          "default": 1000,
-          "description": "Number of debug events to retain in the ring buffer."
         },
         "Perplexity.debugVerboseHttp": {
           "type": "boolean",

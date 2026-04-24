@@ -22,9 +22,6 @@ import {
   getBundledDaemonStatus,
   rotateBundledDaemonToken,
 } from "./daemon/runtime.js";
-import { DebugCollector } from "./debug/collector.js";
-import { traceConfigChanges } from "./debug/instrumentation.js";
-import { exportDebugLog } from "./debug/exporter.js";
 import { listHistoryEntries, rebuildHistoryEntries, runCloudSync, runExport } from "./history/open-handlers.js";
 
 let outputChannel: vscode.OutputChannel;
@@ -209,18 +206,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
 async function activateInner(context: vscode.ExtensionContext): Promise<void> {
   const settings = getSettingsSnapshot();
-  const debugCollector = new DebugCollector(settings.debugBufferSize);
   const MANUAL_LOGIN_NOTICE = "Manual login opened in Chrome. Finish sign-in there; if it is behind other windows, bring Chrome to the front.";
 
-  // Wire collector events to a dedicated debug output channel
-  const debugChannel = vscode.window.createOutputChannel("Perplexity Debug Trace");
-  context.subscriptions.push(debugChannel);
-  debugCollector.onEvent = (event) => {
-    debugChannel.appendLine(`[${event.ts}] [${event.source}/${event.category}] ${event.event}${event.error ? ` ERROR: ${event.error}` : ""}`);
-  };
-
   const dashboard = new DashboardProvider(context);
-  dashboard.setDebugCollector(debugCollector);
   const { AuthManager } = await import("./mcp/auth-manager.js");
   const authManager = new AuthManager({ extensionUri: context.extensionUri });
   context.subscriptions.push(authManager);
@@ -745,39 +733,6 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
       "This VS Code build does not expose native MCP registration APIs. The Perplexity dashboard is still available."
     );
   }
-
-  // Debug commands
-  const extVersion = String((context.extension.packageJSON as { version?: string }).version ?? "0.1.0");
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("Perplexity.debugStartSession", () => {
-      debugCollector.startSession();
-      debugCollector.trace("ext", "command", "debug:session_start", {});
-      void vscode.window.showInformationMessage("Perplexity debug session started.");
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("Perplexity.debugStopAndExport", async () => {
-      const session = debugCollector.stopSession();
-      debugCollector.trace("ext", "command", "debug:session_stop", { session });
-      await exportDebugLog(debugCollector, true, extVersion);
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("Perplexity.debugExportAll", async () => {
-      await exportDebugLog(debugCollector, false, extVersion);
-    })
-  );
-
-  context.subscriptions.push(traceConfigChanges(debugCollector));
-
-  debugCollector.trace("ext", "config", "extension:activated", {
-    version: extVersion,
-    debugMode: settings.debugMode,
-    bufferSize: settings.debugBufferSize,
-  });
 
   void ensureBundledDaemon()
     .then((daemon) => {

@@ -37,7 +37,6 @@ import {
   handleCfNamedUnbindLocal,
   type CfNamedDeps,
 } from "./cf-named-handlers.js";
-import type { DebugCollector } from "../debug/collector.js";
 import { runDoctor } from "perplexity-user-mcp";
 import {
   listProfiles,
@@ -101,7 +100,6 @@ import {
 
 export class DashboardProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
-  private debugCollector?: DebugCollector;
   private authManager?: AuthManager;
   private otpResolvers = new Map<string, (s: string | null) => void>();
   private onMcpServerDefinitionsChanged?: () => void;
@@ -111,10 +109,6 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
   private lastDoctorReport: unknown = null;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
-
-  setDebugCollector(collector: DebugCollector): void {
-    this.debugCollector = collector;
-  }
 
   setAuthManager(m: AuthManager): void {
     this.authManager = m;
@@ -1236,12 +1230,6 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       ideStatus,
       rulesStatus: wsRoot ? getRulesStatuses(wsRoot) : [],
       settings,
-      debug: {
-        enabled: settings.debugMode,
-        sessionActive: this.debugCollector?.isSessionActive ?? false,
-        eventCount: this.debugCollector?.eventCount ?? 0,
-        bufferCapacity: this.debugCollector?.bufferCapacity ?? settings.debugBufferSize,
-      }
     };
   }
 

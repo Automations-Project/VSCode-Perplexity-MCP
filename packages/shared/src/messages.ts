@@ -1,5 +1,4 @@
 import type { AccountSnapshot, HistoryItem } from "./models.js";
-import type { DebugState } from "./debug.js";
 
 export type IdeTarget =
   | "cursor" | "windsurf" | "windsurfNext" | "claudeDesktop" | "claudeCode"
@@ -34,7 +33,6 @@ export interface ExtensionSettingsSnapshot {
   autoConfigureAmp: boolean;
   autoConfigureCodexCli: boolean;
   autoRefreshIntervalHours: number;
-  debugBufferSize: number;
   debugVerboseHttp: boolean;
   /** Hours a granted OAuth consent is remembered before the user is prompted again. 0 disables the cache (modal every time). */
   oauthConsentCacheTtlHours: number;
@@ -53,7 +51,6 @@ export interface DashboardState {
   ideStatus: Record<string, IdeStatus>;
   rulesStatus: RulesStatus[];
   settings: ExtensionSettingsSnapshot;
-  debug: DebugState;
 }
 
 export type DaemonTunnelStatus = "disabled" | "starting" | "enabled" | "crashed";
