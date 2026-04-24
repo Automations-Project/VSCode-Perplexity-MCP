@@ -3,8 +3,10 @@ import { dirname, join } from "node:path";
 
 import { cloudflaredQuickProvider } from "./cloudflared-quick.js";
 import { cloudflaredNamedProvider, createCloudflaredNamedProvider } from "./cloudflared-named.js";
-import { ngrokProvider } from "./ngrok.js";
+import { ngrokProvider, NgrokNativeMissingError } from "./ngrok.js";
 import type { TunnelProvider, TunnelProviderId, TunnelProviderStatus } from "./types.js";
+
+export { NgrokNativeMissingError, loadNgrokNative, isNgrokNativeAvailable } from "./ngrok.js";
 
 export { readNgrokSettings, writeNgrokSettings, clearNgrokSettings, getNgrokConfigPath } from "./ngrok-config.js";
 export type { NgrokSettings } from "./ngrok-config.js";

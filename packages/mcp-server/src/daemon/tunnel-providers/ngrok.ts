@@ -8,18 +8,129 @@
  * Free-tier ngrok includes one reserved static domain (yourname.ngrok-free.app)
  * which persists across daemon restarts; callers who leave `domain` unset get
  * an ephemeral URL that changes on each start.
+ *
+ * NOTE ON LAZY NATIVE LOADING (0.8.6):
+ * `@ngrok/ngrok` ships platform-specific NAPI subpackages
+ * (`@ngrok/ngrok-linux-x64-gnu`, `@ngrok/ngrok-win32-x64-msvc`, …) that are
+ * resolved at module-load time. If the VSIX was packaged on a different OS
+ * than the one activating the extension, the required subpackage may be
+ * missing and `require("@ngrok/ngrok")` throws MODULE_NOT_FOUND. That used to
+ * crash extension activation because the provider registry statically
+ * imported this file. We now defer loading the NAPI binding until a caller
+ * actually needs it (start / kill), and surface a domain-specific
+ * `NgrokNativeMissingError` so the dashboard can show a useful message.
  */
 
 import type { StartedTunnel, TunnelState } from "../tunnel.js";
 import { readNgrokSettings } from "./ngrok-config.js";
 import type { SetupCheck, TunnelProvider, TunnelProviderStartOptions } from "./types.js";
 
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore — NAPI binding has its own types that conflict across node versions;
-// we only need `forward` + `Listener.url()/close()` which are stable.
-import ngrok from "@ngrok/ngrok";
-
 const DASHBOARD_AUTHTOKEN_URL = "https://dashboard.ngrok.com/get-started/your-authtoken";
+
+/**
+ * Error thrown when the `@ngrok/ngrok` native subpackage for the current
+ * platform/arch isn't installed. Callers (dashboard / CLI) should surface the
+ * message to the user instead of letting a raw MODULE_NOT_FOUND propagate.
+ */
+export class NgrokNativeMissingError extends Error {
+  public readonly platform: string;
+  public readonly arch: string;
+  public readonly cause?: unknown;
+
+  constructor(cause: unknown) {
+    const platform = process.platform;
+    const arch = process.arch;
+    const message =
+      `@ngrok/ngrok native binding for ${platform}-${arch} is not available in this VSIX. ` +
+      `Reinstall the extension (or install @ngrok/ngrok manually) to use the ngrok provider, ` +
+      `or switch to the cloudflared provider in the dashboard.`;
+    super(message);
+    this.name = "NgrokNativeMissingError";
+    this.platform = platform;
+    this.arch = arch;
+    if (cause !== undefined) {
+      this.cause = cause;
+    }
+  }
+}
+
+// Minimal structural type for the bits of @ngrok/ngrok we touch. We avoid
+// importing the package's types at the top level because that would force TS
+// to resolve the module; the `import ngrok from "@ngrok/ngrok"` line was what
+// crashed activation in the first place.
+interface NgrokModule {
+  forward: (options: Record<string, unknown>) => Promise<NgrokListener>;
+  kill?: () => Promise<void> | void;
+}
+
+interface NgrokListener {
+  url: () => string | undefined | null;
+  close: () => Promise<void> | void;
+}
+
+let cachedNgrok: NgrokModule | null = null;
+
+/**
+ * Return true if the underlying require chain failure was specifically the
+ * native subpackage missing (vs. a programming error in @ngrok/ngrok itself).
+ * We match both MODULE_NOT_FOUND and the message pattern because electron/tsup
+ * can sometimes mangle err.code but preserve the message.
+ */
+function isNativeMissingError(err: unknown): boolean {
+  if (!err) return false;
+  const code = (err as { code?: string }).code;
+  if (code === "MODULE_NOT_FOUND" || code === "ERR_MODULE_NOT_FOUND") return true;
+  const message = err instanceof Error ? err.message : String(err);
+  // e.g. "Cannot find module '@ngrok/ngrok-linux-x64-gnu'"
+  return /Cannot find module ['"]@ngrok\/ngrok[-/]/i.test(message);
+}
+
+/**
+ * Lazily import `@ngrok/ngrok`. Cached on first success. On
+ * MODULE_NOT_FOUND for either the umbrella package or its platform subpackage,
+ * throws `NgrokNativeMissingError`; every other error propagates as-is so we
+ * don't swallow genuine bugs.
+ */
+export async function loadNgrokNative(): Promise<NgrokModule> {
+  if (cachedNgrok) return cachedNgrok;
+  try {
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore — dynamic import; the package's own types conflict across
+    // node versions. We only consume forward / Listener which are stable.
+    const mod = await import("@ngrok/ngrok");
+    // CJS/ESM interop: when tsup bundles us as ESM consuming a CJS package,
+    // the default export may be nested under `.default`.
+    const resolved = ((mod as { default?: NgrokModule }).default ?? mod) as NgrokModule;
+    if (typeof resolved?.forward !== "function") {
+      throw new Error("@ngrok/ngrok module did not expose forward(); API changed?");
+    }
+    cachedNgrok = resolved;
+    return resolved;
+  } catch (err) {
+    if (isNativeMissingError(err)) {
+      throw new NgrokNativeMissingError(err);
+    }
+    throw err;
+  }
+}
+
+/**
+ * Probe whether the native binding would load on this platform, without
+ * actually keeping it cached. Used by `listTunnelProviderStatuses` so we can
+ * surface a `native-missing` setup reason without crashing.
+ */
+export async function isNgrokNativeAvailable(): Promise<{ available: true } | { available: false; error: NgrokNativeMissingError }> {
+  try {
+    await loadNgrokNative();
+    return { available: true };
+  } catch (err) {
+    if (err instanceof NgrokNativeMissingError) {
+      return { available: false, error: err };
+    }
+    // Anything else is a real bug — propagate.
+    throw err;
+  }
+}
 
 export const ngrokProvider: TunnelProvider = {
   id: "ngrok",
@@ -27,6 +138,18 @@ export const ngrokProvider: TunnelProvider = {
   description: "Persistent URL via ngrok. Requires a free ngrok account authtoken.",
 
   async isSetupComplete(configDir): Promise<SetupCheck> {
+    // Step 1: check the native binding. If it's missing we cannot start a
+    // tunnel regardless of authtoken state, so report that first with a
+    // clearer message than a later start() failure would give.
+    const probe = await isNgrokNativeAvailable();
+    if (!probe.available) {
+      return {
+        ready: false,
+        reason: probe.error.message,
+      };
+    }
+
+    // Step 2: synchronous token presence check — unchanged from pre-0.8.6.
     const settings = readNgrokSettings(configDir);
     if (!settings?.authtoken) {
       return {
@@ -50,6 +173,11 @@ export const ngrokProvider: TunnelProvider = {
       );
     }
 
+    // Load the native binding lazily — this is the first place that actually
+    // needs it. If the platform subpackage is missing, surface it as
+    // NgrokNativeMissingError instead of a raw MODULE_NOT_FOUND.
+    const ngrok = await loadNgrokNative();
+
     let state: TunnelState = { status: "starting", url: null, pid: null, error: null };
     const updateState = (next: TunnelState) => {
       state = next;
@@ -71,7 +199,7 @@ export const ngrokProvider: TunnelProvider = {
       // best-effort
     }
 
-    let listener: any | null = null;
+    let listener: NgrokListener | null = null;
     let resolveExited: () => void;
     const exited = new Promise<void>((resolve) => {
       resolveExited = resolve;
@@ -120,7 +248,16 @@ export const ngrokProvider: TunnelProvider = {
   },
 };
 
-async function safeClose(listener: any): Promise<void> {
+/**
+ * Test-only hook to reset the lazy cache between vitest runs. Exported so the
+ * unit tests can reset state without touching module internals via
+ * reflection. NOT part of the public runtime API.
+ */
+export function __resetNgrokNativeCacheForTests(): void {
+  cachedNgrok = null;
+}
+
+async function safeClose(listener: NgrokListener | null): Promise<void> {
   if (!listener) return;
   try {
     if (typeof listener.close === "function") {
