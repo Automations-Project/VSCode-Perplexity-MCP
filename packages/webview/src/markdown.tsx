@@ -88,7 +88,7 @@ export const Markdown = memo(function Markdown({ content, maxLines, className }:
     if (line.trimStart().startsWith("```")) {
       if (inCodeBlock) {
         pushElement(
-          <pre key={key++} className="md-code-block">
+          <pre key={key++} className="md-code-block" dir="ltr">
             {codeBlockLang && <div className="md-code-lang">{codeBlockLang}</div>}
             <code>{codeLines.join("\n")}</code>
           </pre>
@@ -119,33 +119,46 @@ export const Markdown = memo(function Markdown({ content, maxLines, className }:
       continue;
     }
 
-    // Headings
+    // Headings — dir="auto" picks direction from first strong char per heading,
+    // so a block with an Arabic heading renders RTL while a sibling English
+    // heading stays LTR, even in the same answer.
     const headingMatch = line.match(/^(#{1,4})\s+(.+)/);
     if (headingMatch) {
       const level = headingMatch[1].length;
       const tag = `h${level}`;
       pushElement(
-        createElement(tag, { key: key++, className: `md-h${level}` }, ...renderInline(headingMatch[2]))
+        createElement(
+          tag,
+          { key: key++, className: `md-h${level}`, dir: "auto" },
+          ...renderInline(headingMatch[2]),
+        ),
       );
       continue;
     }
 
-    // Blockquote
+    // Blockquote — dir="auto" so quoted Arabic text flips its border & indent.
     if (line.trimStart().startsWith("> ")) {
       pushElement(
-        <blockquote key={key++} className="md-blockquote">
+        <blockquote key={key++} className="md-blockquote" dir="auto">
           {renderInline(line.replace(/^>\s*/, ""))}
         </blockquote>
       );
       continue;
     }
 
-    // Unordered list item
+    // Unordered list item — paddingInlineStart (logical) so bullet hugs the
+    // start edge regardless of direction; dir="auto" per row so a mixed-list
+    // answer has both LTR and RTL items aligned correctly.
     const ulMatch = line.match(/^(\s*)[-*+]\s+(.+)/);
     if (ulMatch) {
       const depth = Math.floor(ulMatch[1].length / 2);
       pushElement(
-        <div key={key++} className="md-li" style={{ paddingLeft: `${12 + depth * 14}px` }}>
+        <div
+          key={key++}
+          className="md-li"
+          dir="auto"
+          style={{ paddingInlineStart: `${12 + depth * 14}px` }}
+        >
           <span className="md-bullet">&#x2022;</span>
           <span>{renderInline(ulMatch[2])}</span>
         </div>
@@ -153,13 +166,18 @@ export const Markdown = memo(function Markdown({ content, maxLines, className }:
       continue;
     }
 
-    // Ordered list item
+    // Ordered list item — same logical-padding + dir="auto" treatment.
     const olMatch = line.match(/^(\s*)\d+\.\s+(.+)/);
     if (olMatch) {
       const depth = Math.floor(olMatch[1].length / 2);
       const num = line.match(/^(\s*)(\d+)\./)?.[2] ?? "1";
       pushElement(
-        <div key={key++} className="md-li" style={{ paddingLeft: `${12 + depth * 14}px` }}>
+        <div
+          key={key++}
+          className="md-li"
+          dir="auto"
+          style={{ paddingInlineStart: `${12 + depth * 14}px` }}
+        >
           <span className="md-bullet">{num}.</span>
           <span>{renderInline(olMatch[2])}</span>
         </div>
@@ -167,14 +185,14 @@ export const Markdown = memo(function Markdown({ content, maxLines, className }:
       continue;
     }
 
-    // Regular paragraph
-    pushElement(<p key={key++} className="md-p">{renderInline(line)}</p>);
+    // Regular paragraph — dir="auto" picks direction from first strong char.
+    pushElement(<p key={key++} className="md-p" dir="auto">{renderInline(line)}</p>);
   }
 
-  // Unclosed code block
+  // Unclosed code block (code stays LTR — programming syntax is LTR).
   if (inCodeBlock && codeLines.length > 0) {
     pushElement(
-      <pre key={key++} className="md-code-block">
+      <pre key={key++} className="md-code-block" dir="ltr">
         {codeBlockLang && <div className="md-code-lang">{codeBlockLang}</div>}
         <code>{codeLines.join("\n")}</code>
       </pre>
@@ -184,7 +202,7 @@ export const Markdown = memo(function Markdown({ content, maxLines, className }:
   const truncated = lineCount >= limit && lines.length > limit;
 
   return (
-    <div className={`md-root ${className ?? ""}`}>
+    <div className={`md-root ${className ?? ""}`} dir="auto">
       {elements}
       {truncated && <div className="md-truncated">... content truncated</div>}
     </div>

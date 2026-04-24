@@ -138,6 +138,8 @@ interface DashboardStore {
     phase: "idle" | "starting" | "done" | "skipped-local" | "skipped-hydrated" | "error";
     error?: string;
   };
+  historySortNewest: boolean;
+  setHistorySortNewest: (v: boolean) => void;
   doctor: {
     phase: "idle" | "running" | "done" | "error";
     report: DoctorReport | null;
@@ -188,6 +190,8 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
   historyExport: { id: null, phase: "idle" },
   cloudSync: { phase: "idle" },
   cloudHydrate: { historyId: null, phase: "idle" },
+  historySortNewest: true,
+  setHistorySortNewest: (v) => set({ historySortNewest: v }),
   doctor: { phase: "idle", report: null, reportingOptOut: false },
   setDoctorRunning: () => set((s) => ({ doctor: { ...s.doctor, phase: "running" } })),
   setDoctorReport: (report) => set((s) => ({ doctor: { ...s.doctor, phase: "done", report } })),

@@ -1,17 +1,25 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   BookOpen,
   Check,
   ChevronDown,
   ChevronUp,
   ClipboardCheck,
+  Clock,
+  Cloud,
   Copy,
   Database,
   ExternalLink,
   FileCode2,
+  FileText,
   Globe,
   HardDriveDownload,
+  Hash,
+  Link as LinkIcon,
+  ListFilter,
   Minus,
+  Pin,
+  PinOff,
   Plus,
   RefreshCcw,
   RotateCcw,
@@ -798,14 +806,17 @@ export function HistoryView({
   filter,
   setFilter,
   items,
+  totalCount,
   send,
 }: {
   filter: string;
   setFilter: (value: string) => void;
   items: HistoryItem[];
+  totalCount: number;
   send: SendFn;
 }) {
-  const [sortNewest, setSortNewest] = useState(true);
+  const sortNewest = useDashboardStore((s) => s.historySortNewest);
+  const setSortNewest = useDashboardStore((s) => s.setHistorySortNewest);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const sorted = sortNewest ? items : [...items].reverse();
@@ -820,9 +831,13 @@ export function HistoryView({
     setExpandedId((prev) => (prev === id ? null : id));
   }, []);
 
+  const requestedRef = useRef(false);
   useEffect(() => {
-    send({ type: "history:request-list" });
-    send({ type: "viewers:request-list" });
+    if (!requestedRef.current) {
+      requestedRef.current = true;
+      send({ type: "history:request-list" });
+      send({ type: "viewers:request-list" });
+    }
   }, [send]);
 
   return (
@@ -832,14 +847,24 @@ export function HistoryView({
         <SectionHeader eyebrow="Activity log" title="Query History" detail="" />
         <div className="hist-stats-row">
           <div className="hist-stat">
-            <span className="hist-stat-value">{items.length}</span>
-            <span className="hist-stat-label">queries</span>
+            <span className="hist-stat-icon"><Database size={12} /></span>
+            <span className="hist-stat-value">{totalCount}</span>
+            <span className="hist-stat-label">total</span>
           </div>
-          <div className="hist-stat">
+          {filter.trim() && (
+            <div className="hist-stat hist-stat-matching">
+              <span className="hist-stat-icon"><ListFilter size={12} /></span>
+              <span className="hist-stat-value">{items.length}</span>
+              <span className="hist-stat-label">matching</span>
+            </div>
+          )}
+          <div className="hist-stat hist-stat-cloud">
+            <span className="hist-stat-icon"><Cloud size={12} /></span>
             <span className="hist-stat-value">{items.filter(i => i.source === "cloud").length}</span>
-            <span className="hist-stat-label">from cloud</span>
+            <span className="hist-stat-label">cloud</span>
           </div>
-          <div className="hist-stat">
+          <div className="hist-stat hist-stat-sources">
+            <span className="hist-stat-icon"><LinkIcon size={12} /></span>
             <span className="hist-stat-value">{items.reduce((s, i) => s + i.sourceCount, 0)}</span>
             <span className="hist-stat-label">sources</span>
           </div>
@@ -861,7 +886,12 @@ export function HistoryView({
         <div className="flex items-center gap-2">
           <div className="search-field" style={{ flex: 1 }}>
             <Search size={14} />
-            <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Search queries, tools, answers..." />
+            <input
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Search queries, tools, answers..."
+              dir="auto"
+            />
           </div>
           <button
             className="ghost-button btn-sm"
@@ -874,7 +904,7 @@ export function HistoryView({
           </button>
           <button
             className="ghost-button btn-sm"
-            onClick={() => setSortNewest((v) => !v)}
+            onClick={() => setSortNewest(!sortNewest)}
             title={sortNewest ? "Showing newest first" : "Showing oldest first"}
             style={{ flexShrink: 0, padding: "6px 8px" }}
           >
@@ -1476,10 +1506,25 @@ function HistoryCardRich({
   const viewers = useDashboardStore((store) => store.externalViewers);
 
   const copyToClipboard = useCallback((text: string, label: string) => {
-    navigator.clipboard.writeText(text).then(() => {
+    const doCopy = () => {
       setCopied(label);
       setTimeout(() => setCopied(null), 2000);
-    }).catch(() => {});
+    };
+    navigator.clipboard.writeText(text).then(doCopy).catch(() => {
+      // Fallback for VS Code webviews where navigator.clipboard may be unavailable
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        if (document.execCommand("copy")) doCopy();
+      } catch {
+        /* silently fail */
+      }
+      document.body.removeChild(ta);
+    });
   }, []);
 
   const threadSlug = item.threadUrl?.split("/search/")[1] ?? null;
@@ -1495,7 +1540,7 @@ function HistoryCardRich({
   return (
     <div className={`glass-panel hist-card${expanded ? " hist-card-expanded" : ""}${hasError ? " hist-card-error" : ""}`}>
       {/* Header row: click to expand */}
-      <button className="hist-card-header" onClick={() => onToggle(item.id)}>
+      <button className="hist-card-header" onClick={() => onToggle(item.id)} aria-expanded={expanded}>
         <div className="hist-card-top">
           <span className={`chip ${getToolChipClass(item.tool)}`} style={{ fontSize: "0.65rem" }}>
             {shortToolName(item.tool)}
@@ -1507,19 +1552,38 @@ function HistoryCardRich({
             <span className="chip chip-accent" style={{ fontSize: "0.62rem" }}>{item.tier}</span>
           ) : null}
           {item.pinned ? (
-            <span className="chip chip-pro" style={{ fontSize: "0.62rem" }}>Pinned</span>
+            <span className="chip chip-pro" style={{ fontSize: "0.62rem" }}>
+              <Pin size={10} />
+              Pinned
+            </span>
           ) : null}
-          <span className="hist-time">{relativeTime(item.createdAt)}</span>
-          <span className="hist-expand-icon">
+          {item.source === "cloud" ? (
+            <span className="chip chip-accent" style={{ fontSize: "0.62rem" }}>
+              <Cloud size={10} />
+              Cloud
+            </span>
+          ) : null}
+          {item.status && item.status !== "completed" ? (
+            <span
+              className={`hist-status-dot hist-status-dot-${item.status}`}
+              aria-label={`status: ${item.status}`}
+              title={`status: ${prettifyMode(item.status)}`}
+            />
+          ) : null}
+          <span className="hist-time" title={new Date(item.createdAt).toLocaleString()}>
+            <Clock size={10} />
+            {relativeTime(item.createdAt)}
+          </span>
+          <span className="hist-expand-icon" aria-hidden="true">
             {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
           </span>
         </div>
-        <div className="hist-card-query">{item.query}</div>
+        <div className="hist-card-query" dir="auto">{item.query}</div>
       </button>
 
       {/* Collapsed preview */}
       {!expanded && (
-        <div className="hist-card-preview">
+        <div className="hist-card-preview" dir="auto">
           <Markdown content={item.answerPreview} maxLines={4} />
         </div>
       )}
@@ -1527,8 +1591,12 @@ function HistoryCardRich({
       {/* Expanded content */}
       {expanded && (
         <div className="hist-card-body">
-          {/* Full answer with markdown rendering */}
-          <div className="hist-card-answer">
+          {/* Answer section */}
+          <div className="hist-card-section-label">
+            <FileText size={10} />
+            Answer preview
+          </div>
+          <div className="hist-card-answer" dir="auto">
             <Markdown content={item.answerPreview} />
           </div>
 
@@ -1536,33 +1604,44 @@ function HistoryCardRich({
           <div className="hist-meta-row">
             {item.sourceCount > 0 && (
               <span className="hist-meta-item">
-                <Globe size={11} />
-                {item.sourceCount} sources
+                <LinkIcon size={11} />
+                <strong>{item.sourceCount}</strong> sources
               </span>
             )}
             {item.mode && (
               <span className="hist-meta-item">
-                mode: {item.mode}
+                <Hash size={11} />
+                mode: <strong>{item.mode}</strong>
               </span>
             )}
             {item.status && (
               <span className="hist-meta-item">
-                status: {item.status}
+                <span
+                  className={`hist-status-dot hist-status-dot-${item.status}`}
+                  aria-hidden="true"
+                />
+                <strong>{prettifyMode(item.status)}</strong>
               </span>
             )}
             {item.language && item.language !== "en-US" && (
               <span className="hist-meta-item">
+                <Globe size={11} />
                 {item.language}
               </span>
             )}
-            <span className="hist-meta-item">
+            <span className="hist-meta-item" style={{ marginLeft: "auto" }}>
+              <Clock size={11} />
               {new Date(item.createdAt).toLocaleString()}
             </span>
           </div>
 
           {/* Action buttons */}
+          <div className="hist-card-section-label">
+            <Sparkles size={10} />
+            Actions
+          </div>
           <div className="hist-actions">
-            {/* Group 1: Clipboard */}
+            {/* Group 1: Clipboard (primary) */}
             {recoverPrompt && (
               <button
                 className="hist-action-btn hist-action-primary"
@@ -1584,22 +1663,9 @@ function HistoryCardRich({
 
             <span className="hist-actions-divider" aria-hidden="true" />
 
-            {/* Group 2: Open */}
-            <button
-              className="hist-action-btn"
-              onClick={() => send({ type: "history:open-rich", payload: { historyId: item.id } })}
-              title="Open in the built-in Rich View"
-            >
-              Rich View
-            </button>
-            <button
-              className="hist-action-btn"
-              onClick={() => send({ type: "history:open-preview", payload: { historyId: item.id } })}
-              title="Open the raw markdown in VS Code preview"
-            >
-              Preview
-            </button>
+            {/* Group 2: Open / Download */}
             <OpenWithMenu item={item} viewers={viewers} send={send} />
+            <DownloadMenu item={item} send={send} />
             {item.threadUrl && (
               <a
                 href={item.threadUrl}
@@ -1613,30 +1679,37 @@ function HistoryCardRich({
               </a>
             )}
 
-            <span className="hist-actions-divider" aria-hidden="true" />
-
-            {/* Group 3: Actions */}
-            <DownloadMenu item={item} send={send} />
+            {/* Right-aligned: pin + delete */}
+            <span className="hist-actions-spacer" aria-hidden="true" />
             <button
               className="hist-action-btn"
               onClick={() => send({ type: "history:pin", payload: { historyId: item.id, pinned: !item.pinned } })}
               title={item.pinned ? "Unpin this entry" : "Pin to keep across retention prunes"}
             >
+              {item.pinned ? <PinOff size={12} /> : <Pin size={12} />}
               {item.pinned ? "Unpin" : "Pin"}
+            </button>
+            <button
+              className="hist-action-btn hist-action-icon-btn"
+              onClick={() => send({ type: "history:delete", payload: { historyId: item.id } })}
+              title="Delete this entry from local history"
+              aria-label="Delete this entry"
+            >
+              <Trash2 size={13} />
             </button>
           </div>
 
           {item.tags?.length ? (
             <div className="hist-tag-row">
               {item.tags.map((tag) => (
-                <span key={tag} className="chip chip-muted">{tag}</span>
+                <span key={tag} className="chip chip-muted" dir="auto">{tag}</span>
               ))}
             </div>
           ) : null}
 
           {/* Error display */}
           {item.error && (
-            <div className="hist-error">
+            <div className="hist-error" dir="auto">
               {item.error}
             </div>
           )}
@@ -1646,9 +1719,11 @@ function HistoryCardRich({
       {/* Bottom bar (collapsed): sources + thread link */}
       {!expanded && (
         <div className="hist-card-footer">
-          <span className="hist-meta-item">
-            {item.sourceCount > 0 ? `${item.sourceCount} sources` : ""}
-          </span>
+          {item.sourceCount > 0 && (
+            <span className="hist-meta-item">
+              {item.sourceCount} sources
+            </span>
+          )}
           <div className="flex items-center gap-2">
             {recoverPrompt && (
               <button
