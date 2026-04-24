@@ -4,6 +4,34 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [0.8.2] — 2026-04-24 — Phase 8.5: unified diagnostics + legacy debug cleanup
+
+### Added
+- **`Perplexity.captureDiagnostics` command + dashboard button.** One-click diagnostics bundle for bug reports. Shows a save dialog defaulted to `~/Downloads/perplexity-mcp-diagnostics-<ISO>.zip`, then writes a redacted zip containing: the extension output channel (last 5000 lines via a new `OutputRingBuffer`), the daemon log, the last 1000 lines of `audit.log`, an inline `runDoctor` report, `daemon.lock.json` (bearer scrubbed), `tunnel-settings.json`, `oauth-clients.json`, a `package-versions.json` manifest, and `REDACTION_NOTES.md` explaining what was scrubbed. The "Show in folder" button on the success toast opens the enclosing directory via `revealFileInOS`. Dashboard button sits in the daemon card alongside the existing kill/restart actions.
+- **`packages/extension/src/diagnostics/capture.ts`.** Pure-function `captureDiagnostics({ outputPath, configDir, extensionVersion, vscodeVersion, logsText?, doctorReport?, now?, fs? }): Promise<CaptureResult>`. Single atomic write; bundles through `jszip` (bundled into `dist/extension.js`, not shipped as a separate tree). All file reads dependency-injected for test hermeticity; all content except `package-versions.json` passes through the diagnostics redactor.
+- **`packages/extension/src/diagnostics/redact.ts`.** Wraps the existing extension/server redactors with a PEM-block layer (`/-----BEGIN <TYPE>-----…-----END <TYPE>-----/g` with a backreferenced type token so adjacent blocks don't merge; PEM-first so cert bodies aren't half-eaten by the generic long-token rule). Exports `redactDiagnosticsString` / `redactDiagnosticsObject`.
+- **`OutputRingBuffer`** at `packages/extension/src/diagnostics/output-buffer.ts`. 5000-line ring; `log()` and `debug()` tee every line into it after the existing `redactMessage` pass so snapshots are already scrubbed. Exposed via `getOutputRingBuffer()` for `captureDiagnostics` consumers.
+- **Shared DI flow helper** at `packages/extension/src/diagnostics/flow.ts`. Same pattern as `webview/bearer-reveal-gate.ts` — one `runDiagnosticsCaptureFlow` drives both the command-palette entry and the dashboard message handler so save-dialog / doctor-probe / zip-write / result-post logic lives in one unit-testable place. Returns a discriminated `DiagnosticsFlowOutcome` so callers can signal spinner state correctly.
+
+### Removed
+- **Legacy `debugCollector` infrastructure.** Fully superseded by the unified capture path. Deleted: `packages/extension/src/debug/` (collector, exporter, instrumentation, stderr-parser), `packages/shared/src/debug.ts` and its re-export, the `Perplexity Debug Trace` output channel, the `dashboard.setDebugCollector` wiring, and the three commands `Perplexity.debugStartSession` / `Perplexity.debugStopAndExport` / `Perplexity.debugExportAll`. Removed settings: `Perplexity.debugBufferSize` (the new ring buffer is not user-configurable; 5000 lines is enough for a diagnostics snapshot and the ring never grows). `DashboardState.debug` removed from the shared contract.
+
+### Changed
+- **`DashboardProvider` routes `diagnostics:capture` inbound messages** to the same flow helper the command uses; posts the typed `diagnostics:capture:result` + maps outcome kind to `postActionResult` so the webview pending-action spinner releases on every outcome (ok / cancelled / error / throw).
+- **Webview-side message contract:** inbound `{ type: "diagnostics:capture"; id: string }` on `WebviewMessage`; outbound `diagnostics:capture:result` discriminated union on `ExtensionMessage`. `ACTION_TYPES` registers the inbound so correlation-id tracking clears correctly.
+- `packages/mcp-server` + `packages/extension` bump to `0.8.2`.
+
+### Dependencies
+- Added `jszip ^3.10.1` as a bundled dep (placed in `devDependencies` per the project's convention that runtime deps bundled into `dist/extension.js` live there, alongside `patchright` et al.; `prepare-package-deps.mjs`'s hardcoded `rootPackages` list controls what ships in `dist/node_modules/` and is unchanged).
+
+### Tests
+- **581 passed / 71 files** (up from 539 / 65 at the start of Phase 8.5; +42 new tests across 8.5.1/8.5.2; 8.5.3 was pure deletion — zero tests existed for the removed legacy debug infra). Breakdown: diagnostics-redact 11 (PEM variants + ordering + nested objects), diagnostics-capture 8 (happy path with 9 zip entries + missing-file markers + 1500→1000 audit tail + bearer scrub in daemon.lock + package-versions never-redacted + malformed-lockfile parse-error entry + PEM-in-tunnel-settings + bytesWritten matches `stat.size`), output-buffer 6, diagnostics-command 6, DashboardProvider.diagnostics 8 (baseline 4 + outcome-signalling 4: error → `postActionResult(false)`, cancel → `postActionResult(true)`, happy → `postActionResult(true)`, showSaveDialog throw → outer catch releases spinner), DaemonStatus.diagnostics 3 (button renders + click sends message + action-type registered).
+
+### Release gate
+- Typecheck: green across all 4 packages.
+- Full suite: 581 passed / 71 files.
+- Manual smoke: **DEFERRED to the consolidated final-smoke pass** after `v0.8.3` (per execution strategy `docs/superpowers/specs/2026-04-24-phase-8-completion-execution-design.md`).
+
 ## [0.8.1] — 2026-04-24 — Phase 8.4: cloudflared named-tunnel provider
 
 ### Added
