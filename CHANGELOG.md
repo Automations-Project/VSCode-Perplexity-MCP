@@ -4,6 +4,41 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [0.8.3] — 2026-04-24 — Phase 8.6: MCP transport picker
+
+Per-IDE choice between four MCP transports — `stdio-in-process`, `stdio-daemon-proxy` (default), `http-loopback`, `http-tunnel` — with capability-gated availability, security prechecks (H3–H8 from the 8.6 design), and a dashboard picker UI. **All HTTP capability flags start `false` across every IDE**; flipping one to `true` requires a dated `docs/smoke-evidence/*.md` file plus a committed generator golden fixture. As of 0.8.3 every IDE ships stdio-only — the contract, UI, and dispatcher are in place for individual HTTP capabilities to flip as evidence lands.
+
+### Added
+- **Four transport builders** at `packages/extension/src/auto-config/transports/`. Pure-function `build(input): McpServerEntry`; shared `TransportBuilder` / `TransportBuildInput` types, `UnsupportedTransportError` + `StabilityGateError` classes, and a `getTransportBuilder(id)` registry. `http-tunnel` emits `{url}` only — **never** a `headers` key, even when called with `bearerKind: "local"` (defense in depth against config leaking a bearer to a public URL). `http-loopback` supports both OAuth (headerless) and scoped-bearer-fallback variants. `stdio-daemon-proxy` (no `PERPLEXITY_NO_DAEMON` env var) is the shipped default.
+- **`McpTransportId`, `MCP_TRANSPORT_DEFAULT`, `MCP_TRANSPORT_IDS`, `IdeCapabilities`** exported from `@perplexity-user-mcp/shared`. `IdeMeta.capabilities` populated for every IDE.
+- **Three new settings** (`Perplexity.mcpTransportByIde`, `Perplexity.daemonPort`, `Perplexity.syncFolderPatterns`) + one new command (`Perplexity.regenerateStaleConfigs`).
+- **Scoped local-bearer primitives** at `packages/mcp-server/src/daemon/local-tokens.ts`: `issueLocalToken` / `verifyLocalToken` / `revokeLocalToken` / `listLocalTokens`. Hash-at-rest at `<configDir>/local-tokens.json` (0600); plaintext returned once on issuance; constant-time compare via `crypto.timingSafeEqual`; revoked entries are returned by `list` but short-circuited in `verify`. `revoke` and `list` propagate disk I/O errors (control-plane paths); `verify` swallows them and returns null (fail-closed) so the auth hot-path can't crash. `lastUsedAt` write-back failures log-and-proceed rather than DOS the verify path. Token format: `pplx_local_<ide-sanitized>_<base64url24>`. Metadata id: `local-<ide>-<base64url8>`.
+- **`applyIdeConfig` dispatch rewrite** with a structured `ApplyIdeConfigResult` discriminated union and `ApplyIdeConfigDeps` dependency injection for VS Code modals, git-tracked detection, audit sinks, and daemon-state readers. 11-step pipeline: capability gate → format gate → H4 sync-folder detect (only for http-loopback bearer branch) → H5 confirmation modal (workspaceState-remembered per `(ideTag, transportId)` pair) → bearer-fate decision → H6 port-pin nudge → local-token issuance → builder.build (H7 stability gates delegated to the http-tunnel builder) → **H3 sanitized `.bak`** (strip `bearerToken`/`token`/`secret`/`Authorization` keys + `pplx_*` / `"Bearer "` string values → `"<redacted>"`, write 0600, atomic rename, restore + delete on failure, unconditional delete on success) → H8 audit → return. `removeIdeConfig` got the same `.bak` hygiene. `writeJsonAtomic` + `writeTextAtomic` now open tempfiles 0600 AND call `applyPrivatePermissions` before rename so the pre-rename window is not world-readable.
+- **TransportPicker** (`packages/webview/src/components/TransportPicker.tsx`) — radio group per IDE row, capability-gated disabled states with inline reasons, emits `transport:select`. Rendered inside every auto-configurable `IdeCard`.
+- **BearerReveal** (`packages/webview/src/components/BearerReveal.tsx`) — extracted the 30s-TTL bearer-reveal row from DaemonStatus into a dedicated component. Props-controlled; returns null when `available === false`.
+- **Stale-config banner** in the IDEs tab: when the store's `staleConfigs` slice is non-empty, shows `"N config(s) contain(s) stale auth"` with a **Regenerate all** button dispatching `transport:regenerate-stale`. Per-IDE `Stale` chip in each affected IdeCard header. Slice is hydrated by `transport:staleness` messages from the extension host; `null` = pre-hydrate, `[]` = explicit zero-signal.
+- **Command palette entries.** `Perplexity.copyDaemonBearer`, `Perplexity.showDaemonBearer`, and `Perplexity.regenerateStaleConfigs` all reachable from the Command Palette. Phase 8.6.6 is fully covered by prior work — the first two shipped in 8.2 (v0.7.4) and the third in 8.6.2 (this release).
+
+### Changed
+- `IdeConfigOptions` gains `transportId?: McpTransportId` (defaults to `MCP_TRANSPORT_DEFAULT`). `configureTargets` is async and returns `{ statuses, results }` instead of just statuses.
+- `DaemonStatus.tsx` no longer inlines the bearer-reveal UI — it renders `<BearerReveal>` and keeps the state + TTL tick logic.
+- `packages/mcp-server` + `packages/extension` bump to `0.8.3`.
+
+### Security
+- **H3** — `.bak` can no longer harbor a bearer across a rotation. Applies to both `applyIdeConfig` and `removeIdeConfig`. Tempfile mode tightened to 0600 POSIX / icacls-restricted Windows so no write-then-rename window exposes the secret.
+- **H4** — sync-folder detection fires a modal before any write that embeds a bearer. Well-known dirs (iCloud, OneDrive, Dropbox, Google Drive, Syncthing, pCloud), git-tracked trees (graceful fallback if git is missing), and user-supplied `Perplexity.syncFolderPatterns` regexes. `http-tunnel` and OAuth `http-loopback` are exempt because no secret is written.
+- **H7** — `http-tunnel` generation rejects `cf-quick` (ephemeral URL) and `ngrok`-without-reserved-domain via the builder's `StabilityGateError`. Error reasons never include the tunnel URL.
+- **H8** — audit line fires on every exit path: `ok`, `rejected-unsupported`, `rejected-sync`, `rejected-cancelled`, `rejected-tunnel-unstable`, `rejected-port-unavailable`, `error`. `configPath` is home-redacted (`~/...`).
+
+### Tests
+- **705 passed / 83 files** — up from 581 / 71 at the start of Phase 8.6 (+124 new tests across the sub-phase). Highlights: 14 local-tokens tests (incl. constant-time compare spy + malformed-file resilience + strict-revoke error propagation + resilient verify write-back), 45 transport builder tests (every gate path, URL normalization including the `/mcp/` double-append regression fix, headerless http-tunnel invariant), 18 `applyIdeConfig` tests (every H3–H8 path including sanitized-bak rollback, removeIdeConfig sanitized-bak, bearer-file 0600 mode), 22 UI tests (11 TransportPicker + 11 BearerReveal), 9 staleness-store + banner tests.
+
+### Release gate
+- Typecheck: green across all 4 packages.
+- Full suite: 705 passed / 83 files.
+- Secret-leak gate: clean on `.test-artifacts/vitest.log`.
+- Manual smoke: **DEFERRED to the consolidated final-smoke pass** immediately after this release, per execution strategy `docs/superpowers/specs/2026-04-24-phase-8-completion-execution-design.md`. Phase 8.6 closes Phase 8 completeness.
+
 ## [0.8.2] — 2026-04-24 — Phase 8.5: unified diagnostics + legacy debug cleanup
 
 ### Added
