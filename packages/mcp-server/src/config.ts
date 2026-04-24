@@ -310,8 +310,18 @@ export async function getSavedCookies(): Promise<PlaywrightCookie[]> {
     return cookies;
   }
 
-  // 2. Vault-backed cookies for the active profile (Phase 2)
-  const raw = await _vault.get(activeName(), "cookies").catch(() => null);
+  // 2. Vault-backed cookies for the active profile (Phase 2).
+  // vault.js.readVaultObject returns {} (no throw) when vault.enc is absent,
+  // so any throw from _vault.get means the file existed but unseal failed
+  // (typically Linux with no keytar + no env var + no TTY). We continue to
+  // return [] so the caller can report "no-cookies", but log the real reason
+  // so the extension output channel shows why — otherwise the user sees
+  // "run Login first" for a profile they already logged into.
+  const raw = await _vault.get(activeName(), "cookies").catch((err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[vault] getSavedCookies failed for profile ${activeName()}: ${msg}`);
+    return null;
+  });
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);

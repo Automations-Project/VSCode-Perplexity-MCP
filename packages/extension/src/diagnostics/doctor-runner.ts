@@ -23,6 +23,7 @@
 import * as vscode from "vscode";
 import { runDoctor as runDoctorCore } from "perplexity-user-mcp";
 import { getIdeStatuses } from "../auto-config/index.js";
+import { withScopedVaultPassphrase } from "../auth/scoped-env.js";
 
 export interface ExtensionDoctorDeps {
   /** The extension's chromePath setting — drives IDE status detection. */
@@ -61,19 +62,6 @@ export function createExtensionAwareRunDoctor(
 
     const passphrase = deps.getVaultPassphrase ? await deps.getVaultPassphrase() : undefined;
     const options = { baseDir, ideStatuses, ...extras };
-
-    if (!passphrase) {
-      return runDoctorCore(options);
-    }
-
-    const key = "PERPLEXITY_VAULT_PASSPHRASE";
-    const prev = process.env[key];
-    process.env[key] = passphrase;
-    try {
-      return await runDoctorCore(options);
-    } finally {
-      if (prev === undefined) delete process.env[key];
-      else process.env[key] = prev;
-    }
+    return withScopedVaultPassphrase(passphrase, () => runDoctorCore(options));
   };
 }

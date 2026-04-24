@@ -28,6 +28,7 @@ import {
 import type { IdeTarget } from "@perplexity-user-mcp/shared";
 import { getAccountSnapshot, setLastRefreshTier } from "../auth/session.js";
 import { ensureVaultPassphrase, peekStoredVaultPassphrase } from "../auth/vault-passphrase.js";
+import { withScopedVaultPassphrase } from "../auth/scoped-env.js";
 import { createExtensionAwareRunDoctor } from "../diagnostics/doctor-runner.js";
 import { log, debug, getOutputRingBuffer } from "../extension.js";
 import { captureDiagnostics } from "../diagnostics/capture.js";
@@ -1453,7 +1454,14 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       } satisfies ExtensionMessage);
     }
     try {
-      const result = await refreshAccountInfo({ log: (line: string) => log(`[refresh] ${line}`) });
+      // Scope PERPLEXITY_VAULT_PASSPHRASE around the call so headless-Linux
+      // users (no keytar) can unseal vault.enc with the SecretStorage-stored
+      // passphrase. Without this the in-process getMasterKey throws and the
+      // silent catch in config.getSavedCookies returns [] → "no-cookies".
+      const result = await withScopedVaultPassphrase(
+        await peekStoredVaultPassphrase(this.context),
+        () => refreshAccountInfo({ log: (line: string) => log(`[refresh] ${line}`) }),
+      );
       if (result.ok) {
         log(
           `refreshAccountInfo: live fetch OK via tier=${result.tier}, ${result.modelCount} models, accountTier=${result.accountTier}, took ${result.elapsedMs}ms`
