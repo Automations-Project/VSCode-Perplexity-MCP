@@ -11,6 +11,7 @@
  * `diagnostics:capture:result` ExtensionMessage back to the webview.
  */
 
+import * as path from "node:path";
 import type { ExtensionMessage } from "@perplexity-user-mcp/shared";
 import type { CaptureOptions, CaptureResult } from "./capture.js";
 import { redactMessage } from "../redact.js";
@@ -34,6 +35,12 @@ export interface DiagnosticsFlowDeps {
   getVscodeVersion: () => string;
   now?: () => Date;
   getHomedir?: () => string;
+  /**
+   * Variadic because the `Perplexity.captureDiagnostics` command wire-up
+   * passes a "Show in folder" action button. The flow helper itself calls
+   * this with zero items — the items parameter is retained only so the
+   * command call-site can reuse the same dep shape.
+   */
   showInformationMessage: (message: string, ...items: string[]) => Promise<string | undefined>;
   showErrorMessage: (message: string, ...items: string[]) => Promise<string | undefined>;
 }
@@ -52,10 +59,9 @@ function defaultSuggestedPath(deps: DiagnosticsFlowDeps): string {
   const now = (deps.now ?? (() => new Date()))();
   const home = deps.getHomedir ? deps.getHomedir() : "";
   const name = `perplexity-mcp-diagnostics-${sanitizeTimestamp(now)}.zip`;
-  // posix-style join; the VS Code save-dialog normalises to the platform.
-  const sep = home.endsWith("/") || home.endsWith("\\") ? "" : "/";
-  const downloadsSeg = home ? `${home}${sep}Downloads/` : "";
-  return `${downloadsSeg}${name}`;
+  // Use path.join so separator direction is consistent with the rest of the
+  // codebase. When no home directory is available, fall back to just the name.
+  return home ? path.join(home, "Downloads", name) : name;
 }
 
 export async function runDiagnosticsCaptureFlow(deps: DiagnosticsFlowDeps): Promise<DiagnosticsFlowOutcome> {
@@ -92,15 +98,17 @@ export async function runDiagnosticsCaptureFlow(deps: DiagnosticsFlowDeps): Prom
 }
 
 /**
- * Dashboard dispatch: runs the flow and posts a typed result back to the
- * webview. The command-palette path does NOT use this wrapper — it calls
- * `runDiagnosticsCaptureFlow` directly because the webview may not be open.
+ * Dashboard dispatch: runs the flow, posts a typed result back to the
+ * webview, AND returns the outcome so the caller can map it to the
+ * generic `action:result` (spinner) state. The command-palette path does
+ * NOT use this wrapper — it calls `runDiagnosticsCaptureFlow` directly
+ * because the webview may not be open.
  */
 export async function handleDiagnosticsCapture(
   id: string,
   deps: DiagnosticsFlowDeps,
   post: (message: ExtensionMessage) => void | Promise<void>,
-): Promise<void> {
+): Promise<DiagnosticsFlowOutcome> {
   const outcome = await runDiagnosticsCaptureFlow(deps);
   if (outcome.kind === "ok") {
     await post({
@@ -112,7 +120,7 @@ export async function handleDiagnosticsCapture(
       sourcesIncluded: outcome.result.sourcesIncluded,
       sourcesMissing: outcome.result.sourcesMissing,
     });
-    return;
+    return outcome;
   }
   const error = outcome.kind === "cancelled" ? "cancelled" : outcome.error;
   await post({
@@ -121,4 +129,5 @@ export async function handleDiagnosticsCapture(
     ok: false,
     error,
   });
+  return outcome;
 }

@@ -106,3 +106,73 @@ describe("handleDiagnosticsCapture (dashboard dispatch)", () => {
     }
   });
 });
+
+/**
+ * Outcome-return signalling contract.
+ *
+ * The dashboard's `diagnostics:capture` arm needs a boolean success signal
+ * to pass to `postActionResult` — otherwise the global spinner state sticks
+ * when capture fails. These tests lock down the outcome returned from
+ * `handleDiagnosticsCapture` so the dashboard's mapping:
+ *
+ *   outcome.kind === "ok"        → postActionResult(id, true)
+ *   outcome.kind === "cancelled" → postActionResult(id, true)  // user action, not failure
+ *   outcome.kind === "error"     → postActionResult(id, false, outcome.error)
+ *
+ * stays correct. If this mapping changes, update both this file and the
+ * arm in `DashboardProvider.ts`.
+ */
+describe("handleDiagnosticsCapture outcome → postActionResult signalling", () => {
+  it("capture failure → outcome.kind === 'error' (dashboard maps to ok:false)", async () => {
+    const posted: ExtensionMessage[] = [];
+    const deps = makeDeps({
+      captureDiagnostics: vi.fn(async () => {
+        throw new Error("ENOSPC: no space left on device");
+      }),
+    });
+    const outcome = await handleDiagnosticsCapture("req-fail", deps, (m) => {
+      posted.push(m);
+    });
+    expect(outcome.kind).toBe("error");
+    if (outcome.kind === "error") {
+      expect(outcome.error).toMatch(/ENOSPC/);
+    }
+  });
+
+  it("cancellation → outcome.kind === 'cancelled' (dashboard maps to ok:true — user action, not failure)", async () => {
+    const posted: ExtensionMessage[] = [];
+    const deps = makeDeps({ showSaveDialog: vi.fn(async () => undefined) });
+    const outcome = await handleDiagnosticsCapture("req-cancel", deps, (m) => {
+      posted.push(m);
+    });
+    expect(outcome.kind).toBe("cancelled");
+    expect(deps.captureDiagnostics).not.toHaveBeenCalled();
+  });
+
+  it("happy path → outcome.kind === 'ok' (dashboard maps to ok:true)", async () => {
+    const posted: ExtensionMessage[] = [];
+    const deps = makeDeps();
+    const outcome = await handleDiagnosticsCapture("req-ok", deps, (m) => {
+      posted.push(m);
+    });
+    expect(outcome.kind).toBe("ok");
+    if (outcome.kind === "ok") {
+      expect(outcome.result.outputPath).toBe("/tmp/diag.zip");
+    }
+  });
+
+  it("showSaveDialog throws → handleDiagnosticsCapture rejects (dashboard catch block maps to ok:false)", async () => {
+    // The inner flow does NOT wrap showSaveDialog in its own try/catch, so a
+    // throw here escapes `handleDiagnosticsCapture`. The dashboard arm has an
+    // outer try/catch that calls `postActionResult(id, false, ...)` — this
+    // test proves the throw propagates so that safety net engages.
+    const deps = makeDeps({
+      showSaveDialog: vi.fn(async () => {
+        throw new Error("dialog host crashed");
+      }),
+    });
+    await expect(
+      handleDiagnosticsCapture("req-throw", deps, () => {}),
+    ).rejects.toThrow(/dialog host crashed/);
+  });
+});

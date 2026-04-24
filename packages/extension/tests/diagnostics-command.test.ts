@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import { describe, it, expect, vi } from "vitest";
 import {
   runDiagnosticsCaptureFlow,
@@ -110,9 +111,11 @@ describe("runDiagnosticsCaptureFlow", () => {
     });
     await runDiagnosticsCaptureFlow(deps);
     // The default filename must contain the sanitized timestamp (no colons / dots).
+    // Build the expected path with the same `path.join` the flow uses so the
+    // assertion is platform-neutral (on Windows the separators are backslashes).
+    const expectedPath = path.join(homedir, "Downloads", "perplexity-mcp-diagnostics-2026-04-24T12-34-56-789Z.zip");
     expect(seenDefault).toBeDefined();
-    expect(seenDefault!).toContain(homedir);
-    expect(seenDefault!).toMatch(/perplexity-mcp-diagnostics-2026-04-24T12-34-56-789Z\.zip$/);
+    expect(seenDefault).toBe(expectedPath);
   });
 
   it("outcome result includes sourcesIncluded / sourcesMissing for caller to post back to UI", async () => {

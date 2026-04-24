@@ -1165,33 +1165,53 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             break;
           }
           case "diagnostics:capture": {
-            await handleDiagnosticsCapture(
-              message.id,
-              {
-                showSaveDialog: async (defaultPath) => {
-                  const uri = await vscode.window.showSaveDialog({
-                    defaultUri: vscode.Uri.file(defaultPath),
-                    filters: { "Zip archive": ["zip"] },
-                  });
-                  return uri?.fsPath;
+            try {
+              const outcome = await handleDiagnosticsCapture(
+                message.id,
+                {
+                  showSaveDialog: async (defaultPath) => {
+                    const uri = await vscode.window.showSaveDialog({
+                      defaultUri: vscode.Uri.file(defaultPath),
+                      filters: { "Zip archive": ["zip"] },
+                    });
+                    return uri?.fsPath;
+                  },
+                  captureDiagnostics,
+                  runDoctor,
+                  getConfigDir: () =>
+                    process.env.PERPLEXITY_CONFIG_DIR ?? path.join(os.homedir(), ".perplexity-mcp"),
+                  getLogsText: () => getOutputRingBuffer()?.snapshot() ?? "",
+                  getExtensionVersion: () =>
+                    String((this.context.extension.packageJSON as { version?: string }).version ?? "0.0.0"),
+                  getVscodeVersion: () => vscode.version,
+                  getHomedir: () => os.homedir(),
+                  showInformationMessage: async (m) => vscode.window.showInformationMessage(m),
+                  showErrorMessage: async (m) => vscode.window.showErrorMessage(m),
                 },
-                captureDiagnostics,
-                runDoctor,
-                getConfigDir: () =>
-                  process.env.PERPLEXITY_CONFIG_DIR ?? path.join(os.homedir(), ".perplexity-mcp"),
-                getLogsText: () => getOutputRingBuffer()?.snapshot() ?? "",
-                getExtensionVersion: () =>
-                  String((this.context.extension.packageJSON as { version?: string }).version ?? "0.0.0"),
-                getVscodeVersion: () => vscode.version,
-                getHomedir: () => os.homedir(),
-                showInformationMessage: async (m) => vscode.window.showInformationMessage(m),
-                showErrorMessage: async (m) => vscode.window.showErrorMessage(m),
-              },
-              async (msg) => {
-                await this.view?.webview.postMessage(msg satisfies ExtensionMessage);
-              },
-            );
-            await this.postActionResult(message.id, true);
+                async (msg) => {
+                  await this.view?.webview.postMessage(msg satisfies ExtensionMessage);
+                },
+              );
+              // Map the outcome to postActionResult so the dashboard spinner
+              // releases whether we succeeded, cancelled, or errored. Treat
+              // cancellation as a user-initiated action (ok=true) — consistent
+              // with cancel semantics elsewhere and so the spinner doesn't
+              // render as a failure when the user just dismissed the dialog.
+              if (outcome.kind === "ok") {
+                await this.postActionResult(message.id, true);
+              } else if (outcome.kind === "cancelled") {
+                await this.postActionResult(message.id, true);
+              } else {
+                await this.postActionResult(message.id, false, outcome.error);
+              }
+            } catch (err) {
+              // If handleDiagnosticsCapture itself throws (shouldn't happen
+              // since it catches internally, but guard anyway so the spinner
+              // always releases), post a failure result and log the detail.
+              const detail = err instanceof Error ? err.message : String(err);
+              log(`[diagnostics:capture] handler threw: ${detail}`);
+              await this.postActionResult(message.id, false, detail);
+            }
             break;
           }
         }
