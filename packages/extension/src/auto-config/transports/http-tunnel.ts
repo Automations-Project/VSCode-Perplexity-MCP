@@ -65,11 +65,15 @@ function buildHttpTunnel(input: TransportBuildInput): McpServerEntry {
 }
 
 function normalizeTunnelUrl(raw: string): string {
-  // If already ends in `/mcp` (optionally with nothing after), return as-is.
-  if (raw.endsWith("/mcp")) return raw;
-  // Strip any trailing slashes, then append `/mcp`.
-  const trimmed = raw.replace(/\/+$/, "");
-  return `${trimmed}/mcp`;
+  // Strip an existing trailing `/mcp` (with or without trailing slashes) AND
+  // any remaining trailing slashes, then re-append `/mcp`. This unifies all of
+  //   "https://host/"       → "https://host/mcp"
+  //   "https://host"        → "https://host/mcp"
+  //   "https://host/mcp"    → "https://host/mcp"
+  //   "https://host/mcp/"   → "https://host/mcp"  (NOT "/mcp/mcp")
+  //   "https://host/mcp//"  → "https://host/mcp"
+  const stripped = raw.replace(/\/mcp\/*$/, "").replace(/\/+$/, "");
+  return `${stripped}/mcp`;
 }
 
 export const httpTunnelBuilder: TransportBuilder = {

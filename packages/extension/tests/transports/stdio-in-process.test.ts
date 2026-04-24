@@ -70,6 +70,17 @@ describe("stdioInProcessBuilder", () => {
     expect(entry.command).not.toBe(process.execPath);
   });
 
+  it("falls back to process.execPath when nodePath is an empty string", () => {
+    // Regression: earlier code used `input.nodePath ?? process.execPath`,
+    // which only falls back on `undefined`/`null`. An empty string would leak
+    // through as `command: ""` and the IDE's MCP client would fail to spawn
+    // with an opaque error. Fix switched to `||`.
+    const entry = stdioInProcessBuilder.build(makeInput({ nodePath: "" }));
+    assertCommandEntry(entry);
+    expect(entry.command).toBe(process.execPath);
+    expect(entry.command).not.toBe("");
+  });
+
   it("adds PERPLEXITY_CHROME_PATH to env when chromePath is set", () => {
     const entry = stdioInProcessBuilder.build(
       makeInput({ chromePath: "/opt/google/chrome/chrome" }),

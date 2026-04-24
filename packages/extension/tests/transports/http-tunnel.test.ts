@@ -73,6 +73,35 @@ describe("httpTunnelBuilder happy paths", () => {
     expect(out).toEqual({ url: "https://mcp.example.com/mcp" });
   });
 
+  it("URL ending in /mcp/ (trailing slash after /mcp) does NOT produce /mcp/mcp", () => {
+    // Regression: earlier implementation used `endsWith("/mcp")` which missed
+    // the trailing-slash case, then stripped the slash and appended `/mcp`,
+    // producing `/mcp/mcp`. Guard against that.
+    const out = httpTunnelBuilder.build(
+      baseInput({
+        tunnelUrl: "https://mcp.example.com/mcp/",
+        tunnelProviderId: "cf-named",
+      })
+    );
+    expect(out).toEqual({ url: "https://mcp.example.com/mcp" });
+    if ("url" in out) {
+      expect(out.url).not.toContain("/mcp/mcp");
+    }
+  });
+
+  it("URL ending in /mcp// (double trailing slash) normalizes to /mcp", () => {
+    const out = httpTunnelBuilder.build(
+      baseInput({
+        tunnelUrl: "https://mcp.example.com/mcp//",
+        tunnelProviderId: "cf-named",
+      })
+    );
+    expect(out).toEqual({ url: "https://mcp.example.com/mcp" });
+    if ("url" in out) {
+      expect(out.url).not.toContain("/mcp/mcp");
+    }
+  });
+
   it("cf-named ignores tunnelReservedDomain=false (cf-named is always persistent)", () => {
     const out = httpTunnelBuilder.build(
       baseInput({

@@ -40,7 +40,11 @@ export const stdioInProcessBuilder: TransportBuilder = {
     }
 
     return {
-      command: input.nodePath ?? process.execPath,
+      // Use logical OR (not `??`) so an empty-string nodePath also falls back
+      // to `process.execPath`. A caller that passes `nodePath: ""` would
+      // otherwise produce `command: ""`, which the IDE's MCP client spawns
+      // with an opaque error.
+      command: input.nodePath || process.execPath,
       args: [input.launcherPath],
       env,
     };

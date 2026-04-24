@@ -21,12 +21,14 @@ export const stdioDaemonProxyBuilder: TransportBuilder = {
       // NOTE: no PERPLEXITY_NO_DAEMON — launcher multiplexes onto the shared daemon.
     };
 
-    if (input.chromePath) {
+    if (typeof input.chromePath === "string" && input.chromePath.length > 0) {
       env.PERPLEXITY_CHROME_PATH = input.chromePath;
     }
 
     return {
-      command: input.nodePath ?? process.execPath,
+      // Use logical OR (not `??`) so an empty-string nodePath also falls back
+      // to `process.execPath`. Mirrors stdio-in-process for consistency.
+      command: input.nodePath || process.execPath,
       args: [input.launcherPath],
       env,
     };

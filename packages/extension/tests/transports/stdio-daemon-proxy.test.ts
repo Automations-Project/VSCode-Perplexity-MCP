@@ -48,6 +48,15 @@ describe("stdioDaemonProxyBuilder", () => {
     ]);
   });
 
+  it("falls back to process.execPath when nodePath is an empty string", () => {
+    // Regression: mirrors stdio-in-process. `??` would leak the empty string
+    // through as `command: ""`; `||` correctly falls back.
+    const result = stdioDaemonProxyBuilder.build(baseInput({ nodePath: "" }));
+    const command = "command" in result ? result.command : null;
+    expect(command).toBe(process.execPath);
+    expect(command).not.toBe("");
+  });
+
   it("propagates chromePath into env when provided", () => {
     const result = stdioDaemonProxyBuilder.build(
       baseInput({ chromePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" }),
@@ -63,6 +72,16 @@ describe("stdioDaemonProxyBuilder", () => {
 
   it("omits PERPLEXITY_CHROME_PATH when chromePath is absent", () => {
     const result = stdioDaemonProxyBuilder.build(baseInput());
+    const env = "env" in result ? result.env ?? {} : {};
+    expect(env).not.toHaveProperty("PERPLEXITY_CHROME_PATH");
+  });
+
+  it("omits PERPLEXITY_CHROME_PATH when chromePath is an empty string", () => {
+    // Regression: keep the guard in lock-step with stdio-in-process. An empty
+    // string must not produce `PERPLEXITY_CHROME_PATH=""` in the env block —
+    // that would tell the launcher to use an empty Chrome path rather than
+    // auto-detect.
+    const result = stdioDaemonProxyBuilder.build(baseInput({ chromePath: "" }));
     const env = "env" in result ? result.env ?? {} : {};
     expect(env).not.toHaveProperty("PERPLEXITY_CHROME_PATH");
   });
