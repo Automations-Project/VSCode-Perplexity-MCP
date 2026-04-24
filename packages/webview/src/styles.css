@@ -135,6 +135,23 @@ a {
   margin: 8px 0;
 }
 
+/* v0.8.5 loopback-default opt-in card. Sits in place of the full
+   TunnelManager when Perplexity.enableTunnels is false. */
+.remote-access-optin {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.remote-access-optin-note {
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
 /* <details>/<summary> disclosure pattern used by the daemon card's
    Audit Tail and managed-caveat panels. `listStyle: none` removes the
    native marker — the rotating ChevronDown provides a cleaner affordance. */

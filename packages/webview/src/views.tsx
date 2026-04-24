@@ -1386,6 +1386,7 @@ function IdeCard({
         ideDisplayName={status.displayName}
         capabilities={capabilities}
         selected={selectedTransport}
+        tunnelsEnabled={settings.enableTunnels}
         send={send}
       />
       <div className="ide-card-actions">

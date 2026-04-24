@@ -15,6 +15,7 @@ import { spawnSync } from "node:child_process";
 import { hasStoredLogin } from "./auth/session.js";
 import { getSettingsSnapshot } from "./settings.js";
 import { DashboardProvider } from "./webview/DashboardProvider.js";
+import { migrateEnableTunnelsOnce } from "./webview/tunnel-settings-migration.js";
 import { ensureLauncher } from "./launcher/write-launcher.js";
 import {
   configureDaemonRuntime,
@@ -374,6 +375,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   outputChannel = vscode.window.createOutputChannel("Perplexity Internal MCP");
   outputBuffer = new OutputRingBuffer(5000);
   context.subscriptions.push(outputChannel);
+  // v0.8.5: one-time migration. Users with a pre-existing tunnel-settings.json
+  // opted in by configuring a provider in a prior release; flip enableTunnels
+  // on for them so the loopback-default posture doesn't hide UI they were
+  // already using. Runs before any getSettingsSnapshot() call so the first
+  // read reflects the migrated value.
+  const migrationConfigDir =
+    process.env.PERPLEXITY_CONFIG_DIR ?? path.join(os.homedir(), ".perplexity-mcp");
+  try {
+    await migrateEnableTunnelsOnce(context, { configDir: migrationConfigDir });
+  } catch (err) {
+    // Migration failure is non-fatal: user keeps loopback-default posture
+    // and can flip the setting manually from the dashboard.
+    outputChannel.appendLine(
+      `[enableTunnels-migration] skipped: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
   const settings = getSettingsSnapshot();
   debugEnabled = settings.debugMode;
   log("Activating extension...");

@@ -52,6 +52,16 @@ export interface ExtensionSettingsSnapshot {
    * to the user.
    */
   autoRegenerateStaleConfigs: boolean;
+  /**
+   * v0.8.5: loopback-default posture. When `false` (default), the dashboard
+   * hides the TunnelManager controls behind an opt-in card and the
+   * TransportPicker omits the http-tunnel option entirely. Flip to `true` to
+   * expose remote-access controls (Cloudflare Quick Tunnel, cf-named, ngrok).
+   * A one-time migration on v0.8.5 activation flips this to `true` for users
+   * who already have a tunnel-settings.json (they previously opted in by
+   * configuring a provider), so upgrade-path users aren't surprised.
+   */
+  enableTunnels: boolean;
 }
 
 export interface RulesStatus {

@@ -227,4 +227,43 @@ describe("TransportPicker", () => {
     expect(fieldset?.getAttribute("aria-label")).toBe("Transport");
     expect(screen.getByText("Transport")).toBeDefined();
   });
+
+  it("tunnelsEnabled=false removes http-tunnel from the DOM entirely", () => {
+    render(
+      <TransportPicker
+        ideTag="cursor"
+        ideDisplayName="Cursor"
+        capabilities={makeCaps()}
+        selected="stdio-daemon-proxy"
+        tunnelsEnabled={false}
+        send={vi.fn()}
+      />,
+    );
+    const radios = document.querySelectorAll<HTMLInputElement>(
+      'input[type="radio"]',
+    );
+    expect(radios).toHaveLength(3);
+    const values = Array.from(radios).map((r) => r.value).sort();
+    expect(values).toEqual(
+      ["http-loopback", "stdio-daemon-proxy", "stdio-in-process"].sort(),
+    );
+    expect(
+      document.querySelector('input[type="radio"][value="http-tunnel"]'),
+    ).toBeNull();
+  });
+
+  it("tunnelsEnabled=true renders http-tunnel as before (still subject to capability gating)", () => {
+    render(
+      <TransportPicker
+        ideTag="cursor"
+        ideDisplayName="Cursor"
+        capabilities={makeCaps()}
+        selected="stdio-daemon-proxy"
+        tunnelsEnabled={true}
+        send={vi.fn()}
+      />,
+    );
+    expect(getRadio("http-tunnel")).toBeDefined();
+    expect(getRadio("http-tunnel").disabled).toBe(false);
+  });
 });

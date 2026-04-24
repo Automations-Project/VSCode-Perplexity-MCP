@@ -73,6 +73,14 @@ export interface TransportPickerProps {
   capabilities: IdeCapabilities;
   selected: McpTransportId;
   disabled?: boolean;
+  /**
+   * v0.8.5: when false, omit the http-tunnel option entirely from the
+   * rendered radio list (not merely disabled — removed). The picker still
+   * honours per-IDE capabilities for the remaining transports. Defaults to
+   * `true` so callers that haven't migrated yet render the same four
+   * options as before.
+   */
+  tunnelsEnabled?: boolean;
   send: (message: {
     type: "transport:select";
     payload: { ideTag: string; transportId: McpTransportId };
@@ -80,13 +88,26 @@ export interface TransportPickerProps {
 }
 
 export function TransportPicker(props: TransportPickerProps) {
-  const { ideTag, ideDisplayName, capabilities, selected, disabled, send } =
-    props;
+  const {
+    ideTag,
+    ideDisplayName,
+    capabilities,
+    selected,
+    disabled,
+    tunnelsEnabled = true,
+    send,
+  } = props;
+
+  // Filter http-tunnel out when the user hasn't opted into tunnels. The
+  // other three transports remain subject to per-IDE capability gating.
+  const visibleOptions = tunnelsEnabled
+    ? OPTIONS
+    : OPTIONS.filter((opt) => opt.id !== "http-tunnel");
 
   return (
     <fieldset className="transport-picker" aria-label="Transport">
       <legend className="eyebrow">Transport</legend>
-      {OPTIONS.map((opt) => {
+      {visibleOptions.map((opt) => {
         const optionDisabled =
           Boolean(disabled) || !isAvailable(opt.id, capabilities);
         const reason = !isAvailable(opt.id, capabilities)

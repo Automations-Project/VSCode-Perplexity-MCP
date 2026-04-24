@@ -20,6 +20,13 @@ export function DaemonStatus({ send }: { send: SendFn }) {
   const tunnelProbe = useDashboardStore((store) => store.tunnelProbe);
   const revealedBearer = useDashboardStore((store) => store.revealedBearer);
   const clearRevealedBearer = useDashboardStore((store) => store.clearRevealedBearer);
+  // v0.8.5 loopback-default: pull enableTunnels from the live dashboard
+  // snapshot and pass explicitly so the TunnelManager wrapper decision
+  // doesn't depend on zustand's SSR/client snapshot divergence. Falls back
+  // to `false` pre-hydrate — the opt-in card is the right default.
+  const enableTunnels = useDashboardStore(
+    (store) => store.state?.settings.enableTunnels ?? false,
+  );
   return (
     <DaemonStatusView
       status={status}
@@ -27,6 +34,7 @@ export function DaemonStatus({ send }: { send: SendFn }) {
       tokenRotatedAt={tokenRotatedAt}
       tunnelProviders={tunnelProviders}
       tunnelProbe={tunnelProbe}
+      enableTunnels={enableTunnels}
       revealedBearer={revealedBearer}
       clearRevealedBearer={clearRevealedBearer}
       send={send}
@@ -40,6 +48,7 @@ export function DaemonStatusView({
   tokenRotatedAt,
   tunnelProviders,
   tunnelProbe,
+  enableTunnels = true,
   revealedBearer,
   clearRevealedBearer,
   send,
@@ -49,6 +58,14 @@ export function DaemonStatusView({
   tokenRotatedAt: string | null;
   tunnelProviders?: TunnelProvidersState | null;
   tunnelProbe?: TunnelProbeState | null;
+  /**
+   * v0.8.5: when false, the TunnelManager slot collapses to a single
+   * opt-in card. Defaults to `true` so existing callers / tests keep
+   * seeing the full manager without requiring a prop change — the live
+   * `DaemonStatus` wrapper reads the real value from the store and
+   * overrides this default.
+   */
+  enableTunnels?: boolean;
   /**
    * H0 reveal slice. Non-null only during an active 30s reveal. Raw bearer
    * is present here — the slice itself is the enforcement mechanism (TTL +
@@ -140,7 +157,13 @@ export function DaemonStatusView({
         <DaemonMetric label="Uptime" value={formatUptime(status?.uptimeMs ?? null)} />
       </div>
 
-      <TunnelManager status={status} tunnelProviders={tunnelProviders} tunnelProbe={tunnelProbe} send={send} />
+      <TunnelManager
+        status={status}
+        tunnelProviders={tunnelProviders}
+        tunnelProbe={tunnelProbe}
+        enableTunnels={enableTunnels}
+        send={send}
+      />
 
       <div className="daemon-section-divider" aria-hidden="true" />
 

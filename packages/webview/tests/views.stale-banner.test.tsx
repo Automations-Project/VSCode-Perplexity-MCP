@@ -36,6 +36,8 @@ const settings: ExtensionSettingsSnapshot = {
   mcpTransportByIde: {},
   daemonPort: 0,
   syncFolderPatterns: [],
+  autoRegenerateStaleConfigs: true,
+  enableTunnels: false,
 };
 
 const cursorStatus: IdeStatus = {

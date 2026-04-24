@@ -318,6 +318,11 @@
           "type": "boolean",
           "default": true,
           "description": "When a configured IDE's mcp.json contains a stale URL or bearer (after a daemon restart or tunnel change), automatically regenerate it with current live values. When disabled, the dashboard shows a banner and the user must click 'Regenerate all' manually."
+        },
+        "Perplexity.enableTunnels": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable remote access via Cloudflare or ngrok tunnels. When disabled, the dashboard shows only loopback (127.0.0.1) configuration; tunnel-related UI is hidden and http-tunnel is not offered as a transport option. Turn this on to expose the MCP server over the internet (with OAuth + WAF)."
         }
       }
     },

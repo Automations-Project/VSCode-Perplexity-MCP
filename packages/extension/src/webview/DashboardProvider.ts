@@ -333,6 +333,55 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
           }
           case "settings:update":
             debug(`settings:update payload=${JSON.stringify(message.payload)}`);
+            // v0.8.5: enableTunnels=false triggers a confirm modal + atomic
+            // tunnel shutdown before the setting flip. The check happens here
+            // (not on the webview) so the modal + daemon call run as a single
+            // host-side transaction. Other keys in the same payload are still
+            // applied even when the user cancels the tunnel opt-out.
+            if (message.payload.enableTunnels === false) {
+              const status = await getBundledDaemonStatus().catch(() => null);
+              const tunnelActive =
+                status?.health?.tunnel?.status === "enabled" ||
+                status?.health?.tunnel?.status === "starting";
+              const choice = await vscode.window.showWarningMessage(
+                "Disable tunnel options?",
+                {
+                  modal: true,
+                  detail: tunnelActive
+                    ? "The active tunnel will shut down. http-loopback and stdio configs remain working."
+                    : "The dashboard will hide tunnel controls. http-loopback and stdio configs remain working.",
+                },
+                "Disable",
+              );
+              if (choice !== "Disable") {
+                // Strip the enableTunnels toggle from the partial so any
+                // co-sent keys still apply, then refresh so the UI stays
+                // consistent with the unchanged value.
+                const rest = { ...message.payload };
+                delete rest.enableTunnels;
+                if (Object.keys(rest).length > 0) {
+                  await updateSettings(rest);
+                }
+                await this.refresh();
+                break;
+              }
+              if (tunnelActive) {
+                try {
+                  await disableBundledDaemonTunnel();
+                } catch (err) {
+                  // Log + surface but continue flipping the setting — the
+                  // user asked to hide tunnel UI and we shouldn't trap them
+                  // with a stuck tunnel if shutdown races a crashed process.
+                  debug(
+                    `disable-tunnel during enableTunnels=false failed: ${(err as Error).message}`,
+                  );
+                  await this.postNotice(
+                    "warning",
+                    `Tunnel shutdown reported: ${(err as Error).message}`,
+                  );
+                }
+              }
+            }
             await updateSettings(message.payload);
             await this.refresh();
             break;

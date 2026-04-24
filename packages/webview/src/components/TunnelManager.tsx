@@ -5,6 +5,7 @@ import { useDashboardStore, useIsActionPending, type TunnelProbeState } from "..
 import { CfNamedRow, deriveCfNamedState } from "./CfNamedRow";
 import { DaemonActionButton } from "./DaemonActionButton";
 import { NgrokRow } from "./NgrokRow";
+import { RemoteAccessOptIn } from "./RemoteAccessOptIn";
 import { TunnelPerformance } from "./TunnelPerformance";
 
 export { deriveCfNamedState };
@@ -12,7 +13,50 @@ export { deriveCfNamedState };
 type SendFn = (message: WebviewMessage | Omit<Extract<WebviewMessage, { id: string }>, "id">) => void;
 export type TunnelProvidersState = NonNullable<ReturnType<typeof useDashboardStore.getState>["tunnelProviders"]>;
 
+/**
+ * v0.8.5: loopback-default posture. If `settings.enableTunnels === false`
+ * (the default for fresh installs, and the migrated state for users with no
+ * tunnel-settings.json), render a minimal opt-in card instead of the full
+ * provider picker + enable/disable controls.
+ *
+ * `enableTunnels` can be supplied as a prop (preferred — explicit data flow
+ * from DaemonStatus, and robust to SSR where zustand falls back to its
+ * initial-state snapshot). When omitted, falls back to the store. The prop
+ * path is what DaemonStatus actually uses in production.
+ */
 export function TunnelManager({
+  status,
+  tunnelProviders,
+  tunnelProbe,
+  enableTunnels,
+  send,
+}: {
+  status: DaemonStatusState | null;
+  tunnelProviders?: TunnelProvidersState | null;
+  tunnelProbe?: TunnelProbeState | null;
+  enableTunnels?: boolean;
+  send: SendFn;
+}) {
+  const storeEnableTunnels = useDashboardStore(
+    (store) => store.state?.settings.enableTunnels ?? false
+  );
+  const effectiveEnableTunnels = enableTunnels ?? storeEnableTunnels;
+
+  if (!effectiveEnableTunnels) {
+    return <RemoteAccessOptIn send={send} />;
+  }
+
+  return (
+    <FullTunnelManager
+      status={status}
+      tunnelProviders={tunnelProviders}
+      tunnelProbe={tunnelProbe}
+      send={send}
+    />
+  );
+}
+
+function FullTunnelManager({
   status,
   tunnelProviders,
   tunnelProbe,
@@ -258,6 +302,28 @@ export function TunnelManager({
       </div>
 
       <TunnelPerformance />
+
+      <div
+        className="remote-access-disable-row"
+        style={{ marginTop: 8, textAlign: "right" }}
+      >
+        <button
+          className="ghost-button btn-sm"
+          data-testid="remote-access-optin-disable"
+          onClick={() =>
+            // Routed through settings:update; the extension host intercepts
+            // enableTunnels=false to run the VS Code modal + shut down any
+            // active tunnel atomically before writing the setting.
+            send({
+              type: "settings:update",
+              payload: { enableTunnels: false },
+            })
+          }
+          title="Hide tunnel options and switch the dashboard back to loopback-only."
+        >
+          Disable tunnel options
+        </button>
+      </div>
 
       {tunnelProbe ? (
         <div className="daemon-inset-panel" style={{ marginTop: 8 }} data-testid="tunnel-probe-result">

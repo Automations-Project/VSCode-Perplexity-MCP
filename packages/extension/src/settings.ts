@@ -24,7 +24,8 @@ const DEFAULTS: ExtensionSettingsSnapshot = {
   mcpTransportByIde: {},
   daemonPort: 0,
   syncFolderPatterns: [],
-  autoRegenerateStaleConfigs: true
+  autoRegenerateStaleConfigs: true,
+  enableTunnels: false
 };
 
 export function getSettingsSnapshot(): ExtensionSettingsSnapshot {
@@ -71,7 +72,8 @@ export function getSettingsSnapshot(): ExtensionSettingsSnapshot {
     autoRegenerateStaleConfigs: configuration.get(
       "autoRegenerateStaleConfigs",
       DEFAULTS.autoRegenerateStaleConfigs
-    )
+    ),
+    enableTunnels: configuration.get("enableTunnels", DEFAULTS.enableTunnels)
   } satisfies ExtensionSettingsSnapshot;
 }
 
