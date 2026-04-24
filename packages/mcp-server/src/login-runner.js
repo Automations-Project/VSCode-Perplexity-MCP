@@ -301,6 +301,14 @@ async function submitOtp(page, flow, otp) {
 }
 
 main().catch((err) => {
-  emit({ ok: false, reason: "crash", error: redact(String(err?.message ?? err)) });
+  const msg = err?.message ?? err;
+  const stack = err?.stack;
+  emit({
+    ok: false,
+    reason: "crash",
+    error: redact(String(msg ?? "unknown error")),
+    detail: redact(String(msg ?? "unknown error")),
+    ...(stack ? { stack: redact(String(stack)) } : {}),
+  });
   process.exit(5);
 });
