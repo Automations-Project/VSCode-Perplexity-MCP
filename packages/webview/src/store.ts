@@ -66,6 +66,13 @@ interface DashboardStore {
   revealedBearer: { bearer: string; expiresAt: number; nonce: string } | null;
   setRevealedBearer: (r: { bearer: string; expiresAt: number; nonce: string }) => void;
   clearRevealedBearer: () => void;
+  /**
+   * Phase 8.6.5: most recent `transport:staleness` snapshot from the extension
+   * host. `null` = the store has never received a staleness message (pre-hydrate
+   * state). `[]` = explicit "zero stale" signal — differs from `null` so the
+   * IDEs tab can hide the banner without flashing during initial hydration.
+   */
+  staleConfigs: Array<{ ideTag: string; reason: "bearer" | "url" }> | null;
   oauthClients: AuthorizedClientRow[] | null;
   setOauthClients: (clients: AuthorizedClientRow[]) => void;
   tunnelProviders: {
@@ -164,6 +171,7 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
   revealedBearer: null,
   setRevealedBearer: (r) => set({ revealedBearer: r }),
   clearRevealedBearer: () => set({ revealedBearer: null }),
+  staleConfigs: null,
   oauthClients: null,
   setOauthClients: (clients) => set({ oauthClients: clients }),
   tunnelProviders: null,
@@ -357,6 +365,14 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
         daemonTokenRotatedAt: message.payload.rotatedAt,
         notice: { level: "info", message: "Daemon token rotated. MCP clients will reconnect with the new token." },
       });
+      return;
+    }
+
+    if (message.type === "transport:staleness") {
+      // Overwrites unconditionally — the extension host is authoritative and
+      // always sends the full current set. An empty array is a meaningful
+      // "nothing is stale" signal, distinct from the pre-hydrate `null`.
+      set({ staleConfigs: message.payload.stale });
       return;
     }
 

@@ -1721,3 +1721,70 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
 .profile-menu-item-danger:hover {
   background: var(--bg-err);
 }
+
+/* ── Phase 8.6.5: Transport picker + stale-config banner ─────── */
+.stale-config-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 191, 0, 0.35);
+  background: rgba(255, 191, 0, 0.12);
+  font-size: 0.72rem;
+  color: var(--text-primary);
+}
+
+.transport-picker {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.transport-picker > legend.eyebrow {
+  padding: 0;
+  margin-bottom: 4px;
+}
+
+.transport-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+  cursor: pointer;
+}
+
+.transport-option.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.transport-option.is-selected {
+  border-color: rgba(99, 179, 237, 0.55);
+  background: rgba(99, 179, 237, 0.08);
+}
+
+.transport-option-label {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.transport-option-sublabel {
+  font-size: 0.66rem;
+  margin-top: 2px;
+}
+
+.transport-option-reason {
+  font-size: 0.64rem;
+  margin-top: 2px;
+  font-style: italic;
+}

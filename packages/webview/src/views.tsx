@@ -26,10 +26,14 @@ import { DaemonStatus } from "./components/DaemonStatus";
 import { AuthorizedClients } from "./components/AuthorizedClients";
 import { DownloadMenu } from "./components/DownloadMenu";
 import { OpenWithMenu } from "./components/OpenWithMenu";
+import { TransportPicker } from "./components/TransportPicker";
 import { getIdeIcon } from "./ide-icons";
 import { Markdown } from "./markdown";
 import {
+  IDE_METADATA,
+  MCP_TRANSPORT_DEFAULT,
   type DashboardState,
+  type ExtensionSettingsSnapshot,
   type HistoryItem,
   type IdeStatus,
   type IdeTarget,
@@ -987,6 +991,8 @@ export function SettingsView({
   send: SendFn;
 }) {
   const settings = state.settings;
+  const staleConfigs = useDashboardStore((store) => store.staleConfigs);
+  const staleIdeTags = new Set((staleConfigs ?? []).map((s) => s.ideTag));
   const ideEntries = Object.entries(state.ideStatus) as Array<[string, IdeStatus]>;
   const autoConfigurable = ideEntries.filter(([, s]) => s.autoConfigurable);
   const manualOnly = ideEntries.filter(([, s]) => !s.autoConfigurable);
@@ -1009,9 +1015,29 @@ export function SettingsView({
           title="MCP config management"
           detail="Additive writes — existing MCP servers and settings are never removed."
         />
+        {staleConfigs && staleConfigs.length > 0 ? (
+          <div className="stale-config-banner" data-testid="stale-configs-banner">
+            <span>
+              {staleConfigs.length} config{staleConfigs.length === 1 ? "" : "s"} contain stale auth
+            </span>
+            <button
+              className="ghost-button btn-sm"
+              onClick={() => send({ type: "transport:regenerate-stale" })}
+            >
+              Regenerate all
+            </button>
+          </div>
+        ) : null}
         <div className="flex flex-col gap-2">
           {autoConfigurable.map(([key, status]) => (
-            <IdeCard key={key} ideKey={key} status={status} send={send} />
+            <IdeCard
+              key={key}
+              ideKey={key}
+              status={status}
+              settings={settings}
+              isStale={staleIdeTags.has(key)}
+              send={send}
+            />
           ))}
         </div>
         <button
@@ -1309,20 +1335,40 @@ const POPULAR_IDES = new Set(["cursor", "claudeDesktop", "claudeCode", "codexCli
 function IdeCard({
   ideKey,
   status,
+  settings,
+  isStale,
   send,
 }: {
   ideKey: string;
   status: IdeStatus;
+  settings: ExtensionSettingsSnapshot;
+  isStale?: boolean;
   send: SendFn;
 }) {
   const IconComponent = getIdeIcon(ideKey);
   const isPopular = POPULAR_IDES.has(ideKey);
+  // Phase 8.6.5: per-IDE transport. IDE_METADATA is the authoritative source
+  // for capabilities; fallback to an empty caps object if the key isn't known
+  // (defensive — unknown IDE tags shouldn't crash the card).
+  const ideMeta = IDE_METADATA[ideKey];
+  const capabilities = ideMeta?.capabilities ?? {
+    stdio: false,
+    httpBearerLoopback: false,
+    httpOAuthLoopback: false,
+    httpOAuthTunnel: false,
+  };
+  const selectedTransport = settings.mcpTransportByIde[ideKey] ?? MCP_TRANSPORT_DEFAULT;
   return (
     <div className={`ide-card${isPopular ? " ide-card-popular" : ""}`}>
       <div className="ide-card-header">
         <span className="ide-card-name" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <IconComponent />
           {status.displayName}
+          {isStale ? (
+            <span className="chip chip-warn" data-testid={`ide-stale-chip-${ideKey}`}>
+              Stale
+            </span>
+          ) : null}
         </span>
         <span className={`chip ${status.configured ? "chip-pro" : status.detected ? "chip-warn" : "chip-muted"}`}>
           {status.configured ? (
@@ -1335,6 +1381,13 @@ function IdeCard({
         </span>
       </div>
       <div className="ide-card-path-wrap" title={status.path}>{status.path}</div>
+      <TransportPicker
+        ideTag={ideKey}
+        ideDisplayName={status.displayName}
+        capabilities={capabilities}
+        selected={selectedTransport}
+        send={send}
+      />
       <div className="ide-card-actions">
         {!status.configured ? (
           <button

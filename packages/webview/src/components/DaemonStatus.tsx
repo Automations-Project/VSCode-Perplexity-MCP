@@ -1,7 +1,8 @@
-import { ChevronDown, Copy, FileArchive, KeyRound, Power, RefreshCcw, ServerCog, Skull } from "lucide-react";
+import { ChevronDown, FileArchive, KeyRound, Power, RefreshCcw, ServerCog, Skull } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { DaemonAuditEntry, DaemonStatusState, WebviewMessage } from "@perplexity-user-mcp/shared";
 import { useDashboardStore, type TunnelProbeState } from "../store";
+import { BearerReveal } from "./BearerReveal";
 import { DaemonActionButton } from "./DaemonActionButton";
 import { RelativeTime } from "./RelativeTime";
 import { StatusDot } from "./StatusDot";
@@ -77,10 +78,6 @@ export function DaemonStatusView({
     }, 1_000);
     return () => window.clearInterval(tick);
   }, [revealedBearer, clearRevealedBearer]);
-  const revealRemainingSec = revealedBearer
-    ? Math.max(0, Math.ceil((revealedBearer.expiresAt - now) / 1000))
-    : 0;
-  const isRevealLive = Boolean(revealedBearer) && revealRemainingSec > 0;
   const tunnel = status?.tunnel ?? { status: "disabled", url: null, pid: null, error: null };
   const bearerAvailable = status?.bearerAvailable ?? false;
 
@@ -147,63 +144,15 @@ export function DaemonStatusView({
 
       <div className="daemon-section-divider" aria-hidden="true" />
 
-      {bearerAvailable ? (
-        <div className="list-row" style={{ marginTop: 8, alignItems: "flex-start" }} data-testid="bearer-reveal-row">
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <div style={{ fontSize: "0.72rem", fontWeight: 600 }} className="text-[var(--text-primary)]">
-              Bearer token
-              {isRevealLive ? (
-                <span
-                  style={{ marginLeft: 8, fontSize: "0.66rem", fontWeight: 500 }}
-                  className="text-[var(--text-muted)]"
-                  data-testid="bearer-reveal-countdown"
-                >
-                  clears in {revealRemainingSec}s
-                </span>
-              ) : null}
-            </div>
-            <div
-              style={{ fontSize: "0.7rem", marginTop: 3, fontFamily: "var(--font-mono)", overflowWrap: "anywhere" }}
-              className="text-[var(--text-muted)]"
-              data-testid="bearer-reveal-value"
-            >
-              {isRevealLive && revealedBearer ? (
-                // Bearer is in webview state for ≤30s by explicit user consent.
-                // Raw text on purpose — the user just clicked Reveal and
-                // confirmed the modal to see this value; rendering a masked
-                // string here would defeat the feature.
-                <code>{revealedBearer.bearer}</code>
-              ) : (
-                <>&lt;hidden — click Reveal or Copy&gt;</>
-              )}
-            </div>
-            <div style={{ fontSize: "0.66rem", marginTop: 4 }} className="text-[var(--text-muted)]">
-              Required in an <code>Authorization: Bearer …</code> header for every MCP request (loopback or tunnel).
-              Reveal / Copy opens a modal confirmation; reveal auto-clears after 30s.
-            </div>
-          </div>
-          <div className="flex items-center gap-1 flex-wrap" style={{ justifyContent: "flex-end" }}>
-            <DaemonActionButton
-              type="daemon:bearer:reveal"
-              label="Reveal token"
-              pendingLabel="Waiting…"
-              onClick={revealBearer}
-            />
-            <DaemonActionButton
-              type="daemon:bearer:copy"
-              label="Copy"
-              pendingLabel="Waiting…"
-              icon={<Copy size={11} />}
-              onClick={copyBearer}
-            />
-            {bearerFeedback ? (
-              <span style={{ fontSize: "0.66rem" }} className="text-[var(--text-muted)]">
-                {bearerFeedback}
-              </span>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
+      <BearerReveal
+        available={bearerAvailable}
+        revealed={revealedBearer ?? null}
+        feedback={bearerFeedback}
+        onReveal={revealBearer}
+        onCopy={copyBearer}
+        now={now}
+      />
+
 
       <div className="daemon-section-divider" aria-hidden="true" />
 
