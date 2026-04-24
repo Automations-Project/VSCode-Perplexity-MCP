@@ -1,4 +1,4 @@
-import { Activity, Copy, Globe2, RefreshCcw, RotateCw } from "lucide-react";
+import { Activity, Copy, Globe2, RefreshCcw, RotateCw, ShieldAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { DaemonStatusState, WebviewMessage } from "@perplexity-user-mcp/shared";
 import { useDashboardStore, useIsActionPending, type TunnelProbeState } from "../store";
@@ -123,6 +123,36 @@ export function TunnelManager({
         cfNamed={tunnelProviders?.cfNamed}
         send={send}
       />
+
+      {activeProvider === "cf-named" && tunnel.status === "enabled" && tunnelUrl ? (
+        <div
+          className="cf-named-waf-warning"
+          data-testid="cf-named-waf-warning"
+          role="note"
+        >
+          <ShieldAlert size={14} aria-hidden="true" style={{ flex: "0 0 auto", marginTop: 1 }} />
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div>
+              <strong>Cloudflare challenge may block MCP clients.</strong>{" "}
+              Before connecting any MCP client to <code>{tunnelUrl}/mcp</code>, exempt that path
+              from Cloudflare Access and the Zone&apos;s challenge rules. The simplest option:
+              add a WAF Skip rule for requests to <code>Path = &quot;/mcp&quot;</code> on this
+              hostname. Without this, MCP requests get served the Cloudflare Challenge page
+              instead of reaching the daemon.
+            </div>
+            <div style={{ marginTop: 4 }}>
+              <a
+                href="https://developers.cloudflare.com/waf/custom-rules/skip/"
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="cf-named-waf-warning-docs"
+              >
+                Cloudflare WAF Skip rule docs
+              </a>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div className="daemon-section-divider" aria-hidden="true" />
 

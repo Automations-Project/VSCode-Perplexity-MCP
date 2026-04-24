@@ -1788,3 +1788,33 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
   margin-top: 2px;
   font-style: italic;
 }
+
+/* ── v0.8.4: cf-named WAF warning banner ─────────────────────── */
+.cf-named-waf-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-top: 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 191, 0, 0.35);
+  background: rgba(255, 191, 0, 0.12);
+  font-size: 0.7rem;
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+
+.cf-named-waf-warning code {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.66rem;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow-wrap: anywhere;
+}
+
+.cf-named-waf-warning a {
+  color: var(--text-primary);
+  text-decoration: underline;
+  font-size: 0.66rem;
+}
