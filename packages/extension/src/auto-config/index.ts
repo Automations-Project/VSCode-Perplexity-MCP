@@ -1217,43 +1217,125 @@ function getCopilotRulesContent(): string {
   ].join("\n");
 }
 
-function upsertSectionInFile(filePath: string, content: string): void {
+/**
+ * Classifies how the Perplexity-managed marker block appears in `existing`.
+ *
+ * - `missing`:   no start marker AND no end marker — safe to append a fresh block.
+ * - `found`:     exactly one start marker and exactly one end marker, in the
+ *                correct order (`startIdx < endIdx`). Safe to replace in-place.
+ * - `malformed`: anything else — reversed markers, unmatched count, or
+ *                duplicate pairs. The file is already damaged; callers must
+ *                NOT attempt to "fix" it by slicing, because that silently
+ *                deletes whatever the user wrote between the tangled markers.
+ *                Upsert should append fresh; remove should bail out.
+ *
+ * Pulled out of `upsertSectionInFile`/`removeSectionFromFile` so the two
+ * call sites stay in sync and the classification is unit-testable on its own.
+ */
+type MarkerBlockState =
+  | { state: "missing" }
+  | { state: "found"; startIdx: number; endIdx: number }
+  | { state: "malformed"; reason: "reversed" | "unmatched" | "duplicate" };
+
+function countOccurrences(haystack: string, needle: string): number {
+  if (needle.length === 0) return 0;
+  let count = 0;
+  let from = 0;
+  while (true) {
+    const idx = haystack.indexOf(needle, from);
+    if (idx === -1) break;
+    count++;
+    from = idx + needle.length;
+  }
+  return count;
+}
+
+export function findMarkerBlock(
+  existing: string,
+  startMarker: string,
+  endMarker: string
+): MarkerBlockState {
+  const startCount = countOccurrences(existing, startMarker);
+  const endCount = countOccurrences(existing, endMarker);
+
+  if (startCount === 0 && endCount === 0) return { state: "missing" };
+  if (startCount !== 1 || endCount !== 1) {
+    // Either only one side is present (unmatched) or the user (or a prior
+    // buggy write) left multiple pairs. Either way, don't slice.
+    const reason: "unmatched" | "duplicate" =
+      startCount > 1 || endCount > 1 ? "duplicate" : "unmatched";
+    return { state: "malformed", reason };
+  }
+
+  const startIdx = existing.indexOf(startMarker);
+  const endIdx = existing.indexOf(endMarker);
+  if (startIdx > endIdx) {
+    return { state: "malformed", reason: "reversed" };
+  }
+  return { state: "found", startIdx, endIdx };
+}
+
+export function upsertSectionInFile(filePath: string, content: string): void {
   const startMarker = PERPLEXITY_RULES_SECTION_START;
   const endMarker = PERPLEXITY_RULES_SECTION_END;
 
   mkdirSync(dirname(filePath), { recursive: true });
 
   if (!existsSync(filePath)) {
-    writeFileSync(filePath, content + "\n", "utf8");
+    writeTextAtomic(filePath, content + "\n");
     return;
   }
 
   const existing = readFileSync(filePath, "utf8");
-  const startIdx = existing.indexOf(startMarker);
-  const endIdx = existing.indexOf(endMarker);
+  const block = findMarkerBlock(existing, startMarker, endMarker);
 
-  if (startIdx !== -1 && endIdx !== -1) {
-    const before = existing.slice(0, startIdx);
-    const after = existing.slice(endIdx + endMarker.length);
-    writeFileSync(filePath, before + content + after, "utf8");
-  } else {
-    writeFileSync(filePath, existing.trimEnd() + "\n\n" + content + "\n", "utf8");
+  if (block.state === "found") {
+    const before = existing.slice(0, block.startIdx);
+    const after = existing.slice(block.endIdx + endMarker.length);
+    writeTextAtomic(filePath, before + content + after);
+    return;
   }
+
+  if (block.state === "malformed") {
+    // Don't slice — that would drop whatever the user wrote between the
+    // tangled markers. Append a fresh, well-formed block at the end and
+    // leave the broken one alone for the user to clean up manually.
+    console.warn(
+      `[perplexity-mcp] ${filePath}: existing Perplexity marker block is malformed (${block.reason}); appending a fresh block instead of overwriting.`
+    );
+  }
+
+  // `missing` or `malformed` — both fall through to append-fresh.
+  writeTextAtomic(filePath, existing.trimEnd() + "\n\n" + content + "\n");
 }
 
-function removeSectionFromFile(filePath: string): void {
+export function removeSectionFromFile(filePath: string): void {
   if (!existsSync(filePath)) return;
 
   const existing = readFileSync(filePath, "utf8");
-  const startIdx = existing.indexOf(PERPLEXITY_RULES_SECTION_START);
-  const endIdx = existing.indexOf(PERPLEXITY_RULES_SECTION_END);
+  const block = findMarkerBlock(
+    existing,
+    PERPLEXITY_RULES_SECTION_START,
+    PERPLEXITY_RULES_SECTION_END
+  );
 
-  if (startIdx === -1 || endIdx === -1) return;
+  if (block.state === "missing") return;
 
-  const before = existing.slice(0, startIdx).trimEnd();
-  const after = existing.slice(endIdx + PERPLEXITY_RULES_SECTION_END.length).trimStart();
+  if (block.state === "malformed") {
+    // The file is already broken — don't make it worse by guessing at
+    // which pair to strip. Leave it for the user.
+    console.warn(
+      `[perplexity-mcp] ${filePath}: existing Perplexity marker block is malformed (${block.reason}); leaving file untouched.`
+    );
+    return;
+  }
+
+  const before = existing.slice(0, block.startIdx).trimEnd();
+  const after = existing
+    .slice(block.endIdx + PERPLEXITY_RULES_SECTION_END.length)
+    .trimStart();
   const result = before + (after ? "\n\n" + after : "\n");
-  writeFileSync(filePath, result, "utf8");
+  writeTextAtomic(filePath, result);
 }
 
 export function syncRulesForIde(target: IdeTarget, workspaceRoot?: string): RulesStatus {
@@ -1270,8 +1352,7 @@ export function syncRulesForIde(target: IdeTarget, workspaceRoot?: string): Rule
     switch (meta.rulesFormat) {
       case "mdc":
         content = getCursorRulesContent();
-        mkdirSync(dirname(fullPath), { recursive: true });
-        writeFileSync(fullPath, content + "\n", "utf8");
+        writeTextAtomic(fullPath, content + "\n");
         break;
       case "md":
         if (target === "copilot") {
@@ -1281,8 +1362,7 @@ export function syncRulesForIde(target: IdeTarget, workspaceRoot?: string): Rule
         } else {
           content = getPerplexityRulesContent();
         }
-        mkdirSync(dirname(fullPath), { recursive: true });
-        writeFileSync(fullPath, content + "\n", "utf8");
+        writeTextAtomic(fullPath, content + "\n");
         break;
       case "md-section":
         upsertSectionInFile(fullPath, getPerplexityRulesContent());
