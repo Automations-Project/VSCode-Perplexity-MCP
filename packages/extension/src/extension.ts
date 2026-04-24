@@ -4,7 +4,8 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { MCP_PROVIDER_ID, MCP_SERVER_LABEL, type ExportFormat, type IdeTarget, type McpTransportId } from "@perplexity-user-mcp/shared";
 import { getActiveName, getProfile, listProfiles, setActive, createProfile } from "perplexity-user-mcp/profiles";
-import { runDoctor } from "perplexity-user-mcp";
+import { createExtensionAwareRunDoctor } from "./diagnostics/doctor-runner.js";
+import { peekStoredVaultPassphrase } from "./auth/vault-passphrase.js";
 import { redactMessage } from "./redact.js";
 import { OutputRingBuffer } from "./diagnostics/output-buffer.js";
 import { captureDiagnostics } from "./diagnostics/capture.js";
@@ -847,6 +848,10 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
   context.subscriptions.push(
     vscode.commands.registerCommand("Perplexity.captureDiagnostics", async () => {
       const extVersion = String((context.extension.packageJSON as { version?: string }).version ?? "0.0.0");
+      const runDoctorBound = createExtensionAwareRunDoctor(context, {
+        getChromePath: () => getSettingsSnapshot().chromePath,
+        getVaultPassphrase: () => peekStoredVaultPassphrase(context),
+      });
       let savedPath: string | null = null;
       const outcome = await runDiagnosticsCaptureFlow({
         showSaveDialog: async (defaultPath) => {
@@ -860,7 +865,7 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
           savedPath = opts.outputPath;
           return captureDiagnostics(opts);
         },
-        runDoctor: async () => runDoctor(),
+        runDoctor: runDoctorBound,
         getConfigDir: () =>
           process.env.PERPLEXITY_CONFIG_DIR ?? path.join(os.homedir(), ".perplexity-mcp"),
         getLogsText: () => outputBuffer?.snapshot() ?? "",

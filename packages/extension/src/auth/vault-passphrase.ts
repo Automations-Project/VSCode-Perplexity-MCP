@@ -101,6 +101,19 @@ export async function ensureVaultPassphrase(
 }
 
 /**
+ * Read the stored vault passphrase from SecretStorage without prompting. Used
+ * by diagnostic flows (doctor, capture-diagnostics) that need the same unseal
+ * material the runner would get but must not interrupt the user to ask for it.
+ * Returns undefined when nothing is stored.
+ */
+export async function peekStoredVaultPassphrase(
+  context: vscode.ExtensionContext,
+): Promise<string | undefined> {
+  const value = await context.secrets.get(VAULT_PASSPHRASE_SECRET_KEY);
+  return value && value.length > 0 ? value : undefined;
+}
+
+/**
  * Best-effort probe: spawn a short-lived child that tries to `import("keytar")`
  * and call `getPassword` with a dummy lookup. We do not load keytar in-process
  * because the extension host runs one keytar per VS Code instance and loading

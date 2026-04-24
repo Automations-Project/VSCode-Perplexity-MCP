@@ -27,7 +27,8 @@ import {
 } from "../auto-config/index.js";
 import type { IdeTarget } from "@perplexity-user-mcp/shared";
 import { getAccountSnapshot, setLastRefreshTier } from "../auth/session.js";
-import { ensureVaultPassphrase } from "../auth/vault-passphrase.js";
+import { ensureVaultPassphrase, peekStoredVaultPassphrase } from "../auth/vault-passphrase.js";
+import { createExtensionAwareRunDoctor } from "../diagnostics/doctor-runner.js";
 import { log, debug, getOutputRingBuffer } from "../extension.js";
 import { captureDiagnostics } from "../diagnostics/capture.js";
 import { handleDiagnosticsCapture } from "../diagnostics/flow.js";
@@ -50,7 +51,6 @@ import {
   handleCfNamedUnbindLocal,
   type CfNamedDeps,
 } from "./cf-named-handlers.js";
-import { runDoctor } from "perplexity-user-mcp";
 import {
   listProfiles,
   getActiveName,
@@ -539,14 +539,9 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
           case "doctor:probe": {
             await this.view?.webview.postMessage({ type: "doctor:running", payload: { probeRan: message.type === "doctor:probe" } });
             try {
-              const settings = getSettingsSnapshot();
-              const bundledServerPath = vscode.Uri.joinPath(this.context.extensionUri, "dist", "mcp", "server.mjs").fsPath;
-              const ideStatuses = getIdeStatuses(bundledServerPath, settings.chromePath);
-              const baseDir = vscode.Uri.joinPath(this.context.extensionUri, "dist").fsPath;
-              const report = await runDoctor({
+              const runDoctorBound = this.buildRunDoctor();
+              const report = await runDoctorBound({
                 probe: message.type === "doctor:probe",
-                ideStatuses,
-                baseDir,
               });
               this.lastDoctorReport = report;
               await this.view?.webview.postMessage({ type: "doctor:report", payload: report });
@@ -563,11 +558,8 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
                 filters: { JSON: ["json"] },
               });
               if (uri) {
-                const settings = getSettingsSnapshot();
-                const bundledServerPath = vscode.Uri.joinPath(this.context.extensionUri, "dist", "mcp", "server.mjs").fsPath;
-                const ideStatuses = getIdeStatuses(bundledServerPath, settings.chromePath);
-                const baseDir = vscode.Uri.joinPath(this.context.extensionUri, "dist").fsPath;
-                const report = await runDoctor({ baseDir, ideStatuses });
+                const runDoctorBound = this.buildRunDoctor();
+                const report = await runDoctorBound();
                 await vscode.workspace.fs.writeFile(uri, Buffer.from(JSON.stringify(report, null, 2)));
                 await this.postNotice("info", `Doctor report written to ${uri.fsPath}.`);
               }
@@ -581,11 +573,8 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             try {
               let report = this.lastDoctorReport;
               if (!report) {
-                const settings = getSettingsSnapshot();
-                const bundledServerPath = vscode.Uri.joinPath(this.context.extensionUri, "dist", "mcp", "server.mjs").fsPath;
-                const ideStatuses = getIdeStatuses(bundledServerPath, settings.chromePath);
-                const baseDir = vscode.Uri.joinPath(this.context.extensionUri, "dist").fsPath;
-                report = await runDoctor({ baseDir, ideStatuses });
+                const runDoctorBound = this.buildRunDoctor();
+                report = await runDoctorBound();
                 this.lastDoctorReport = report;
               }
               const { collectDiagnostics, renderPreview, openIssue, buildIssueUrl } = await import("./doctor-report-handler.js");
@@ -1375,7 +1364,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
                     return uri?.fsPath;
                   },
                   captureDiagnostics,
-                  runDoctor,
+                  runDoctor: this.buildRunDoctor(),
                   getConfigDir: () =>
                     process.env.PERPLEXITY_CONFIG_DIR ?? path.join(os.homedir(), ".perplexity-mcp"),
                   getLogsText: () => getOutputRingBuffer()?.snapshot() ?? "",
@@ -2131,6 +2120,13 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
   private async postActionResult(id: string | undefined, ok: boolean, error?: string): Promise<void> {
     if (!this.view || !id) return;
     await this.view.webview.postMessage({ type: "action:result", id, ok, error });
+  }
+
+  private buildRunDoctor(): ReturnType<typeof createExtensionAwareRunDoctor> {
+    return createExtensionAwareRunDoctor(this.context, {
+      getChromePath: () => getSettingsSnapshot().chromePath,
+      getVaultPassphrase: () => peekStoredVaultPassphrase(this.context),
+    });
   }
 
   async reveal(): Promise<void> {
