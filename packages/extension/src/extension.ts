@@ -13,6 +13,7 @@ import { applyIdeConfig, configureTargets, getIdeStatuses, type ApplyIdeConfigDe
 import { wrapDepsForAutoRegen } from "./webview/staleness-auto-regen.js";
 import { spawnSync } from "node:child_process";
 import { hasStoredLogin } from "./auth/session.js";
+import { ensureVaultPassphrase } from "./auth/vault-passphrase.js";
 import { getSettingsSnapshot } from "./settings.js";
 import { DashboardProvider } from "./webview/DashboardProvider.js";
 import { migrateEnableTunnelsOnce } from "./webview/tunnel-settings-migration.js";
@@ -417,6 +418,10 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
   const dashboard = new DashboardProvider(context);
   const { AuthManager } = await import("./mcp/auth-manager.js");
   const authManager = new AuthManager({ extensionUri: context.extensionUri });
+  // v0.8.6: surface login-runner diagnostics (reason + error + detail) into
+  // the Perplexity output channel. Previously only the reason enum was logged,
+  // which hid the real error ("Vault locked: ...") on headless Linux.
+  authManager.setLogger((line) => log(line));
   context.subscriptions.push(authManager);
   dashboard.setAuthManager(authManager);
   authManager.onDidChange(async (s) => { await dashboard.postAuthState(s); });
@@ -478,6 +483,11 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
         ...(mode === "auto" && email ? { email } : {}),
         onOtpPrompt: async () => (await vscode.window.showInputBox({ prompt: "Perplexity OTP", ignoreFocusOut: true })) ?? null,
         onProgress,
+        // v0.8.6: Linux-viable unseal path. On machines where keytar loads we
+        // return early with source="keytar" and no env var is injected; on
+        // headless Linux we prompt for a passphrase once and persist it in
+        // SecretStorage so subsequent logins are silent.
+        passphraseProvider: () => ensureVaultPassphrase(context),
       });
 
       if (!result.ok && result.reason === "auto_unsupported" && mode === "auto") {
@@ -487,8 +497,17 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
       }
 
       if (!result.ok) {
-        log(`[login:${profile}] Failed: ${result.reason ?? "unknown"}`);
-        await dashboard.postNotice("error", `Login failed for '${profile}': ${result.reason ?? "unknown"}`);
+        // v0.8.6: surface the runner's `error` string (and `detail` when it
+        // adds signal) instead of just the `reason` enum. Users were seeing
+        // "Login failed: crash" with no way to know about missing libsecret.
+        const reason = result.reason ?? "unknown";
+        const errorText = result.error && result.error !== reason ? result.error : "";
+        const logLine = `[login:${profile}] Failed: ${reason}${errorText ? ` — ${errorText}` : ""}${result.detail && result.detail !== errorText ? ` (detail: ${result.detail})` : ""}`;
+        log(logLine);
+        const uiLine = errorText
+          ? `Login failed for '${profile}' (${reason}): ${errorText}`
+          : `Login failed for '${profile}': ${reason}`;
+        await dashboard.postNotice("error", uiLine);
         return false;
       }
 

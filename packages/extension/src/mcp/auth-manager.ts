@@ -14,6 +14,20 @@ export interface AuthState {
   lastLogin?: string;
   lastChecked?: string;
   error?: string;
+  /** Full error detail (e.g. "Vault locked: ..."). Included when the runner
+   * crashed with a recoverable message. Not redacted beyond what the runner
+   * already did. */
+  errorDetail?: string;
+}
+
+export interface AuthLoginResult {
+  ok: boolean;
+  reason?: string;
+  tier?: string;
+  /** Human-readable error string from the runner or exception, when ok=false. */
+  error?: string;
+  /** Extra detail/stack from the runner, when available. Truncated to ~400 chars for UI. */
+  detail?: string;
 }
 
 export interface LoginOptions {
@@ -24,6 +38,19 @@ export interface LoginOptions {
   onOtpPrompt?: () => Promise<string | null>;
   onProgress?: (phase: string, detail?: unknown) => void;
   plainCookies?: boolean;
+  /**
+   * Optional provider that returns a passphrase to inject as
+   * `PERPLEXITY_VAULT_PASSPHRASE` in the runner's environment. Called once per
+   * login attempt, before the runner is spawned. Returning
+   * `{ source: "cancelled" }` aborts the login with reason
+   * `"passphrase_cancelled"` and the runner is never spawned. Returning
+   * `{ passphrase: undefined, source: "keytar" }` is treated as "no env var
+   * needed — keychain handles it."
+   */
+  passphraseProvider?: () => Promise<{
+    passphrase: string | undefined;
+    source: "keytar" | "stored" | "prompted" | "cancelled";
+  }>;
 }
 
 export interface LogoutOptions { profile: string; purge?: boolean }
@@ -31,6 +58,16 @@ export interface CheckSessionOptions { profile: string }
 
 export interface AuthManagerOptions {
   extensionUri: vscode.Uri;
+}
+
+/** Upper bound on how many chars of `error`/`detail` we keep when pushing to
+ * the dashboard notice UI. Keeps the toast readable; the full string is still
+ * available in the output channel. */
+const ERROR_UI_MAX = 400;
+
+function truncate(s: string | undefined, max = ERROR_UI_MAX): string | undefined {
+  if (!s) return s;
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
 /**
@@ -95,6 +132,9 @@ export class AuthManager implements vscode.Disposable {
   private _state: AuthState = { profile: "default", status: "unknown" };
   private inflight = new Map<string, Promise<unknown>>();
   private readonly extensionUri: vscode.Uri;
+  /** Optional logger; extension.ts injects one so runner errors land in the
+   *  Perplexity output channel alongside activation/daemon logs. */
+  private logger?: (line: string) => void;
 
   constructor(opts: AuthManagerOptions) {
     this.extensionUri = opts.extensionUri;
@@ -106,12 +146,22 @@ export class AuthManager implements vscode.Disposable {
     this._onDidChange.dispose();
   }
 
+  /** Inject a logger so diagnostics from login runners flow into the main
+   *  Perplexity output channel. Safe to call multiple times; last wins. */
+  setLogger(fn: (line: string) => void): void {
+    this.logger = fn;
+  }
+
+  private log(line: string): void {
+    try { this.logger?.(line); } catch { /* logger must never throw */ }
+  }
+
   private setState(s: Partial<AuthState>): void {
     this._state = { ...this._state, ...s };
     this._onDidChange.fire(this._state);
   }
 
-  async login(opts: LoginOptions): Promise<{ ok: boolean; reason?: string; tier?: string }> {
+  async login(opts: LoginOptions): Promise<AuthLoginResult> {
     const key = `login:${opts.profile}`;
     if (this.inflight.has(key)) {
       throw new Error(`Login already in progress for '${opts.profile}'`);
@@ -125,11 +175,38 @@ export class AuthManager implements vscode.Disposable {
     }
   }
 
-  private async runLogin(opts: LoginOptions): Promise<{ ok: boolean; reason?: string; tier?: string }> {
-    this.setState({ profile: opts.profile, status: "logging-in", error: undefined });
+  private async runLogin(opts: LoginOptions): Promise<AuthLoginResult> {
+    this.setState({ profile: opts.profile, status: "logging-in", error: undefined, errorDetail: undefined });
     const runnerPath = opts.runnerPath ?? this.defaultRunnerPath(opts.mode);
     const env: Record<string, string> = { PERPLEXITY_PROFILE: opts.profile };
     if (opts.mode === "auto") env.PERPLEXITY_EMAIL = opts.email ?? "";
+
+    // v0.8.6: resolve a vault passphrase BEFORE spawning the runner. On
+    // macOS/Windows and on Linux boxes with a working keychain this is a
+    // no-op: the provider returns source="keytar" and we don't set the env
+    // var (keychain wins in vault.js). On headless Linux without libsecret
+    // the provider prompts the user once and stores the passphrase in VS
+    // Code SecretStorage so the runner can decrypt/encrypt vault.enc.
+    if (opts.passphraseProvider) {
+      try {
+        const res = await opts.passphraseProvider();
+        if (res.source === "cancelled") {
+          const msg = "Login cancelled — no passphrase provided. Set PERPLEXITY_VAULT_PASSPHRASE or enter a passphrase when prompted.";
+          this.log(`[login:${opts.profile}] passphrase_cancelled`);
+          this.setState({ status: "error", error: msg, errorDetail: msg });
+          return { ok: false, reason: "passphrase_cancelled", error: msg, detail: msg };
+        }
+        if (res.passphrase) {
+          env.PERPLEXITY_VAULT_PASSPHRASE = res.passphrase;
+        }
+      } catch (err) {
+        const msg = `Passphrase provider failed: ${(err as Error).message}`;
+        this.log(`[login:${opts.profile}] ${msg}`);
+        this.setState({ status: "error", error: msg, errorDetail: msg });
+        return { ok: false, reason: "passphrase_error", error: msg, detail: msg };
+      }
+    }
+
     try {
       const result = await spawnRunner(runnerPath, env, {
         onSend: (child) => {
@@ -153,14 +230,35 @@ export class AuthManager implements vscode.Disposable {
           tier: result.tier as AuthState["tier"],
           lastLogin: new Date().toISOString(),
           error: undefined,
+          errorDetail: undefined,
         });
         return { ok: true, tier: result.tier as string };
       }
-      this.setState({ status: "error", error: String(result.reason ?? "login_failed") });
-      return { ok: false, reason: String(result.reason ?? "login_failed") };
+      // v0.8.6: preserve the runner's `error` / `detail` / `stack` fields
+      // alongside `reason`. Without this the dashboard was rendering only the
+      // `reason` enum ("crash") and the root cause was invisible to users.
+      const reason = String(result.reason ?? "login_failed");
+      const error = typeof result.error === "string" ? result.error : undefined;
+      const detailRaw = typeof result.detail === "string"
+        ? result.detail
+        : typeof result.stack === "string"
+          ? result.stack
+          : error;
+      const detail = detailRaw ? truncate(detailRaw) : undefined;
+      this.log(`[login:${opts.profile}] runner failed reason=${reason}${error ? ` error=${error}` : ""}${detail && detail !== error ? ` detail=${detail}` : ""}`);
+      this.setState({
+        status: "error",
+        error: error ?? reason,
+        errorDetail: detail ?? error ?? reason,
+      });
+      return { ok: false, reason, error, detail };
     } catch (err) {
-      this.setState({ status: "error", error: (err as Error).message });
-      return { ok: false, reason: (err as Error).message };
+      const e = err as Error;
+      const msg = e.message;
+      const detail = e.stack ? truncate(e.stack) : undefined;
+      this.log(`[login:${opts.profile}] spawn/exception: ${msg}`);
+      this.setState({ status: "error", error: msg, errorDetail: detail ?? msg });
+      return { ok: false, reason: msg, error: msg, detail };
     }
   }
 

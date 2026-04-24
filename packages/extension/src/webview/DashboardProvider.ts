@@ -27,6 +27,7 @@ import {
 } from "../auto-config/index.js";
 import type { IdeTarget } from "@perplexity-user-mcp/shared";
 import { getAccountSnapshot, setLastRefreshTier } from "../auth/session.js";
+import { ensureVaultPassphrase } from "../auth/vault-passphrase.js";
 import { log, debug, getOutputRingBuffer } from "../extension.js";
 import { captureDiagnostics } from "../diagnostics/capture.js";
 import { handleDiagnosticsCapture } from "../diagnostics/flow.js";
@@ -418,19 +419,37 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
                   void vscode.window.showInformationMessage(message);
                   void this.postNotice("info", message);
                 },
+                // v0.8.6: Linux-viable unseal. Keytar-happy machines short-circuit
+                // inside the provider; headless Linux prompts once via SecretStorage.
+                passphraseProvider: () => ensureVaultPassphrase(this.context),
               });
               const result = await runLogin(mode);
+
+              // v0.8.6: post a user-facing notice that includes the runner's real
+              // error message (not just the `reason` enum). Truncation happens in
+              // the auth manager so the detail fits a toast.
+              const loginFailedNotice = (reason: string, error?: string, detail?: string) => {
+                const text = error && error !== reason
+                  ? `Login failed for '${profile}' (${reason}): ${error}`
+                  : `Login failed for '${profile}': ${reason}`;
+                void this.postNotice("error", text);
+                if (detail && detail !== error) {
+                  debug(`[login:${profile}] detail: ${detail}`);
+                }
+              };
 
               if (!result.ok && result.reason === "auto_unsupported" && mode === "auto") {
                 await this.postNotice("info", "Auto login could not continue with the current site response — opening manual login instead.");
                 const fallback = await runLogin("manual");
                 if (!fallback.ok) {
+                  loginFailedNotice(fallback.reason ?? "manual-fallback-failed", fallback.error, fallback.detail);
                   await this.postActionResult(message.id, false, fallback.reason ?? "manual-fallback-failed");
                 } else {
                   this.onMcpServerDefinitionsChanged?.();
                   await this.postActionResult(message.id, true);
                 }
               } else if (!result.ok) {
+                loginFailedNotice(result.reason ?? "login_failed", result.error, result.detail);
                 await this.postActionResult(message.id, false, result.reason ?? "login_failed");
               } else {
                 this.onMcpServerDefinitionsChanged?.();
