@@ -26,14 +26,44 @@ export const PERPLEXITY_RULES_SECTION_START = "<!-- PERPLEXITY-MCP-START -->";
 export const PERPLEXITY_RULES_SECTION_END = "<!-- PERPLEXITY-MCP-END -->";
 export const PERPLEXITY_MCP_SERVER_KEY = "Perplexity";
 
+// Phase 8.6: per-IDE MCP transport picker. The picker UI (8.6.5) and config
+// generators (8.6.3, 8.6.4) consume these; 8.6.2 lands the shape only.
+export type McpTransportId =
+  | "stdio-in-process"
+  | "stdio-daemon-proxy"
+  | "http-loopback"
+  | "http-tunnel";
+
+export const MCP_TRANSPORT_DEFAULT: McpTransportId = "stdio-daemon-proxy";
+
+export const MCP_TRANSPORT_IDS: ReadonlyArray<McpTransportId> = [
+  "stdio-in-process",
+  "stdio-daemon-proxy",
+  "http-loopback",
+  "http-tunnel",
+] as const;
+
+export interface IdeCapabilities {
+  stdio: boolean;
+  httpBearerLoopback: boolean;
+  httpOAuthLoopback: boolean;
+  httpOAuthTunnel: boolean;
+  /** Required when any non-stdio capability is true. Values are URL paths to primary-source docs OR relative paths to smoke-evidence files. */
+  evidence?: Partial<Record<Exclude<keyof IdeCapabilities, "stdio" | "evidence">, string>>;
+}
+
 export interface IdeMeta {
   displayName: string;
   configFormat: "json" | "toml" | "yaml" | "ui-only";
   autoConfigurable: boolean;
   rulesFormat?: "mdc" | "md" | "md-section" | "yaml" | "toml" | "none";
   rulesPath?: string;
+  capabilities: IdeCapabilities;
 }
 
+// HTTP caps start `false` everywhere: they are evidence-gated and only flip
+// to `true` in follow-up commits accompanied by dated docs/smoke-evidence/*.md
+// files. `stdio` is `false` for `ui-only` clients (they don't ingest mcp.json).
 export const IDE_METADATA: Record<string, IdeMeta> = {
   cursor: {
     displayName: "Cursor",
@@ -41,6 +71,12 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     autoConfigurable: true,
     rulesFormat: "mdc",
     rulesPath: ".cursor/rules/perplexity-mcp.mdc",
+    capabilities: {
+      stdio: true,
+      httpBearerLoopback: false,
+      httpOAuthLoopback: false,
+      httpOAuthTunnel: false,
+    },
   },
   windsurf: {
     displayName: "Windsurf",
@@ -48,6 +84,12 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     autoConfigurable: true,
     rulesFormat: "md",
     rulesPath: ".windsurf/rules/perplexity-mcp.md",
+    capabilities: {
+      stdio: true,
+      httpBearerLoopback: false,
+      httpOAuthLoopback: false,
+      httpOAuthTunnel: false,
+    },
   },
   windsurfNext: {
     displayName: "Windsurf Next",
@@ -55,12 +97,24 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     autoConfigurable: true,
     rulesFormat: "md",
     rulesPath: ".windsurf/rules/perplexity-mcp.md",
+    capabilities: {
+      stdio: true,
+      httpBearerLoopback: false,
+      httpOAuthLoopback: false,
+      httpOAuthTunnel: false,
+    },
   },
   claudeDesktop: {
     displayName: "Claude Desktop",
     configFormat: "json",
     autoConfigurable: true,
     rulesFormat: "none",
+    capabilities: {
+      stdio: true,
+      httpBearerLoopback: false,
+      httpOAuthLoopback: false,
+      httpOAuthTunnel: false,
+    },
   },
   claudeCode: {
     displayName: "Claude Code",
@@ -68,6 +122,12 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     autoConfigurable: true,
     rulesFormat: "md-section",
     rulesPath: "CLAUDE.md",
+    capabilities: {
+      stdio: true,
+      httpBearerLoopback: false,
+      httpOAuthLoopback: false,
+      httpOAuthTunnel: false,
+    },
   },
   cline: {
     displayName: "Cline",
@@ -75,6 +135,12 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     autoConfigurable: true,
     rulesFormat: "md",
     rulesPath: ".clinerules/perplexity-mcp.md",
+    capabilities: {
+      stdio: true,
+      httpBearerLoopback: false,
+      httpOAuthLoopback: false,
+      httpOAuthTunnel: false,
+    },
   },
   amp: {
     displayName: "Amp (Sourcegraph)",
@@ -82,6 +148,12 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     autoConfigurable: true,
     rulesFormat: "md-section",
     rulesPath: "AGENTS.md",
+    capabilities: {
+      stdio: true,
+      httpBearerLoopback: false,
+      httpOAuthLoopback: false,
+      httpOAuthTunnel: false,
+    },
   },
   rooCode: {
     displayName: "Roo Code",
@@ -89,6 +161,12 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     autoConfigurable: false,
     rulesFormat: "md",
     rulesPath: ".roo/rules/perplexity-mcp.md",
+    capabilities: {
+      stdio: true,
+      httpBearerLoopback: false,
+      httpOAuthLoopback: false,
+      httpOAuthTunnel: false,
+    },
   },
   codexCli: {
     displayName: "Codex CLI",
@@ -96,12 +174,24 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     autoConfigurable: true,
     rulesFormat: "md-section",
     rulesPath: "AGENTS.md",
+    capabilities: {
+      stdio: true,
+      httpBearerLoopback: false,
+      httpOAuthLoopback: false,
+      httpOAuthTunnel: false,
+    },
   },
   continueDev: {
     displayName: "Continue.dev",
     configFormat: "yaml",
     autoConfigurable: false,
     rulesFormat: "yaml",
+    capabilities: {
+      stdio: true,
+      httpBearerLoopback: false,
+      httpOAuthLoopback: false,
+      httpOAuthTunnel: false,
+    },
   },
   copilot: {
     displayName: "GitHub Copilot",
@@ -109,6 +199,13 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     autoConfigurable: false,
     rulesFormat: "md",
     rulesPath: ".github/instructions/perplexity-mcp.instructions.md",
+    capabilities: {
+      // ui-only: client doesn't ingest mcp.json, so stdio is N/A.
+      stdio: false,
+      httpBearerLoopback: false,
+      httpOAuthLoopback: false,
+      httpOAuthTunnel: false,
+    },
   },
   zed: {
     displayName: "Zed",
@@ -116,6 +213,12 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     autoConfigurable: false,
     rulesFormat: "md-section",
     rulesPath: ".rules",
+    capabilities: {
+      stdio: true,
+      httpBearerLoopback: false,
+      httpOAuthLoopback: false,
+      httpOAuthTunnel: false,
+    },
   },
   geminiCli: {
     displayName: "Gemini CLI",
@@ -123,12 +226,24 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     autoConfigurable: false,
     rulesFormat: "md-section",
     rulesPath: "GEMINI.md",
+    capabilities: {
+      stdio: true,
+      httpBearerLoopback: false,
+      httpOAuthLoopback: false,
+      httpOAuthTunnel: false,
+    },
   },
   aider: {
     displayName: "Aider",
     configFormat: "yaml",
     autoConfigurable: false,
     rulesFormat: "none",
+    capabilities: {
+      stdio: true,
+      httpBearerLoopback: false,
+      httpOAuthLoopback: false,
+      httpOAuthTunnel: false,
+    },
   },
   augment: {
     displayName: "Augment Code",
@@ -136,5 +251,11 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     autoConfigurable: false,
     rulesFormat: "md",
     rulesPath: ".augment/rules/perplexity-mcp.md",
+    capabilities: {
+      stdio: true,
+      httpBearerLoopback: false,
+      httpOAuthLoopback: false,
+      httpOAuthTunnel: false,
+    },
   },
 };

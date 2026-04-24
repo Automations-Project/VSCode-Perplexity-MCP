@@ -1,4 +1,5 @@
 import type { AccountSnapshot, HistoryItem } from "./models.js";
+import type { IdeCapabilities, McpTransportId } from "./constants.js";
 
 export type IdeTarget =
   | "cursor" | "windsurf" | "windsurfNext" | "claudeDesktop" | "claudeCode"
@@ -36,6 +37,12 @@ export interface ExtensionSettingsSnapshot {
   debugVerboseHttp: boolean;
   /** Hours a granted OAuth consent is remembered before the user is prompted again. 0 disables the cache (modal every time). */
   oauthConsentCacheTtlHours: number;
+  /** Phase 8.6: per-IDE MCP transport selection. Keys are IDE target names. Missing keys resolve to MCP_TRANSPORT_DEFAULT. */
+  mcpTransportByIde: Record<string, McpTransportId>;
+  /** Pinned loopback port for the embedded daemon. 0 = ephemeral (OS-assigned). */
+  daemonPort: number;
+  /** Extra regex patterns used to detect cloud-sync folders when generating http-loopback configs. */
+  syncFolderPatterns: readonly string[];
 }
 
 export interface RulesStatus {
@@ -396,7 +403,10 @@ export type ExtensionMessage =
       id: string;
       ok: false;
       error: string;
-    };
+    }
+  // Phase 8.6: transport picker outbound messages.
+  | { type: "transport:capabilities"; payload: { byIde: Record<string, IdeCapabilities> } }
+  | { type: "transport:staleness"; payload: { stale: Array<{ ideTag: string; reason: "bearer" | "url" }> } };
 
 export type WebviewMessage =
   | {
@@ -572,4 +582,9 @@ export type WebviewMessage =
   | { type: "viewers:configure"; id: string; payload: { viewer: ExternalViewer } }
   | { type: "history:cloud-sync"; id: string; payload?: { pageSize?: number } }
   | { type: "history:cloud-hydrate"; id: string; payload: { historyId: string } }
-  | { type: "diagnostics:capture"; id: string };
+  | { type: "diagnostics:capture"; id: string }
+  // Phase 8.6: transport picker inbound messages. `ideTag` is `string`, not
+  // `IdeTarget`, to avoid tight coupling with the hardcoded string-union.
+  // The 8.6.4 handler will validate `ideTag in IDE_METADATA` at receive-time.
+  | { type: "transport:select"; id: string; payload: { ideTag: string; transportId: McpTransportId } }
+  | { type: "transport:regenerate-stale"; id: string };

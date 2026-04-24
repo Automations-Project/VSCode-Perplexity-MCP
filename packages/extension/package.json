@@ -34,7 +34,8 @@
     "onCommand:Perplexity.logout",
     "onCommand:Perplexity.switchAccount",
     "onCommand:Perplexity.addAccount",
-    "onCommand:Perplexity.captureDiagnostics"
+    "onCommand:Perplexity.captureDiagnostics",
+    "onCommand:Perplexity.regenerateStaleConfigs"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -152,6 +153,11 @@
       {
         "command": "Perplexity.captureDiagnostics",
         "title": "Perplexity: Capture Diagnostics Bundle",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.regenerateStaleConfigs",
+        "title": "Perplexity: Regenerate Stale Configs",
         "category": "Perplexity"
       }
     ],
@@ -279,6 +285,28 @@
           "minimum": 0,
           "maximum": 720,
           "description": "Hours a granted OAuth consent is remembered before re-prompting. 0 disables the cache (modal every time). Applies after the daemon is restarted."
+        },
+        "Perplexity.mcpTransportByIde": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string",
+            "enum": ["stdio-in-process", "stdio-daemon-proxy", "http-loopback", "http-tunnel"]
+          },
+          "description": "Per-IDE MCP transport selection. Keys are IDE target names (e.g., 'cursor', 'claudeDesktop'); missing keys resolve to 'stdio-daemon-proxy'."
+        },
+        "Perplexity.daemonPort": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "Pinned loopback port for the embedded daemon. 0 = ephemeral (OS-assigned, changes on restart). Set to a fixed port (1024-65535) to make http-loopback configs stable across daemon restarts."
+        },
+        "Perplexity.syncFolderPatterns": {
+          "type": "array",
+          "default": [],
+          "items": { "type": "string" },
+          "description": "Extra regex patterns used to detect cloud-sync folders when generating http-loopback configs. Matches against the target path or any ancestor directory. Well-known patterns (iCloud, OneDrive, Dropbox, Google Drive, Syncthing, pCloud) are always detected - this setting adds user-specific ones."
         }
       }
     },

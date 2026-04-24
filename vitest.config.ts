@@ -6,6 +6,7 @@ export default defineConfig({
       "packages/extension/tests/**/*.test.ts",
       "packages/webview/tests/**/*.test.{ts,tsx}",
       "packages/mcp-server/test/**/*.test.{js,ts}",
+      "packages/shared/tests/**/*.test.ts",
     ],
     environment: "node",
     coverage: {
