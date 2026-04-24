@@ -313,6 +313,11 @@
           "default": [],
           "items": { "type": "string" },
           "description": "Extra regex patterns used to detect cloud-sync folders when generating http-loopback configs. Matches against the target path or any ancestor directory. Well-known patterns (iCloud, OneDrive, Dropbox, Google Drive, Syncthing, pCloud) are always detected - this setting adds user-specific ones."
+        },
+        "Perplexity.autoRegenerateStaleConfigs": {
+          "type": "boolean",
+          "default": true,
+          "description": "When a configured IDE's mcp.json contains a stale URL or bearer (after a daemon restart or tunnel change), automatically regenerate it with current live values. When disabled, the dashboard shows a banner and the user must click 'Regenerate all' manually."
         }
       }
     },

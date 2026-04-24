@@ -45,6 +45,12 @@ describe("getSettingsSnapshot transport/daemon/sync fields", () => {
     expect(snap.syncFolderPatterns).toEqual([]);
   });
 
+  it("defaults autoRegenerateStaleConfigs to true", async () => {
+    const { getSettingsSnapshot } = await import("../src/settings.js");
+    const snap = getSettingsSnapshot();
+    expect(snap.autoRegenerateStaleConfigs).toBe(true);
+  });
+
   it("propagates user-supplied values from the VS Code configuration", async () => {
     configValues.mcpTransportByIde = {
       cursor: "http-loopback",
@@ -52,6 +58,7 @@ describe("getSettingsSnapshot transport/daemon/sync fields", () => {
     };
     configValues.daemonPort = 49152;
     configValues.syncFolderPatterns = ["^/Users/.*/MyCloud/"];
+    configValues.autoRegenerateStaleConfigs = false;
 
     const { getSettingsSnapshot } = await import("../src/settings.js");
     const snap = getSettingsSnapshot();
@@ -62,5 +69,6 @@ describe("getSettingsSnapshot transport/daemon/sync fields", () => {
     });
     expect(snap.daemonPort).toBe(49152);
     expect(snap.syncFolderPatterns).toEqual(["^/Users/.*/MyCloud/"]);
+    expect(snap.autoRegenerateStaleConfigs).toBe(false);
   });
 });

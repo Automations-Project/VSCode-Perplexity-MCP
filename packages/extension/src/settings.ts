@@ -23,7 +23,8 @@ const DEFAULTS: ExtensionSettingsSnapshot = {
   oauthConsentCacheTtlHours: 24,
   mcpTransportByIde: {},
   daemonPort: 0,
-  syncFolderPatterns: []
+  syncFolderPatterns: [],
+  autoRegenerateStaleConfigs: true
 };
 
 export function getSettingsSnapshot(): ExtensionSettingsSnapshot {
@@ -66,7 +67,11 @@ export function getSettingsSnapshot(): ExtensionSettingsSnapshot {
     ),
     mcpTransportByIde: configuration.get("mcpTransportByIde", DEFAULTS.mcpTransportByIde),
     daemonPort: configuration.get("daemonPort", DEFAULTS.daemonPort),
-    syncFolderPatterns: configuration.get("syncFolderPatterns", DEFAULTS.syncFolderPatterns)
+    syncFolderPatterns: configuration.get("syncFolderPatterns", DEFAULTS.syncFolderPatterns),
+    autoRegenerateStaleConfigs: configuration.get(
+      "autoRegenerateStaleConfigs",
+      DEFAULTS.autoRegenerateStaleConfigs
+    )
   } satisfies ExtensionSettingsSnapshot;
 }
 

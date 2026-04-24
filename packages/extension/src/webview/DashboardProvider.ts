@@ -31,6 +31,10 @@ import { handleDiagnosticsCapture } from "../diagnostics/flow.js";
 import { redactMessage, redactObject } from "../redact.js";
 import { REVEAL_CONFIRM_LABEL, runBearerRevealGate } from "./bearer-reveal-gate.js";
 import { detectStaleConfigs } from "./staleness-detector.js";
+import {
+  regenerateStaleIdes,
+  type RegenerateStaleIdesDeps,
+} from "./staleness-auto-regen.js";
 import { handleTransportSelect } from "./transport-select-handler.js";
 import {
   handleCfNamedCreate,
@@ -107,6 +111,10 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
   private otpResolvers = new Map<string, (s: string | null) => void>();
   private onMcpServerDefinitionsChanged?: () => void;
   private daemonEventsAbort: AbortController | null = null;
+  // v0.8.5: deps factory injected from extension.ts so the auto-regen hook
+  // on `postStaleness` can reuse the live ApplyIdeConfigDeps without pulling
+  // the daemon runtime singletons into the webview module.
+  private autoRegenDepsFactory: RegenerateStaleIdesDeps | null = null;
   // Cache the most-recent doctor report so "Report issue" can reuse it instead
   // of re-running all 10 checks. Cleared when the user clicks Run again.
   private lastDoctorReport: unknown = null;
@@ -119,6 +127,16 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
 
   setOnMcpServerDefinitionsChanged(fn: () => void): void {
     this.onMcpServerDefinitionsChanged = fn;
+  }
+
+  /**
+   * v0.8.5: inject the deps factory the staleness auto-regen hook uses. This
+   * stays in extension.ts because buildApplyIdeConfigDepsLive closes over the
+   * extension context (workspaceState, daemon runtime, vscode.window prompts).
+   * DashboardProvider must not grow an import on those.
+   */
+  setAutoRegenDeps(factory: RegenerateStaleIdesDeps): void {
+    this.autoRegenDepsFactory = factory;
   }
 
   async postAuthState(s: AuthState): Promise<void> {
@@ -1613,6 +1631,12 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       const daemonPort = status.health?.port ?? status.record?.port ?? null;
       const tunnelUrl = status.health?.tunnel?.url ?? status.record?.tunnelUrl ?? null;
       const daemonBearer = status.record?.bearerToken ?? null;
+      // v0.8.5: trace the pipeline inputs so smoke logs prove the detector ran.
+      debug(
+        `[staleness] checking ${Object.keys(ideStatus).length} ides against ` +
+          `daemonPort=${daemonPort} tunnelUrl=${tunnelUrl ?? "<none>"} ` +
+          `bearerPresent=${Boolean(daemonBearer)}`,
+      );
       const stale = detectStaleConfigs({
         ideStatus,
         daemonPort,
@@ -1626,6 +1650,39 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
         type: "transport:staleness",
         payload: { stale },
       } satisfies ExtensionMessage);
+      // v0.8.5: success-path trace. Without this the smoke operator can't tell
+      // whether the detector produced zero entries because everything was fresh
+      // vs. because the pipeline silently errored out upstream.
+      debug(
+        `[staleness] posted ${stale.length} stale config${stale.length === 1 ? "" : "s"}` +
+          (stale.length > 0
+            ? ": " + stale.map((s) => `${s.ideTag}(${s.reason})`).join(", ")
+            : ""),
+      );
+
+      // v0.8.5: auto-regenerate path. Gated on the injected deps factory AND
+      // the `autoRegenerateStaleConfigs` setting (checked inside the helper).
+      // The factory is injected in activateInner; absent in unit-test harnesses.
+      if (this.autoRegenDepsFactory) {
+        try {
+          await regenerateStaleIdes(
+            {
+              stale,
+              autoRegenerateStaleConfigs: settings.autoRegenerateStaleConfigs,
+              mcpTransportByIde: settings.mcpTransportByIde,
+              serverPath: LAUNCHER_PATH,
+              chromePath: settings.chromePath || undefined,
+            },
+            this.autoRegenDepsFactory,
+          );
+        } catch (err) {
+          debug(
+            `[staleness] auto-regenerate batch threw: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
     } catch (err) {
       debug(`[trace] postStaleness failed: ${err instanceof Error ? err.message : String(err)}`);
     }

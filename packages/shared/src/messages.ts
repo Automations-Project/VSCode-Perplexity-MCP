@@ -43,6 +43,15 @@ export interface ExtensionSettingsSnapshot {
   daemonPort: number;
   /** Extra regex patterns used to detect cloud-sync folders when generating http-loopback configs. */
   syncFolderPatterns: readonly string[];
+  /**
+   * v0.8.5: when a configured IDE's mcp.json embeds a stale URL or bearer
+   * (the extension's daemon port drifted, tunnel rotated, or bearer rotated),
+   * re-run applyIdeConfig automatically with the current live values. Default
+   * on - the refresh is not a surprise write because the IDE + transport pair
+   * was previously approved. Off surfaces the banner and leaves regeneration
+   * to the user.
+   */
+  autoRegenerateStaleConfigs: boolean;
 }
 
 export interface RulesStatus {

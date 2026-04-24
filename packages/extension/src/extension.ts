@@ -9,7 +9,8 @@ import { redactMessage } from "./redact.js";
 import { OutputRingBuffer } from "./diagnostics/output-buffer.js";
 import { captureDiagnostics } from "./diagnostics/capture.js";
 import { runDiagnosticsCaptureFlow } from "./diagnostics/flow.js";
-import { configureTargets, getIdeStatuses, type ApplyIdeConfigDeps } from "./auto-config/index.js";
+import { applyIdeConfig, configureTargets, getIdeStatuses, type ApplyIdeConfigDeps } from "./auto-config/index.js";
+import { wrapDepsForAutoRegen } from "./webview/staleness-auto-regen.js";
 import { spawnSync } from "node:child_process";
 import { hasStoredLogin } from "./auth/session.js";
 import { getSettingsSnapshot } from "./settings.js";
@@ -405,6 +406,20 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
   const serverDefinitionsChanged = new vscode.EventEmitter<void>();
   context.subscriptions.push(serverDefinitionsChanged);
   dashboard.setOnMcpServerDefinitionsChanged(() => { serverDefinitionsChanged.fire(); });
+
+  // v0.8.5: wire the auto-regen helper so postStaleness can refresh any
+  // drifted IDE configs without routing through the "Regenerate all" button.
+  // confirmTransport-always-true + nudgePortPin-noop are centralized in the
+  // wrapDepsForAutoRegen helper so tests can assert the override invariants.
+  dashboard.setAutoRegenDeps({
+    buildDeps: async () => {
+      const liveDeps = await buildApplyIdeConfigDepsLive(context);
+      return wrapDepsForAutoRegen(liveDeps, (line) => log(line));
+    },
+    applyIdeConfig,
+    debug: (line) => debug(line),
+    refresh: async () => { await dashboard.refresh(); },
+  });
 
   const bundledServerPath = getBundledServerPath(context);
   const { launcherPath, configDir } = ensureLauncher(bundledServerPath);
