@@ -1,66 +1,98 @@
-# Perplexity Internal MCP
+# VSCode-Perplexity-MCP
 
-This repository now ships a **native VS Code extension workspace** around the existing Perplexity browser-session MCP runtime.
+A monorepo that ships a Perplexity MCP server two ways:
 
-## What Changed
+- **`perplexity-vscode`** — a native VS Code extension (currently **0.8.5**, see [CHANGELOG.md](CHANGELOG.md)) with an embedded daemon, webview dashboard, and auto-config for 15+ MCP-capable IDEs.
+- **`perplexity-user-mcp`** — the same server as a standalone npm package, for Cursor, Claude Desktop, Claude Code, Windsurf, Cline, Amp, Codex CLI, and anything else that speaks MCP over stdio.
 
-- `packages/extension`: VS Code extension host, embedded MCP server bundle, auth/config commands, VSIX packaging
-- `packages/webview`: React + Vite dashboard UI for login, model browsing, history, and IDE config status
-- `packages/shared`: shared message contracts and state types
-- `src/`: legacy standalone MCP runtime, still kept as the source of truth for the Playwright + Perplexity browser client
+Both wrap a long-lived patchright browser session against your existing Perplexity account, so the MCP tools consume your logged-in plan (Pro, Max, etc.) rather than a paid API key.
 
-## Key Behavior
+## Repo shape
 
-- VS Code registers the bundled MCP server through `mcpServerDefinitionProviders`
-- The bundled server starts with `PERPLEXITY_HEADLESS_ONLY=1` so normal activation does not pop a visible browser
-- Login still uses the visible Playwright/Chrome bootstrap and writes to the shared profile under `~/.perplexity-mcp` or `PERPLEXITY_CONFIG_DIR`
-- The extension can generate additive MCP config files for Cursor, Windsurf, and Claude Desktop
-- Query history and cached account/model state are exposed both in the webview dashboard and as MCP resources
+Four npm workspaces under [packages/](packages/). Almost every aggregate task builds **shared first** because the extension host and the webview both import its type contracts directly from source.
 
-## Doctor
+- **[packages/shared](packages/shared/)** — message contracts, `IdeTarget` / `DashboardState` types, and the `PERPLEXITY_RULES_SECTION_START/END` markers used by auto-config.
+- **[packages/mcp-server](packages/mcp-server/)** — the Perplexity MCP runtime. Ships standalone as `perplexity-user-mcp` on npm and is also bundled into the extension's `dist/mcp/server.mjs`. Mixed `.ts` / `.js`; ESM only.
+- **[packages/webview](packages/webview/)** — React 19 + Vite + Tailwind v4 + zustand dashboard. Its Vite build output is copied into `packages/extension/media/webview/` by [packages/extension/scripts/prepare-webview.mjs](packages/extension/scripts/prepare-webview.mjs).
+- **[packages/extension](packages/extension/)** — VS Code extension host (CommonJS, `tsup`, `target: node20`). Registers the bundled MCP server via `mcpServerDefinitionProviders`, owns the webview, owns auto-config for 15+ IDEs, owns the embedded daemon.
 
-Run `npx perplexity-user-mcp doctor` for a 10-category install audit. Pass `--probe` for a live search probe. Pass `--json` for machine-readable output. Exit code `10` signals any `fail` status.
+## Quick start
 
-VS Code extension users: open the Perplexity dashboard → **Doctor** tab. Click **Run** for quick checks, **Deep check** for a live probe, **Export** to save JSON.
+Prerequisites: Node.js 20+, npm (workspaces). The author develops on Windows 11 with `bash` via Git for Windows; the same commands work on macOS and Linux.
 
-See [docs/doctor.md](docs/doctor.md) for full category reference, redaction guarantees, and the opt-out flag.
+```bash
+git clone <this-repo>
+cd VSCode-Perplexity-MCP
+npm install
+npm run build          # builds shared → mcp-server → webview → extension (in that order)
+npm test               # vitest at repo root across all test folders
+npm run package:vsix   # produces packages/extension/perplexity-vscode-<version>.vsix
+```
 
-## Workspace Commands
+**Build order matters.** `packages/shared` must build before the other three packages — the top-level scripts encode this explicitly (`-w @perplexity-user-mcp/shared` always runs first). Don't skip that step when wiring new scripts.
+
+To load an unpacked build into VS Code, run `code --install-extension packages/extension/perplexity-vscode-<version>.vsix` on the VSIX produced by `package:vsix`.
+
+## Commands
+
+All run from the repo root.
 
 ```bash
 npm install
-npm run build
-npm run typecheck
-npm test
-npm run package:vsix
+npm run build          # shared → mcp-server → webview → extension (required order)
+npm run typecheck      # tsc --noEmit across all 4 packages, same order
+npm test               # builds shared, then runs vitest
+npm run test:coverage  # vitest with v8 coverage; enforces per-file thresholds
+npm run package:vsix   # full build + vendored deps + vsce package
+npm run dev:webview    # Vite dev server for the dashboard
+npm run dev:extension  # tsup --watch on the extension
+npm run clean          # rm dist + media/webview across packages
 ```
 
-The packaged VSIX is written to:
-
-```text
-packages/extension/perplexity-vscode-0.1.0.vsix
-```
-
-## Development
+Capture / analyze helpers for recording Perplexity's network protocol (used when extending the client):
 
 ```bash
-npm run dev:webview
-npm run dev:extension
+npm run capture        # patchright-based capture (default)
+npm run capture:cdp    # Chrome DevTools Protocol variant
+npm run analyze        # post-process captures into docs
 ```
 
-The webview build output is copied into `packages/extension/media/webview` during extension builds.
-
-## Legacy Runtime
-
-The original standalone entrypoints are still available for direct runtime debugging:
+Single-test runs use `vitest` directly from the root — [vitest.config.ts](vitest.config.ts) globs all three test roots:
 
 ```bash
-npm run legacy:dev
-npm run legacy:build
-npm run legacy:login
+npx vitest run packages/mcp-server/test/redact.test.js
+npx vitest run packages/extension/tests/auth-manager.login.test.ts
+npx vitest run -t "resolves .reinit sentinel"
 ```
 
-## Notes
+## Running the MCP server standalone
 
-- The packaged extension includes the Playwright JavaScript runtime under `dist/node_modules`. Browser binaries are still expected to come from system Chrome or an existing Playwright browser install.
-- Top-level architecture research remains in [VSCODE_EXTENSION_ARCHITECTURE.md](/c:/Users/admin/github-repos/Perplixity-Internal-MCP/VSCODE_EXTENSION_ARCHITECTURE.md).
+If you just want the MCP server (no VS Code), install `perplexity-user-mcp` from npm and point your MCP client at the binary. The consumer-facing docs live in [packages/mcp-server/README.md](packages/mcp-server/README.md) — that file is what ships to npm and is the authoritative reference for tool behaviour, browser requirements, login flows, the daemon, and the `doctor` subcommand.
+
+## Architecture notes
+
+A few things that take more than a single file to see:
+
+- **The extension bundles the MCP server with a curated externals list.** [packages/extension/package.json](packages/extension/package.json) `build:mcp` tsups `packages/mcp-server/src/index.ts` into `dist/mcp/server.mjs`, renames `index.mjs → server.mjs`, and copies the mcp-server `package.json` next to it. Externals (`patchright`, `got-scraping`, `tough-cookie`, `gray-matter`, `express`, `@ngrok/ngrok`, `helmet`, `keytar`, …) are deliberate — they ship native binaries, top-level `require()`, or JSON data files that tsup can't inline. When adding a dependency, update both tsup configs **and** [packages/extension/scripts/prepare-package-deps.mjs](packages/extension/scripts/prepare-package-deps.mjs), which copies externals into `dist/node_modules/` at pack time so the VSIX is self-contained.
+- **Profiles, vault, and the `.reinit` sentinel.** Login state lives at `~/.perplexity-mcp/profiles/<name>/` (override with `PERPLEXITY_CONFIG_DIR`). Cookies are written encrypted to `vault.enc` by [packages/mcp-server/src/vault.js](packages/mcp-server/src/vault.js) (keytar with passphrase fallback). Any process that mutates profile state touches a `.reinit` sentinel, which running MCP servers watch via [packages/mcp-server/src/reinit-watcher.js](packages/mcp-server/src/reinit-watcher.js) and hot-reload without a restart — this is why switching accounts in the dashboard takes effect in Cursor / Claude Desktop instantly.
+- **Daemon + pluggable tunnel providers.** Beyond the stdio entrypoint, [packages/mcp-server/src/daemon/](packages/mcp-server/src/daemon/) runs a long-lived HTTP MCP server with OAuth 2.1 (via `@modelcontextprotocol/sdk`'s `mcpAuthRouter`) and a pluggable tunnel layer at [packages/mcp-server/src/daemon/tunnel-providers/](packages/mcp-server/src/daemon/tunnel-providers/) — `cf-quick` (Cloudflare Quick Tunnels, default) and `ngrok` (via `@ngrok/ngrok` NAPI, no child process). Daemon state lives in `<configDir>/daemon.lock`, `daemon.token`, `tunnel-settings.json`, and `ngrok.json`.
+- **Auto-config for 15+ IDEs.** [packages/extension/src/auto-config/index.ts](packages/extension/src/auto-config/index.ts) writes `mcp.json` / `mcp_config.json` / `config.toml` and rules files (`.cursor/rules/*.mdc`, `.clinerules/*.md`, `CLAUDE.md`, `AGENTS.md`, `.rules`, `GEMINI.md`, `.github/instructions/*`, etc.) for every target listed in `IDE_METADATA` in [packages/shared/src/constants.ts](packages/shared/src/constants.ts). For `md-section` targets it upserts a block between `PERPLEXITY-MCP-START` / `PERPLEXITY-MCP-END` markers and preserves everything outside them.
+- **Coverage thresholds are enforced.** [vitest.config.ts](vitest.config.ts) sets per-file floors: `redact.js` / `vault.js` ≥ 95% (security-critical), `profiles.js` / `cli.js` ≥ 85%. `npm run test:coverage` fails if any of those drop.
+
+## Contributing
+
+This is a **pre-public repo** — the conventions below reflect that and will tighten once the public remote is set up.
+
+- **Commit directly to `main`.** No feature branches, no PRs against this repo yet. `main` is the default and (by intent) protected branch.
+- **VSIX smoke-test before tagging.** Every versioned release must pass the manual checklists in [docs/smoke-tests.md](docs/smoke-tests.md) on Windows 11, macOS 14+, and Ubuntu 22+ before being tagged. Integration tests alone don't catch login / packaging bugs — skipping smoke has already caused regressions that made it to a shipped VSIX.
+- **Version `packages/extension` and `packages/mcp-server` together.** They share a version (both are currently `0.8.5`). When bumping, update both `package.json` files and add a [CHANGELOG.md](CHANGELOG.md) entry. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and SemVer — see the 0.8.x entries for the expected level of rationale (Added / Changed / Security / Tests / Release gate).
+- **Windows-first shell.** Prefer forward slashes and `/dev/null` in examples rather than `\` and `NUL`.
+- **Don't touch auto-managed blocks.** Files like [CLAUDE.md](CLAUDE.md) contain a block between `PERPLEXITY-MCP-START` / `PERPLEXITY-MCP-END` that the extension regenerates; edit the hand-written sections above it instead.
+
+## Release process
+
+A separate walkthrough of the tag / smoke / publish flow lives in [docs/release-process.md](docs/release-process.md).
+
+## License
+
+The repository is licensed under the **MIT License** — see [LICENSE](LICENSE). Note that [packages/extension/package.json](packages/extension/package.json) currently declares `"license": "UNLICENSED"` because the extension isn't published to the VS Code Marketplace yet; the intent is to align it with the repository's MIT license when the extension goes public. The `perplexity-user-mcp` npm package follows the repository license.
