@@ -35,28 +35,73 @@ export function acquire(record: DaemonLockRecord, options: LockfileOptions = {})
 
   mkdirSync(dirname(lockPath), { recursive: true });
 
-  let fd: number;
+  // Bug-2: on EEXIST, read the existing lockfile and, if it's stale (pid
+  // gone / invalid record / pid=1), reclaim it once and retry. A hard crash
+  // (SIGKILL, power loss) otherwise leaves a stale lockfile that blocks
+  // daemon startup permanently.
+  //
+  // Retries are capped at ONE — if another process won the race between our
+  // reclaim and our retry we surface a clean `false` (caller decides whether
+  // to attach / wait / escalate). Never loop indefinitely.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let fd: number;
+    try {
+      fd = openSync(lockPath, "wx");
+    } catch (error) {
+      if (isExistsError(error)) {
+        if (attempt === 0 && tryReclaimStale(lockPath)) {
+          continue;
+        }
+        return false;
+      }
+      throw error;
+    }
+
+    let wrote = false;
+    try {
+      writeFileSync(fd, serialize(normalized), "utf8");
+      wrote = true;
+    } finally {
+      closeSync(fd);
+      if (!wrote) {
+        rmSync(lockPath, { force: true });
+      }
+    }
+
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * If the lockfile at {@link lockPath} exists and is stale (dead pid, invalid
+ * record, or entirely unparseable), remove it and return true. Returns false
+ * if the lockfile is held by a live process — or if anything goes wrong
+ * while inspecting it (err on the side of preserving a live lock).
+ */
+function tryReclaimStale(lockPath: string): boolean {
+  let existing: DaemonLockRecord | null = null;
   try {
-    fd = openSync(lockPath, "wx");
-  } catch (error) {
-    if (isExistsError(error)) {
+    existing = read({ lockPath });
+  } catch {
+    // Unparseable JSON / garbled file → treat as stale.
+    try {
+      rmSync(lockPath, { force: true });
+      return true;
+    } catch {
       return false;
     }
-    throw error;
   }
-
-  let wrote = false;
+  if (!isStale(existing)) {
+    return false;
+  }
   try {
-    writeFileSync(fd, serialize(normalized), "utf8");
-    wrote = true;
-  } finally {
-    closeSync(fd);
-    if (!wrote) {
-      rmSync(lockPath, { force: true });
-    }
+    rmSync(lockPath, { force: true });
+    return true;
+  } catch {
+    return false;
   }
-
-  return true;
 }
 
 export function read(options: LockfileOptions = {}): DaemonLockRecord | null {

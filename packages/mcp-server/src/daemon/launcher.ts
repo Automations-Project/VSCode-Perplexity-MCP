@@ -476,14 +476,40 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Sta
         closed,
       };
     } catch (error) {
+      // Bug-3: even if startDaemonServer threw before `server` was assigned
+      // (e.g. EADDRINUSE inside httpServer.listen), we MUST release the
+      // lockfile we acquired above. Otherwise subsequent launches fail with
+      // a stale lockfile that no live daemon owns.
       watcher?.dispose();
-      release({ lockPath, expectedUuid: uuid });
       await server?.close?.().catch(() => undefined);
+      release({ lockPath, expectedUuid: uuid });
+
+      if (isAddressInUseError(error)) {
+        // Pinned port: the user (or extension) explicitly asked for this
+        // port. Don't silently rotate — surface a clear error the caller
+        // can render to the user. Lock is already released above.
+        if (typeof options.port === "number" && options.port > 0) {
+          throw new Error(
+            `Port ${options.port} is in use; daemon cannot start. Another perplexity daemon instance or unrelated process holds it.`,
+          );
+        }
+        // Any-free-port mode: let the retry loop pick another OS-assigned
+        // port. Brief backoff so we don't thrash if something is racing us.
+        await delay(retryDelayMs);
+        continue;
+      }
+
       throw error;
     }
   }
 
   throw new Error(`Unable to start or attach to daemon after ${retries} attempts.`);
+}
+
+function isAddressInUseError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = (error as { code?: unknown }).code;
+  return code === "EADDRINUSE";
 }
 
 export async function stopDaemon(options: {

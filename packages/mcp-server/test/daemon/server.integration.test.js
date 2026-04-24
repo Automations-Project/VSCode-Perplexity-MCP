@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:http";
+import { once } from "node:events";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { readAuditTail } from "../../src/daemon/audit.ts";
@@ -113,5 +115,73 @@ describe("daemon server integration", () => {
 
     await client.close();
     await transport.close();
+  });
+
+  // Bug-1 regression: if options.onShutdown throws, the rest of the shutdown
+  // sequence (httpServer.close) MUST still run. Previously, an onShutdown
+  // rejection short-circuited close() and left the port bound.
+  it("releases the port even when onShutdown throws", async () => {
+    await daemon.close();
+
+    let onShutdownCalls = 0;
+    daemon = await startDaemonServer({
+      configDir,
+      version: "0.6.0-test",
+      bearerToken: "test-bearer-token",
+      createClient: () => createMockClient(),
+      onShutdown: async () => {
+        onShutdownCalls += 1;
+        throw new Error("finalize blew up");
+      },
+    });
+
+    const boundPort = daemon.port;
+    expect(boundPort).toBeGreaterThan(0);
+
+    // close() must resolve (not throw), onShutdown must have been called, and
+    // the port must be free afterwards.
+    await expect(daemon.close()).resolves.toBeUndefined();
+    expect(onShutdownCalls).toBe(1);
+
+    // The port is now free if we can bind another socket to it.
+    const reclaimer = createServer();
+    await new Promise((resolve, reject) => {
+      reclaimer.once("error", reject);
+      reclaimer.listen(boundPort, "127.0.0.1", resolve);
+    });
+    await new Promise((resolve) => reclaimer.close(resolve));
+
+    // Re-assign so the afterEach close() call is a no-op.
+    daemon = { close: async () => undefined };
+  });
+
+  // Bug-3 regression: when the configured port is already in use, startup
+  // must fail with an EADDRINUSE-shaped error and NOT leave a dangling
+  // httpServer bound. Tests with a pinned port use the intentionally-busy
+  // listener to force the conflict deterministically.
+  it("surfaces EADDRINUSE when the pinned port is occupied", async () => {
+    // Find a truly-unused port by binding, reading the assigned port, then
+    // KEEPING the socket bound so the port is guaranteed occupied when the
+    // daemon tries to listen. Event-based (no timing races).
+    const squatter = createServer();
+    await new Promise((resolve, reject) => {
+      squatter.once("error", reject);
+      squatter.listen(0, "127.0.0.1", resolve);
+    });
+    const busyPort = squatter.address().port;
+
+    try {
+      await expect(
+        startDaemonServer({
+          configDir,
+          version: "0.6.0-test",
+          bearerToken: "pinned-port-test",
+          createClient: () => createMockClient(),
+          port: busyPort,
+        }),
+      ).rejects.toMatchObject({ code: "EADDRINUSE" });
+    } finally {
+      await new Promise((resolve) => squatter.close(resolve));
+    }
   });
 });

@@ -693,10 +693,33 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
   });
 
   httpServer = createServer(app as any);
-  await new Promise<void>((resolve, reject) => {
-    httpServer!.once("error", reject);
-    httpServer!.listen(requestedPort, host, () => resolve());
-  });
+  try {
+    await listenAvoidingBlockedPorts(httpServer, requestedPort, host);
+  } catch (error) {
+    // Bug-3: the caller (launcher) needs a clean signal — not a dangling
+    // httpServer. Tear down the socket so the port is freed on subsequent
+    // retries and rethrow the original error (with its .code intact) so the
+    // launcher can branch on EADDRINUSE.
+    try {
+      httpServer.close();
+    } catch {
+      // ignore — server may not have a socket bound
+    }
+    httpServer = undefined;
+    throw error;
+  }
+
+  // Bug-1 helper: run a best-effort shutdown step. If the step throws OR
+  // rejects, log once and swallow — one failing step must NEVER short-circuit
+  // the rest of the shutdown sequence (port release, lockfile cleanup, etc).
+  const runShutdownStep = async (label: string, fn: () => Promise<void> | void): Promise<void> => {
+    try {
+      await fn();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[trace] daemon shutdown step '${label}' failed: ${message}`);
+    }
+  };
 
   const close = async () => {
     if (closed) {
@@ -704,26 +727,34 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
     }
     closed = true;
 
-    for (const response of sseClients) {
-      response.end();
-    }
-    sseClients.clear();
+    await runShutdownStep("sse-clients", () => {
+      for (const response of sseClients) {
+        try {
+          response.end();
+        } catch {
+          // Individual SSE client teardown is best-effort.
+        }
+      }
+      sseClients.clear();
+    });
 
     for (const cleanup of Array.from(activeMcpClosers)) {
-      await cleanup().catch(() => undefined);
+      await runShutdownStep("mcp-cleanup", () => cleanup());
     }
-    await client?.shutdown?.().catch(() => undefined);
-    await options.onShutdown?.();
+    await runShutdownStep("client-shutdown", () => client?.shutdown?.() ?? undefined);
+    await runShutdownStep("on-shutdown", () => options.onShutdown?.() ?? undefined);
     if (httpServer) {
-      await new Promise<void>((resolve, reject) => {
-        httpServer!.close((error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          resolve();
-        });
-      }).catch(() => undefined);
+      await runShutdownStep("http-close", () =>
+        new Promise<void>((resolve, reject) => {
+          httpServer!.close((error) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            resolve();
+          });
+        }),
+      );
     }
   };
 
@@ -850,4 +881,59 @@ function getBoundPort(server: HttpServer | undefined): number {
     throw new Error("Daemon server is not listening on a TCP port.");
   }
   return address.port;
+}
+
+/**
+ * WHATWG fetch spec blocks a fixed list of "bad ports" (25, 6667, 10080, …).
+ * When the caller asks for `port: 0` the OS picks an ephemeral port at
+ * random — on rare occasions it hands back one of these blocked ports, and
+ * every subsequent `fetch(daemon.url)` throws `bad port`. That's how the
+ * OAuth-conformance tests flake in CI.
+ *
+ * Retry the listen up to 5 times when port is 0 and the OS assigns a
+ * blocked port. For an explicitly-pinned port we never retry (caller is
+ * responsible for not pinning a blocked port).
+ *
+ * @see https://fetch.spec.whatwg.org/#block-bad-port
+ */
+const FETCH_BLOCKED_PORTS = new Set<number>([
+  1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79,
+  87, 95, 101, 102, 103, 104, 109, 110, 111, 113, 115, 117, 119, 123, 135, 137,
+  139, 143, 161, 179, 389, 427, 465, 512, 513, 514, 515, 526, 530, 531, 532,
+  540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993, 995, 1719, 1720, 1723,
+  2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668, 6669, 6679,
+  6697, 10080,
+]);
+
+async function listenAvoidingBlockedPorts(
+  server: HttpServer,
+  requestedPort: number,
+  host: string,
+): Promise<void> {
+  const maxAttempts = requestedPort === 0 ? 5 : 1;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: NodeJS.ErrnoException) => {
+        server.removeListener("listening", onListening);
+        reject(error);
+      };
+      const onListening = () => {
+        server.removeListener("error", onError);
+        resolve();
+      };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(requestedPort, host);
+    });
+
+    const boundPort = getBoundPort(server);
+    if (!FETCH_BLOCKED_PORTS.has(boundPort)) {
+      return;
+    }
+
+    // Unlucky ephemeral assignment: close and retry. Final attempt returns
+    // the blocked port anyway so callers that can't fetch() will see the
+    // real problem rather than silently hanging.
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 }

@@ -68,4 +68,47 @@ describe("daemon lockfile", () => {
     expect(release({ lockPath, expectedUuid: "not-the-winner" })).toBe(false);
     expect(read({ lockPath })?.uuid).toBe("winner-daemon");
   });
+
+  // Bug-2 regression: a hard crash (SIGKILL / power loss) can leave a
+  // lockfile whose pid refers to a dead process. A fresh daemon start must
+  // reclaim that stale lockfile on its own instead of refusing to start.
+  it("acquire() reclaims a stale lockfile (dead pid) without manual release", () => {
+    const stale = makeRecord({ pid: 999999, uuid: "stale-daemon" });
+    expect(acquire(stale, { lockPath })).toBe(true);
+
+    const fresh = makeRecord({ uuid: "fresh-daemon", bearerToken: "token-fresh" });
+    expect(acquire(fresh, { lockPath })).toBe(true);
+    expect(read({ lockPath })?.uuid).toBe("fresh-daemon");
+  });
+
+  it("acquire() reclaims a lockfile with invalid pid=0 as stale", () => {
+    // Write a malformed record manually — acquire() should treat it as stale
+    // even though read()/normalizeRecord would throw on it.
+    const { writeFileSync } = require("node:fs");
+    writeFileSync(lockPath, '{"pid":0,"uuid":"x","port":1,"bearerToken":"x","version":"x","startedAt":"x"}', "utf8");
+
+    const fresh = makeRecord({ uuid: "fresh-daemon" });
+    expect(acquire(fresh, { lockPath })).toBe(true);
+    expect(read({ lockPath })?.uuid).toBe("fresh-daemon");
+  });
+
+  it("acquire() reclaims an unparseable lockfile as stale", () => {
+    const { writeFileSync } = require("node:fs");
+    writeFileSync(lockPath, "not json at all {{{", "utf8");
+
+    const fresh = makeRecord({ uuid: "fresh-daemon" });
+    expect(acquire(fresh, { lockPath })).toBe(true);
+    expect(read({ lockPath })?.uuid).toBe("fresh-daemon");
+  });
+
+  it("acquire() refuses to reclaim a lockfile held by a live process", () => {
+    // Use our own pid — acquire() should treat this as a LIVE lock and
+    // return false rather than stomping it.
+    const live = makeRecord({ pid: process.pid, uuid: "live-daemon" });
+    expect(acquire(live, { lockPath })).toBe(true);
+
+    const other = makeRecord({ pid: process.pid, uuid: "intruder" });
+    expect(acquire(other, { lockPath })).toBe(false);
+    expect(read({ lockPath })?.uuid).toBe("live-daemon");
+  });
 });
