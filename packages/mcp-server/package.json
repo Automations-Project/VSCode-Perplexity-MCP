@@ -1,6 +1,6 @@
 {
   "name": "perplexity-user-mcp",
-  "version": "0.8.4",
+  "version": "0.8.5",
   "type": "module",
   "description": "Perplexity AI MCP server — browser automation for search, reasoning, research, and compute",
   "author": "A.R.",

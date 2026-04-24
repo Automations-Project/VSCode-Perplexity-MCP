@@ -4,6 +4,42 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [0.8.5] — 2026-04-24 — UX polish: auto-regen + tunnel switching safety + perf dashboard + loopback-default
+
+v0.8.4's smoke surfaced three UX gaps and two user-preference shifts: staleness never auto-healed, tunnel provider switches had no warning or performance visibility, and the tunnel UI was always-visible even for users who only use loopback. This release addresses all five, in that order.
+
+### Added
+- **Auto-regenerate stale MCP configs.** New setting `Perplexity.autoRegenerateStaleConfigs` (default **true**). When a daemon restart (port drift) or tunnel-URL rotation leaves a configured IDE's `mcp.json` pointing at dead values, the extension now automatically re-runs `applyIdeConfig` for each stale IDE with `confirmTransport` forced to `true` (this is a refresh, not a first-time write — the H5 intent was to guard surprise writes; the user already approved this (IDE, transport) pair). `warnSyncFolder` is preserved by reference so the sync-folder gate still fires. Audit entries for auto-regen writes carry `auto=true` to distinguish them from user-driven generates. Pure-function core at `packages/extension/src/webview/staleness-auto-regen.ts` so tests don't need any VS Code mock.
+- **Staleness pipeline observability.** Pre/post-detection traces on `postStaleness`: `[staleness] checking <N> ides against daemonPort=<P> tunnelUrl=<U>` before detection and `[staleness] posted <N> stale config(s): <tag>(<reason>), ...` after the `transport:staleness` message is sent. Makes it possible to grep the Output channel to prove the pipeline ran + what it found.
+- **Tunnel-switch confirmation modal.** Before `daemon:set-tunnel-provider` takes effect, a VS Code warning modal with both the current and next provider names, explaining that the current tunnel will disconnect, any MCP client connected through the current URL will drop, and any IDE configured for `http-tunnel` will need regenerating. **`http-loopback` and stdio IDEs are unaffected** is called out explicitly so the user knows the disruption is bounded. Default-confirm (`"Continue switching"` primary, `"Cancel"` secondary). Skipped when no tunnel is currently enabled OR the user re-selects the same provider (idempotent no-op). Pure helper at `packages/extension/src/webview/tunnel-switch-confirm.ts` — fully unit-tested, no VS Code mock needed. After the switch completes, `postStaleness` fires immediately so the banner reflects the new tunnel URL on next render.
+- **Tunnel performance dashboard.** New `TunnelPerformance` component in the TunnelManager card shows:
+  - **Last enable durations per provider** (session-local ring buffer; cf-named ~1.5s, ngrok ~2s, cf-quick ~5.5s observed in testing — visible now).
+  - **Rolling average health-check latency** over the last 10 `/daemon/health` loopback hits from the audit tail.
+  - **MCP `/mcp` status ratios by source** (loopback vs tunnel) over the last 200 audit entries: `ok / unauthorized / serverError / other`.
+  - **High-401 warning hint** when tunnel unauthorized ratio exceeds 10%: directly surfaces CF WAF / OAuth misconfigurations without the user having to read audit logs.
+  Data pipeline: `parseTunnelPerformance` pure parser in `packages/extension/src/webview/tunnel-performance.ts` + session-local `TunnelEnableRecorder` ring buffer in `tunnel-enable-recorder.ts` (extension-host scoped, resets on reload; provider ids + wall-clock ms only). New `tunnel:performance` outbound message + store slice. Renders nothing pre-hydrate; graceful empty-state for every sub-section.
+- **Loopback-default mode + tunnels opt-in.** New setting `Perplexity.enableTunnels` (default **false**). When disabled, TunnelManager collapses to a single `RemoteAccessOptIn` card explaining what a tunnel is for and a single "Enable tunnel options" button. `http-tunnel` is also hidden from every IDE's TransportPicker (not just disabled — removed from the rendered radio group). When enabled, the full tunnel UI returns with a "Disable tunnel options" link at the bottom that fires a confirm modal and tears down any active tunnel atomically before flipping the setting.
+- **Migration for existing users.** On first activation of 0.8.5, `migrateEnableTunnelsOnce` checks for an existing `<configDir>/tunnel-settings.json` with a non-empty `activeProvider` — if found AND the user hasn't explicitly set `enableTunnels` yet, the setting is auto-set to `true` so upgraders keep their familiar UI. One-shot, flagged by `globalState.perplexity.enableTunnels.migrated`.
+
+### Changed
+- `packages/mcp-server` + `packages/extension` bump to `0.8.5`.
+- `DashboardProvider.postDaemonState` now runs a 3-step downstream chain after posting status: `postStaleness → auto-regen if enabled → postTunnelPerformance`. Each step is independently traced and individually try/catch-guarded so one failure doesn't poison the others.
+- `TransportPicker` gains a `tunnelsEnabled` prop; `TunnelManager` gains a `settings` prop; `DaemonStatus` threads both from the store.
+- `settings:update` handler intercepts `enableTunnels: false` to run the disable confirmation + tunnel shutdown flow before writing the setting. Co-sent keys in the same payload are still applied (the interceptor strips only `enableTunnels` from the partial if the user cancels).
+
+### Security
+- No new secrets surface. The static daemon bearer remains loopback-only (H11 from v0.7.4); auto-regen uses the same `getDaemonBearer` dep as manual generate. Sync-folder detection (H4) is preserved on the auto-regen path — an IDE whose `mcp.json` lives under OneDrive/Dropbox/etc. still triggers the default-deny modal, even during a silent refresh.
+- Enable-history and health-latency metrics stored in-memory only; never persisted to disk; no plaintext tokens touched.
+
+### Tests
+- **805 passed / 94 files** — up from 742 / 86 at v0.8.4 (+63 new tests across the patch). Breakdown: 12 staleness-auto-regen (Wave 1), 7 tunnel-switch-confirm (Wave 2α), 29 tunnel-performance + recorder + component (Wave 2β), 15 loopback-default + migration + opt-in + picker-filter (Wave 3).
+
+### Release gate
+- Typecheck: green across all 4 packages.
+- Full suite: 805 passed / 94 files.
+- Secret-leak gate: clean on `.test-artifacts/vitest.log`.
+- Manual smoke against this release: deferred to owner's re-smoke. If regressions surface they ship as v0.8.6.
+
 ## [0.8.4] — 2026-04-24 — Phase 8.6 hotfix: picker actually works
 
 v0.8.3 shipped the transport picker UI + dispatcher but the wire between the two was severed — HTTP transport options looked clickable and landed in the picker but never persisted, and the capability matrix kept every HTTP option disabled for every IDE. Owner's smoke produced a diagnostics zip showing `mcpTransportByIde: {}` after picking HTTP in the UI and every audit line defaulting to `stdio-daemon-proxy`. This release closes the five gaps surfaced by that smoke.
