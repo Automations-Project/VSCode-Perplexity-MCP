@@ -4,7 +4,9 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, "..", "..", "..");
-const extensionNodeModules = join(__dirname, "..", "dist", "node_modules");
+const mcpServerRoot = join(repoRoot, "packages", "mcp-server");
+const extensionRoot = join(repoRoot, "packages", "extension");
+const extensionNodeModules = join(extensionRoot, "dist", "node_modules");
 
 /**
  * Root packages the extension loads at runtime. We do NOT include bundled-by-tsup
@@ -24,7 +26,35 @@ const extensionNodeModules = join(__dirname, "..", "dist", "node_modules");
  *
  * See packages/mcp-server/src/checks/native-deps.js and docs/doctor.md.
  */
-const rootPackages = ["patchright", "patchright-core", "got-scraping", "keytar", "dot-prop", "is-obj", "gray-matter", "express", "@ngrok/ngrok", "helmet"];
+/**
+ * Explicit source map for daemon runtime deps. We resolve these from
+ * `packages/mcp-server/node_modules` FIRST, then fall back to the repo root.
+ *
+ * Why: @modelcontextprotocol/sdk hoists `express@5.x` to the repo-root
+ * node_modules, but the bundled MCP server code (daemon/server.ts etc.) is
+ * written against express 4.x route/error-handler semantics and `req.path`
+ * behaviour. A blind repo-root-first resolution (the 0.8.5 behaviour) ships
+ * express 5 in the VSIX and breaks the daemon on end-user machines. Same
+ * risk exists for any dep shared between mcp-server and the SDK's transitive
+ * graph (got, helmet, keytar, …), so we funnel all daemon-runtime deps
+ * through the mcp-server workspace first.
+ */
+const rootPackages = [
+  { name: "patchright", preferMcpServer: true },
+  { name: "patchright-core", preferMcpServer: true },
+  { name: "got-scraping", preferMcpServer: true },
+  { name: "got", preferMcpServer: true, optional: true },
+  { name: "tough-cookie", preferMcpServer: true, optional: true },
+  { name: "header-generator", preferMcpServer: true, optional: true },
+  { name: "fingerprint-generator", preferMcpServer: true, optional: true },
+  { name: "keytar", preferMcpServer: true },
+  { name: "dot-prop", preferMcpServer: true },
+  { name: "is-obj", preferMcpServer: true },
+  { name: "gray-matter", preferMcpServer: true },
+  { name: "express", preferMcpServer: true },
+  { name: "@ngrok/ngrok", preferMcpServer: true },
+  { name: "helmet", preferMcpServer: true },
+];
 
 rmSync(extensionNodeModules, { recursive: true, force: true });
 mkdirSync(extensionNodeModules, { recursive: true });
@@ -48,17 +78,13 @@ function resolveFrom(startDir, packageName) {
   }
   const fallbacks = [
     join(repoRoot, "node_modules", packageName),
-    join(repoRoot, "packages", "mcp-server", "node_modules", packageName),
-    join(repoRoot, "packages", "extension", "node_modules", packageName),
+    join(mcpServerRoot, "node_modules", packageName),
+    join(extensionRoot, "node_modules", packageName),
   ];
   for (const candidate of fallbacks) {
     if (existsSync(candidate)) return candidate;
   }
   return null;
-}
-
-function resolvePackageSource(packageName) {
-  return resolveFrom(repoRoot, packageName);
 }
 
 // Copy a package and walk its deps. Transitive deps resolve relative to the
@@ -97,4 +123,38 @@ function copyRecursive(packageName, fromDir = repoRoot, seen = new Set()) {
   }
 }
 
-for (const root of rootPackages) copyRecursive(root);
+for (const entry of rootPackages) {
+  const { name, preferMcpServer, optional } = entry;
+  // preferMcpServer: start resolution from packages/mcp-server so the
+  // mcp-server-pinned version wins over any hoisted repo-root copy. See
+  // the rootPackages doc block above for the express 4 vs 5 rationale.
+  const startDir = preferMcpServer ? mcpServerRoot : repoRoot;
+  if (optional && !resolveFrom(startDir, name)) {
+    console.warn(`[prepare-package-deps] optional package "${name}" not installed — skipping`);
+    continue;
+  }
+  copyRecursive(name, startDir);
+}
+
+// Programmatic assertion: the bundled daemon code is written against express 4
+// (route signatures, 4-arity error handlers, req.path semantics). If the
+// hoist-order in the workspace ever changes and express 5 slips into the VSIX,
+// the daemon will fail at runtime on end-user machines. Fail the build here.
+const expressManifestPath = join(extensionNodeModules, "express", "package.json");
+if (!existsSync(expressManifestPath)) {
+  throw new Error(
+    `[prepare-package-deps] express/package.json missing at ${expressManifestPath}. ` +
+      `Expected express to be copied into dist/node_modules. Check rootPackages in this file.`
+  );
+}
+const expressVersion = JSON.parse(readFileSync(expressManifestPath, "utf8")).version ?? "";
+const expressMajor = expressVersion.split(".")[0];
+if (expressMajor !== "4") {
+  throw new Error(
+    `[prepare-package-deps] express major version mismatch: got ${expressVersion}, expected ^4. ` +
+      `The bundled MCP daemon is written against express 4.x semantics. ` +
+      `Check rootPackages resolution order in ${fileURLToPath(import.meta.url)} — ` +
+      `express must resolve from packages/mcp-server/node_modules, not the repo root (SDK hoists express 5).`
+  );
+}
+console.log(`[prepare-package-deps] express ${expressVersion} OK`);
