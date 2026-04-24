@@ -1,6 +1,8 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
+import { gunzipSync } from "node:zlib";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, "..", "..", "..");
@@ -136,6 +138,233 @@ for (const entry of rootPackages) {
   copyRecursive(name, startDir);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Cross-platform native shipping for @ngrok/ngrok
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// @ngrok/ngrok uses the optionalDependencies-per-platform pattern (same as
+// esbuild/swc/rollup): one subpackage per (os, cpu) triple, and npm only
+// installs the one matching the BUILDER's platform. That means a VSIX packed
+// on Windows ships only `@ngrok/ngrok-win32-x64-msvc` and crashes on Linux/
+// macOS at activation when `@ngrok/ngrok/index.js` tries to require the
+// matching subpackage.
+//
+// Fix: for every subpackage listed in the parent's optionalDependencies map,
+// either copy it from the builder's node_modules (if present by luck) or pull
+// it down fresh via `npm pack` and extract into dist/node_modules/@ngrok/.
+// Results are cached by `<name>@<version>` under node_modules/.cache/ so
+// repeat runs are fast.
+//
+// We ship ALL variants the parent declares — overshipping tiny native .node
+// files is harmless (~2-4 MB each) and the alternative is a crashed extension.
+
+const ngrokSource = resolveFrom(mcpServerRoot, "@ngrok/ngrok");
+if (!ngrokSource) {
+  throw new Error(
+    `[prepare-package-deps] @ngrok/ngrok not found in mcp-server or repo root. ` +
+      `Cannot enumerate optional native subpackages.`
+  );
+}
+const ngrokManifest = JSON.parse(readFileSync(join(ngrokSource, "package.json"), "utf8"));
+const ngrokOptionalDeps = ngrokManifest.optionalDependencies ?? {};
+const ngrokVariants = Object.keys(ngrokOptionalDeps);
+if (ngrokVariants.length === 0) {
+  throw new Error(
+    `[prepare-package-deps] @ngrok/ngrok has no optionalDependencies — unexpected, ` +
+      `this script's cross-platform logic assumes the optionalDependencies-per-platform pattern. ` +
+      `Inspect ${join(ngrokSource, "package.json")}.`
+  );
+}
+
+// Cache directory for `npm pack` tarballs. Lives under node_modules/.cache
+// (already git-ignored via the top-level node_modules rule) so repeat runs
+// don't re-download.
+const packCacheDir = join(repoRoot, "node_modules", ".cache", "prepare-package-deps");
+mkdirSync(packCacheDir, { recursive: true });
+
+function readVariantVersion(variantName) {
+  // Prefer the installed subpackage's actual version; fall back to the parent's
+  // declared range (typical npm pattern is to pin subpackages to parent version).
+  const installed = resolveFrom(mcpServerRoot, variantName);
+  if (installed) {
+    try {
+      const v = JSON.parse(readFileSync(join(installed, "package.json"), "utf8")).version;
+      if (v) return v;
+    } catch {
+      // fall through
+    }
+  }
+  const declared = ngrokOptionalDeps[variantName];
+  // Strip common semver operators so `npm pack` gets a concrete version.
+  if (declared) return declared.replace(/^[\^~>=<\s]+/, "");
+  return ngrokManifest.version;
+}
+
+function copyInstalledVariant(variantName) {
+  const source = resolveFrom(mcpServerRoot, variantName);
+  if (!source) return false;
+  const target = join(extensionNodeModules, variantName);
+  if (existsSync(target)) return true;
+  cpSync(source, target, { recursive: true });
+  console.log(`[prepare-package-deps] copied ${variantName} from local node_modules`);
+  return true;
+}
+
+/**
+ * Minimal synchronous tar.gz extractor. Handles the subset of the tar format
+ * that `npm pack` emits: regular files (typeflag '0' / '\0'), directories
+ * (typeflag '5'), and pax-extended-header long-name records (typeflag 'x',
+ * keys `path=` and `linkpath=`). Ignores symlinks (npm packages don't ship
+ * them) and hardlinks. Paths are stripped of a trailing `package/` prefix is
+ * NOT done here — the caller handles that by consuming `<cacheDir>/package/`.
+ */
+function extractTarGzSync(tarballPath, destDir) {
+  const buf = gunzipSync(readFileSync(tarballPath));
+  const BLOCK = 512;
+  let offset = 0;
+  let longNameOverride = null;
+
+  const parseOctal = (slice) => {
+    const s = slice.toString("ascii").replace(/\0.*$/, "").trim();
+    if (!s) return 0;
+    return parseInt(s, 8) || 0;
+  };
+  const parseString = (slice) => slice.toString("utf8").replace(/\0.*$/, "");
+
+  while (offset + BLOCK <= buf.length) {
+    const header = buf.subarray(offset, offset + BLOCK);
+    // Two consecutive zero blocks = end of archive.
+    if (header.every((b) => b === 0)) {
+      offset += BLOCK;
+      continue;
+    }
+
+    const name = parseString(header.subarray(0, 100));
+    const size = parseOctal(header.subarray(124, 136));
+    const typeflag = String.fromCharCode(header[156] || 0);
+    const prefix = parseString(header.subarray(345, 500));
+    let fullName = longNameOverride ?? (prefix ? `${prefix}/${name}` : name);
+    longNameOverride = null;
+
+    const dataSize = size;
+    const dataStart = offset + BLOCK;
+    const dataEnd = dataStart + dataSize;
+    const padded = Math.ceil(dataSize / BLOCK) * BLOCK;
+    offset = dataStart + padded;
+
+    if (!fullName) continue;
+
+    if (typeflag === "x" || typeflag === "g") {
+      // PAX extended header. Parse `<len> <key>=<value>\n` records.
+      const paxData = buf.subarray(dataStart, dataEnd).toString("utf8");
+      let cursor = 0;
+      while (cursor < paxData.length) {
+        const spaceIdx = paxData.indexOf(" ", cursor);
+        if (spaceIdx < 0) break;
+        const recLen = parseInt(paxData.slice(cursor, spaceIdx), 10);
+        if (!Number.isFinite(recLen) || recLen <= 0) break;
+        const record = paxData.slice(spaceIdx + 1, cursor + recLen - 1); // minus trailing \n
+        const eqIdx = record.indexOf("=");
+        if (eqIdx > 0) {
+          const key = record.slice(0, eqIdx);
+          const value = record.slice(eqIdx + 1);
+          if (key === "path") longNameOverride = value;
+        }
+        cursor += recLen;
+      }
+      continue;
+    }
+
+    if (typeflag === "L") {
+      // GNU long-name extension. Next header's name is the content of this block.
+      longNameOverride = buf
+        .subarray(dataStart, dataEnd)
+        .toString("utf8")
+        .replace(/\0.*$/, "");
+      continue;
+    }
+
+    // Refuse path traversal.
+    const normalized = fullName.replace(/\\/g, "/");
+    if (normalized.startsWith("/") || normalized.includes("../")) {
+      throw new Error(`[prepare-package-deps] refusing unsafe tar entry: ${fullName}`);
+    }
+
+    const outPath = join(destDir, normalized);
+
+    if (typeflag === "5" || fullName.endsWith("/")) {
+      mkdirSync(outPath, { recursive: true });
+      continue;
+    }
+    if (typeflag === "0" || typeflag === " " || typeflag === "") {
+      mkdirSync(dirname(outPath), { recursive: true });
+      writeFileSync(outPath, buf.subarray(dataStart, dataEnd));
+      continue;
+    }
+    // Skip symlinks, hardlinks, device nodes, etc. — not used by npm packs.
+  }
+}
+
+function fetchVariantViaNpmPack(variantName, version) {
+  const specifier = `${variantName}@${version}`;
+  const variantCacheDir = join(packCacheDir, variantName.replace(/[@/]/g, "_") + "-" + version);
+  const extractedMarker = join(variantCacheDir, "package", "package.json");
+
+  if (!existsSync(extractedMarker)) {
+    mkdirSync(variantCacheDir, { recursive: true });
+    console.log(`[prepare-package-deps] npm pack ${specifier}`);
+    // `shell: true` needed on Windows so `npm` (npm.cmd) resolves correctly;
+    // it's a no-op harm-free on POSIX. We pass argv as a single string to
+    // avoid per-platform PATHEXT quoting issues — specifier is a fixed semver
+    // pattern (no user input), so shell-injection is not a concern here.
+    const packResult = spawnSync(
+      `npm pack "${specifier}" --pack-destination="${variantCacheDir}" --no-audit --no-fund --prefer-offline --silent`,
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        encoding: "utf8",
+        shell: true,
+      }
+    );
+    if (packResult.status !== 0) {
+      throw new Error(
+        `[prepare-package-deps] npm pack ${specifier} failed ` +
+          `(exit ${packResult.status}): ${packResult.stderr || packResult.stdout || packResult.error?.message || "unknown"}`
+      );
+    }
+    // Find the produced tarball (npm pack prints the filename to stdout, but
+    // reading the directory is more robust across npm versions).
+    const tarballs = readdirSync(variantCacheDir).filter((f) => f.endsWith(".tgz"));
+    if (tarballs.length === 0) {
+      throw new Error(
+        `[prepare-package-deps] npm pack ${specifier} produced no .tgz in ${variantCacheDir}`
+      );
+    }
+    const tarball = join(variantCacheDir, tarballs[0]);
+    // Extract with a minimal built-in tar reader. The ustar/pax format is
+    // trivial (512-byte header + padded data), and doing this ourselves dodges
+    // the GNU-tar-vs-bsdtar-vs-Git-Bash path-escaping mess on Windows.
+    extractTarGzSync(tarball, variantCacheDir);
+  }
+
+  const extractedPackageDir = join(variantCacheDir, "package");
+  if (!existsSync(extractedPackageDir)) {
+    throw new Error(
+      `[prepare-package-deps] extracted package dir not found at ${extractedPackageDir}`
+    );
+  }
+  const target = join(extensionNodeModules, variantName);
+  if (!existsSync(target)) {
+    cpSync(extractedPackageDir, target, { recursive: true });
+  }
+  console.log(`[prepare-package-deps] materialized ${specifier} from registry`);
+}
+
+for (const variantName of ngrokVariants) {
+  if (copyInstalledVariant(variantName)) continue;
+  const version = readVariantVersion(variantName);
+  fetchVariantViaNpmPack(variantName, version);
+}
+
 // Programmatic assertion: the bundled daemon code is written against express 4
 // (route signatures, 4-arity error handlers, req.path semantics). If the
 // hoist-order in the workspace ever changes and express 5 slips into the VSIX,
@@ -158,3 +387,74 @@ if (expressMajor !== "4") {
   );
 }
 console.log(`[prepare-package-deps] express ${expressVersion} OK`);
+
+// Programmatic assertion: every @ngrok/ngrok-<variant> subpackage declared in
+// the parent's optionalDependencies must be materialized under
+// dist/node_modules/@ngrok/, and each must expose matching os/cpu fields. A
+// missing or mismatched variant means a VSIX packed on the current platform
+// will crash on activation on other platforms (the 0.8.5 ship-blocker).
+const osByVariantSuffix = {
+  "android-": "android",
+  "darwin-": "darwin",
+  "freebsd-": "freebsd",
+  "linux-": "linux",
+  "win32-": "win32",
+};
+const cpuBySubstr = [
+  ["-arm64", "arm64"],
+  ["-arm-", "arm"],
+  ["-x64", "x64"],
+  ["-ia32", "ia32"],
+  ["-universal", "universal"],
+];
+function expectedOsCpu(variantName) {
+  // variant name form: @ngrok/ngrok-<os>-<arch>[-abi]
+  const bare = variantName.replace(/^@ngrok\/ngrok-/, "");
+  let os = null;
+  for (const [prefix, osValue] of Object.entries(osByVariantSuffix)) {
+    if (bare.startsWith(prefix)) {
+      os = osValue;
+      break;
+    }
+  }
+  let cpu = null;
+  for (const [substr, cpuValue] of cpuBySubstr) {
+    if (bare.includes(substr)) {
+      cpu = cpuValue;
+      break;
+    }
+  }
+  return { os, cpu };
+}
+
+for (const variantName of ngrokVariants) {
+  const variantManifestPath = join(extensionNodeModules, variantName, "package.json");
+  if (!existsSync(variantManifestPath)) {
+    throw new Error(
+      `[prepare-package-deps] ${variantName}/package.json missing at ${variantManifestPath}. ` +
+        `The cross-platform native-shipping step in ${fileURLToPath(import.meta.url)} did not ` +
+        `materialize this variant. VSIX would crash on activation on that platform.`
+    );
+  }
+  const variantManifest = JSON.parse(readFileSync(variantManifestPath, "utf8"));
+  const { os: expectedOs, cpu: expectedCpu } = expectedOsCpu(variantName);
+  const actualOs = Array.isArray(variantManifest.os) ? variantManifest.os : [];
+  const actualCpu = Array.isArray(variantManifest.cpu) ? variantManifest.cpu : [];
+  if (expectedOs && !actualOs.includes(expectedOs)) {
+    throw new Error(
+      `[prepare-package-deps] ${variantName} os mismatch: expected "${expectedOs}" in ` +
+        `${JSON.stringify(actualOs)}. The tarball content does not match its name — ` +
+        `investigate in ${fileURLToPath(import.meta.url)}.`
+    );
+  }
+  if (expectedCpu && expectedCpu !== "universal" && !actualCpu.includes(expectedCpu)) {
+    throw new Error(
+      `[prepare-package-deps] ${variantName} cpu mismatch: expected "${expectedCpu}" in ` +
+        `${JSON.stringify(actualCpu)}. Investigate in ${fileURLToPath(import.meta.url)}.`
+    );
+  }
+}
+console.log(
+  `[prepare-package-deps] @ngrok/ngrok ${ngrokManifest.version} ` +
+    `+ ${ngrokVariants.length} platform variants OK`
+);
