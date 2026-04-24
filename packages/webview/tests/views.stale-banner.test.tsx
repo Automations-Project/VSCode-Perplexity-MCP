@@ -86,7 +86,7 @@ describe("SettingsView — stale-config banner", () => {
     render(<SettingsView state={baseState} send={vi.fn()} />);
     const banner = screen.getByTestId("stale-configs-banner");
     expect(banner).toBeDefined();
-    expect(banner.textContent ?? "").toMatch(/1 config contain/i);
+    expect(banner.textContent ?? "").toMatch(/1 config contains\b/i);
     // Per-IDE chip is visible inside the cursor card.
     expect(screen.getByTestId("ide-stale-chip-cursor")).toBeDefined();
   });

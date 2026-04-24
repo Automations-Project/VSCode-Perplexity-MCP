@@ -1018,7 +1018,7 @@ export function SettingsView({
         {staleConfigs && staleConfigs.length > 0 ? (
           <div className="stale-config-banner" data-testid="stale-configs-banner">
             <span>
-              {staleConfigs.length} config{staleConfigs.length === 1 ? "" : "s"} contain stale auth
+              {staleConfigs.length} config{staleConfigs.length === 1 ? "" : "s"} contain{staleConfigs.length === 1 ? "s" : ""} stale auth
             </span>
             <button
               className="ghost-button btn-sm"
