@@ -11,6 +11,7 @@ import type {
   ExternalViewer,
   HistoryEntryDetail,
   Profile,
+  TunnelPerformanceSnapshot,
   TunnelProbeResult,
 } from "@perplexity-user-mcp/shared";
 import type { AuthorizedClientRow } from "./components/AuthorizedClients";
@@ -109,6 +110,13 @@ interface DashboardStore {
     };
   } | null;
   tunnelProbe: TunnelProbeState | null;
+  /**
+   * v0.8.5: most recent tunnel performance snapshot posted from the extension
+   * host via `tunnel:performance`. `null` until the first snapshot arrives
+   * (pre-hydrate) — the TunnelPerformance component renders nothing in that
+   * state to avoid flashing empty rows.
+   */
+  tunnelPerformance: TunnelPerformanceSnapshot | null;
   historyExport: {
     id: string | null;
     phase: "idle" | "starting" | "downloaded" | "saved" | "error";
@@ -176,6 +184,7 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
   setOauthClients: (clients) => set({ oauthClients: clients }),
   tunnelProviders: null,
   tunnelProbe: null,
+  tunnelPerformance: null,
   historyExport: { id: null, phase: "idle" },
   cloudSync: { phase: "idle" },
   cloudHydrate: { historyId: null, phase: "idle" },
@@ -365,6 +374,15 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
         daemonTokenRotatedAt: message.payload.rotatedAt,
         notice: { level: "info", message: "Daemon token rotated. MCP clients will reconnect with the new token." },
       });
+      return;
+    }
+
+    if (message.type === "tunnel:performance") {
+      // Overwrite unconditionally — the extension host recomputes from the
+      // audit tail + its own ring buffer on every postDaemonState and is
+      // authoritative. Null is the pre-hydrate state (store default); we
+      // never regress to null on receipt.
+      set({ tunnelPerformance: message.payload });
       return;
     }
 

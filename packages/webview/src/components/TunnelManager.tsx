@@ -5,6 +5,7 @@ import { useDashboardStore, useIsActionPending, type TunnelProbeState } from "..
 import { CfNamedRow, deriveCfNamedState } from "./CfNamedRow";
 import { DaemonActionButton } from "./DaemonActionButton";
 import { NgrokRow } from "./NgrokRow";
+import { TunnelPerformance } from "./TunnelPerformance";
 
 export { deriveCfNamedState };
 
@@ -255,6 +256,8 @@ export function TunnelManager({
           ) : null}
         </div>
       </div>
+
+      <TunnelPerformance />
 
       {tunnelProbe ? (
         <div className="daemon-inset-panel" style={{ marginTop: 8 }} data-testid="tunnel-probe-result">

@@ -108,6 +108,58 @@ export interface DaemonAuditEntry {
   error?: string;
 }
 
+/**
+ * v0.8.5: tunnel performance dashboard snapshot. Computed in the extension
+ * host from a combination of the audit tail (health-check latency, /mcp status
+ * ratios) and a session-local enable-timing ring buffer maintained by
+ * `DashboardProvider`. The audit log does not record enable/disable events as
+ * their own entries, so the extension tracks them as clicks → "tunnel.status
+ * flipped to enabled" and exposes the results here.
+ */
+export type TunnelProviderIdShared = "cf-quick" | "ngrok" | "cf-named";
+
+export interface TunnelEnableRecord {
+  provider: TunnelProviderIdShared;
+  /** ISO timestamp when the user clicked Enable. */
+  startedAt: string;
+  /** Wall-clock ms between click and tunnel.status === "enabled" (or failure). */
+  durationMs: number;
+  /** false if the enable timed out, errored, or the user cancelled. */
+  ok: boolean;
+}
+
+export interface TunnelPerformanceMcpBucket {
+  /** 2xx responses. */
+  ok: number;
+  /** HTTP 401 (missing/invalid bearer or OAuth). */
+  unauthorized: number;
+  /** HTTP 5xx. */
+  serverError: number;
+  /** 4xx non-401, network errors, anything else. */
+  other: number;
+}
+
+export interface TunnelPerformanceSnapshot {
+  currentProvider: TunnelProviderIdShared | null;
+  /** Last N enable records across all providers, newest first. */
+  enableHistory: TunnelEnableRecord[];
+  /** Rolling average health-check latency over the last N /daemon/health hits (loopback only). */
+  healthLatencyAvgMs: number | null;
+  /** Count of samples that fed the average. 0 means "no data yet". */
+  healthLatencySamples: number;
+  /**
+   * /mcp request counts bucketed by the audit `source` field (loopback vs
+   * tunnel). The extension doesn't record WHICH provider served a given
+   * tunnel hit, so per-provider ratios are intentionally out of scope for v1
+   * — that would require a new persistent log.
+   */
+  mcpStatusBySource: Record<"loopback" | "tunnel", TunnelPerformanceMcpBucket>;
+  /** Total /mcp requests observed across the supplied audit window. */
+  mcpTotal: number;
+  /** Newest audit timestamp seen, or null if the window was empty. */
+  lastAuditTs: string | null;
+}
+
 export type TunnelProbeTarget = "/" | "/mcp";
 export type TunnelProbeVerdict = "ok" | "security-flag" | "challenge" | "retryable" | "unknown";
 
@@ -415,7 +467,11 @@ export type ExtensionMessage =
     }
   // Phase 8.6: transport picker outbound messages.
   | { type: "transport:capabilities"; payload: { byIde: Record<string, IdeCapabilities> } }
-  | { type: "transport:staleness"; payload: { stale: Array<{ ideTag: string; reason: "bearer" | "url" }> } };
+  | { type: "transport:staleness"; payload: { stale: Array<{ ideTag: string; reason: "bearer" | "url" }> } }
+  // v0.8.5: tunnel performance dashboard. Pushed from the extension host
+  // whenever `postDaemonState` runs (after staleness). Webview treats null as
+  // the pre-hydrate state and renders nothing.
+  | { type: "tunnel:performance"; payload: TunnelPerformanceSnapshot };
 
 export type WebviewMessage =
   | {

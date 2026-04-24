@@ -11,8 +11,10 @@ import {
   type DashboardState,
   type ExtensionMessage,
   type McpTransportId,
+  type TunnelPerformanceSnapshot,
   type TunnelProbeResult,
   type TunnelProbeTarget,
+  type TunnelProviderIdShared,
   type WebviewMessage
 } from "@perplexity-user-mcp/shared";
 import type { AuthManager, AuthState } from "../mcp/auth-manager.js";
@@ -36,6 +38,8 @@ import {
   type RegenerateStaleIdesDeps,
 } from "./staleness-auto-regen.js";
 import { handleTransportSelect } from "./transport-select-handler.js";
+import { TunnelEnableRecorder } from "./tunnel-enable-recorder.js";
+import { parseTunnelPerformance } from "./tunnel-performance.js";
 import { confirmTunnelSwitch } from "./tunnel-switch-confirm.js";
 import {
   handleCfNamedCreate,
@@ -119,6 +123,17 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
   // Cache the most-recent doctor report so "Report issue" can reuse it instead
   // of re-running all 10 checks. Cleared when the user clicks Run again.
   private lastDoctorReport: unknown = null;
+  // v0.8.5: session-local ring buffer of tunnel enable timings. Populated by
+  // the `daemon:enable-tunnel` handler (click-time timestamp) and finalised
+  // in `postDaemonState` when we observe tunnel.status === "enabled" for the
+  // first time after a click. Read back out via `postTunnelPerformance`.
+  private readonly enableRecorder = new TunnelEnableRecorder();
+  // Click-time metadata for an in-flight tunnel enable. `null` when no
+  // enable is pending. Set synchronously in the `daemon:enable-tunnel`
+  // handler before any await so the recorder sees a monotonic wall-clock.
+  private pendingTunnelEnable:
+    | { provider: TunnelProviderIdShared; startedAt: string; startPerf: number }
+    | null = null;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -868,6 +883,13 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
               break;
             }
 
+            // v0.8.5: start the perf timer only AFTER the user confirms. The
+            // modal open time is not a tunnel metric — it's UX time. We use
+            // performance.now() for duration (monotonic, immune to clock
+            // changes) and Date for the display timestamp.
+            const provider = getBundledActiveTunnelProvider();
+            const startPerf = performance.now();
+            const startedAt = new Date().toISOString();
             try {
               if (!isCloudflaredInstalled()) {
                 const installChoice = await vscode.window.showInformationMessage(
@@ -891,11 +913,23 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
                 );
               }
               await enableBundledDaemonTunnel();
+              this.enableRecorder.record({
+                provider,
+                startedAt,
+                durationMs: performance.now() - startPerf,
+                ok: true,
+              });
               await this.postDaemonState({ ensure: true, restartEvents: true });
               await this.postNotice("info", "Cloudflare Quick Tunnel enabled for the daemon.");
               await this.postActionResult(message.id, true);
             } catch (err) {
               const message_ = (err as Error).message;
+              this.enableRecorder.record({
+                provider,
+                startedAt,
+                durationMs: performance.now() - startPerf,
+                ok: false,
+              });
               await this.postNotice("error", `Tunnel enable failed: ${message_}`);
               await this.postActionResult(message.id, false, message_);
             }
@@ -1752,6 +1786,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       await this.postTunnelProviders();
       await this.postOAuthClients();
       await this.postStaleness(status);
+      await this.postTunnelPerformance();
 
       if (options.restartEvents && status.running && status.healthy) {
         await this.startDaemonEventStream();
@@ -2033,6 +2068,47 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
   async reveal(): Promise<void> {
     await vscode.commands.executeCommand(`workbench.view.extension.${EXTENSION_ID}`);
     await vscode.commands.executeCommand(`${EXTENSION_ID}.dashboard.focus`);
+  }
+
+  /**
+   * v0.8.5: compute and post a tunnel-performance snapshot to the webview.
+   * Combines the audit-derived slice (health latency + /mcp status ratios)
+   * with the session-local enable-timing ring buffer. Best-effort — audit
+   * read failures or parser glitches must not break the rest of the daemon
+   * state flow, so we swallow + debug-log here.
+   */
+  private async postTunnelPerformance(): Promise<void> {
+    if (!this.view) return;
+    try {
+      // Pull a larger window than the webview's audit-tail slice so the /mcp
+      // ratios have meaningful denominators even when the user has been idle
+      // for a while. 200 is a compromise — read cost is bounded by the
+      // 10 MB audit log cap configured in the daemon.
+      const auditTail = readBundledDaemonAuditTail(200) as DaemonAuditEntry[];
+      const currentProvider = getBundledActiveTunnelProvider() as TunnelProviderIdShared;
+      const base = parseTunnelPerformance(auditTail, currentProvider);
+      const snapshot: TunnelPerformanceSnapshot = {
+        ...base,
+        // Enable history comes from the extension-host ring buffer, not the
+        // audit log. See TunnelEnableRecorder for rationale.
+        enableHistory: this.enableRecorder.snapshot().slice(),
+      };
+      await this.view.webview.postMessage({
+        type: "tunnel:performance",
+        payload: snapshot,
+      } satisfies ExtensionMessage);
+      debug(
+        `[perf] posted enableHistory=${snapshot.enableHistory.length} health-avg=${
+          snapshot.healthLatencyAvgMs ?? "n/a"
+        }ms mcp-total=${snapshot.mcpTotal}`,
+      );
+    } catch (err) {
+      debug(
+        `[perf] postTunnelPerformance failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 }
 
