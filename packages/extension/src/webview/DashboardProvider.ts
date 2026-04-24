@@ -17,7 +17,6 @@ import type { AuthManager, AuthState } from "../mcp/auth-manager.js";
 import {
   getIdeStatuses,
   removeTarget,
-  configureTargets,
   syncRulesForIde,
   removeRulesForIde,
   getRulesStatuses
@@ -222,7 +221,14 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             try {
               const settings = getSettingsSnapshot();
               debug(`configs:generate target=${message.payload.target} launcherPath=${LAUNCHER_PATH}`);
-              configureTargets(message.payload.target as IdeTarget | "all", LAUNCHER_PATH, settings.chromePath);
+              // DashboardProvider doesn't own the deps factory (that lives in
+              // extension.ts with workspaceState access). For the webview-driven
+              // regenerate we defer to the command so the same deps apply.
+              await vscode.commands.executeCommand(
+                "Perplexity.generateConfigs",
+                message.payload.target
+              );
+              void settings;
               await this.postNotice("info", `MCP config written for ${message.payload.target === "all" ? "all IDEs" : message.payload.target}.`);
               await this.refresh();
               await this.postActionResult(message.id, true);

@@ -35,7 +35,8 @@
     "onCommand:Perplexity.switchAccount",
     "onCommand:Perplexity.addAccount",
     "onCommand:Perplexity.captureDiagnostics",
-    "onCommand:Perplexity.regenerateStaleConfigs"
+    "onCommand:Perplexity.regenerateStaleConfigs",
+    "onCommand:Perplexity.resetTransportConfirmations"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -158,6 +159,11 @@
       {
         "command": "Perplexity.regenerateStaleConfigs",
         "title": "Perplexity: Regenerate Stale Configs",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.resetTransportConfirmations",
+        "title": "Perplexity: Reset Per-IDE Transport Confirmations",
         "category": "Perplexity"
       }
     ],

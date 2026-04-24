@@ -2,14 +2,15 @@ import * as crypto from "node:crypto";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { MCP_PROVIDER_ID, MCP_SERVER_LABEL, type ExportFormat, type IdeTarget } from "@perplexity-user-mcp/shared";
+import { MCP_PROVIDER_ID, MCP_SERVER_LABEL, type ExportFormat, type IdeTarget, type McpTransportId } from "@perplexity-user-mcp/shared";
 import { getActiveName, getProfile, listProfiles, setActive, createProfile } from "perplexity-user-mcp/profiles";
 import { runDoctor } from "perplexity-user-mcp";
 import { redactMessage } from "./redact.js";
 import { OutputRingBuffer } from "./diagnostics/output-buffer.js";
 import { captureDiagnostics } from "./diagnostics/capture.js";
 import { runDiagnosticsCaptureFlow } from "./diagnostics/flow.js";
-import { configureTargets, getIdeStatuses } from "./auto-config/index.js";
+import { configureTargets, getIdeStatuses, type ApplyIdeConfigDeps } from "./auto-config/index.js";
+import { spawnSync } from "node:child_process";
 import { hasStoredLogin } from "./auth/session.js";
 import { getSettingsSnapshot } from "./settings.js";
 import { DashboardProvider } from "./webview/DashboardProvider.js";
@@ -18,8 +19,10 @@ import {
   configureDaemonRuntime,
   disableBundledDaemonTunnel,
   ensureBundledDaemon,
+  getBundledActiveTunnelProvider,
   getBundledDaemonConfigDir,
   getBundledDaemonStatus,
+  getBundledNgrokSettings,
   rotateBundledDaemonToken,
 } from "./daemon/runtime.js";
 import { listHistoryEntries, rebuildHistoryEntries, runCloudSync, runExport } from "./history/open-handlers.js";
@@ -136,6 +139,205 @@ function getServerEnvironment(settings: ReturnType<typeof getSettingsSnapshot>, 
   return env;
 }
 
+const TRANSPORT_CONFIRM_STATE_KEY = "mcpTransportConfirmed";
+// Per-session "we already nudged you about port pinning" guard. Reset on each
+// extension activation — the idea is one nudge per user-visible session, not
+// one nudge forever (users may decide to pin after ignoring the first prompt).
+let portPinNudgedThisSession = false;
+
+async function buildApplyIdeConfigDeps(
+  context: vscode.ExtensionContext
+): Promise<ApplyIdeConfigDeps> {
+  const settings = getSettingsSnapshot();
+
+  return {
+    confirmTransport: async ({ ideTag, transportId, configPath }) => {
+      const stored = context.workspaceState.get<Record<string, boolean>>(
+        TRANSPORT_CONFIRM_STATE_KEY,
+        {}
+      );
+      const pairKey = `${ideTag}:${transportId}`;
+      if (stored[pairKey]) return true;
+
+      const choice = await vscode.window.showWarningMessage(
+        `Configure ${ideTag} to use the "${transportId}" MCP transport?`,
+        {
+          modal: true,
+          detail: `Config file: ${configPath}`,
+        },
+        "Configure",
+        "Cancel"
+      );
+      if (choice !== "Configure") return false;
+
+      const next = { ...stored, [pairKey]: true };
+      await context.workspaceState.update(TRANSPORT_CONFIRM_STATE_KEY, next);
+      return true;
+    },
+
+    warnSyncFolder: async ({ configPath, matchedPattern }) => {
+      const choice = await vscode.window.showWarningMessage(
+        `Perplexity config path appears to be in a sync folder (${matchedPattern}).`,
+        {
+          modal: true,
+          detail:
+            `Writing a secret here will propagate to every device on the sync account. ` +
+            `Path: ${configPath}`,
+        },
+        "Override at my own risk",
+        "Cancel"
+      );
+      return choice === "Override at my own risk" ? "override" : "cancel";
+    },
+
+    nudgePortPin: ({ ideTag }) => {
+      if (portPinNudgedThisSession) return;
+      portPinNudgedThisSession = true;
+      void vscode.window
+        .showInformationMessage(
+          `http-loopback configs embed the port; this config for ${ideTag} will break when the daemon restarts on a new port. Pin Perplexity.daemonPort?`,
+          "Pin a port now"
+        )
+        .then((choice) => {
+          if (choice !== "Pin a port now") return;
+          void vscode.workspace
+            .getConfiguration("Perplexity")
+            .update("daemonPort", 49217, vscode.ConfigurationTarget.Global);
+        });
+    },
+
+    auditGenerated: (entry) => {
+      log(
+        `[auto-config:audit] ide=${entry.ideTag} transport=${entry.transportId} ` +
+          `bearer=${entry.bearerKind} result=${entry.resultCode} path=${entry.configPath}`
+      );
+    },
+
+    // The mcp-server daemon subpath is ESM-only — a sync require() in the
+    // extension's CJS bundle would either fail at bundle-time (tsup can't
+    // inline import-only exports) or at runtime. Real wiring happens in
+    // buildApplyIdeConfigDepsLive() below via a pre-awaited dynamic import,
+    // so this default is a safety net for any codepath that bypasses the
+    // async builder.
+    issueLocalToken: (_input) => {
+      throw new Error(
+        "issueLocalToken helper not yet wired at this entry point. Call buildApplyIdeConfigDepsLive first."
+      );
+    },
+
+    getDaemonPort: () => {
+      // Fetch synchronously: `configureTargets` awaits one IDE at a time, so
+      // a snapshot-per-dispatch is acceptable. We cache nothing — the port can
+      // change if the daemon restarts between dispatches.
+      try {
+        // Synchronous equivalent: readTunnelSettings etc. are sync; the full
+        // status getter is async and safe to await, so do that in the caller.
+        return null;
+      } catch {
+        return null;
+      }
+    },
+
+    getActiveTunnel: () => null,
+
+    syncFolderPatterns: settings.syncFolderPatterns,
+
+    homeDir: () => os.homedir(),
+
+    isGitTracked: (dir: string) => {
+      try {
+        const result = spawnSync(
+          "git",
+          ["-C", dir, "rev-parse", "--show-toplevel"],
+          {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: 500,
+            windowsHide: true,
+          }
+        );
+        return (
+          result.status === 0 &&
+          typeof result.stdout === "string" &&
+          result.stdout.trim().length > 0
+        );
+      } catch {
+        return false;
+      }
+    },
+  };
+}
+
+/**
+ * Build deps with an async-sourced live daemon snapshot. `getDaemonPort` and
+ * `getActiveTunnel` must return synchronously (builders don't await), so the
+ * caller awaits the daemon status once, then closes over it.
+ */
+async function buildApplyIdeConfigDepsLive(
+  context: vscode.ExtensionContext
+): Promise<ApplyIdeConfigDeps> {
+  const base = await buildApplyIdeConfigDeps(context);
+
+  let daemonPort: number | null = null;
+  let activeTunnel: {
+    providerId: "cf-quick" | "ngrok" | "cf-named";
+    url: string;
+    reservedDomain: boolean;
+  } | null = null;
+
+  try {
+    const status = await getBundledDaemonStatus();
+    daemonPort = status.health?.port ?? status.record?.port ?? null;
+    const tunnelUrl = status.health?.tunnel?.url ?? status.record?.tunnelUrl ?? null;
+    const tunnelStatus = status.health?.tunnel?.status ?? null;
+    if (tunnelUrl && tunnelStatus === "enabled") {
+      const providerId = getBundledActiveTunnelProvider();
+      const ngrok = getBundledNgrokSettings();
+      const reservedDomain = providerId === "ngrok" && Boolean(ngrok.domain);
+      activeTunnel = {
+        providerId,
+        url: tunnelUrl,
+        reservedDomain,
+      };
+    }
+  } catch {
+    // Leave port/tunnel at null — builders will throw StabilityGateError on
+    // the relevant transports, which applyIdeConfig maps to "tunnel-unstable".
+  }
+
+  // Resolve the local-token issuer up front. `perplexity-user-mcp/daemon`
+  // is import-only; doing the dynamic import at deps-build time lets the
+  // returned synchronous closure satisfy the builder's sync contract.
+  let issueLocalTokenFn:
+    | ((input: { ideTag: string; label: string }) => { token: string; metadata: { id: string } })
+    | null = null;
+  try {
+    const mod = (await import("perplexity-user-mcp/daemon")) as unknown as {
+      issueLocalToken?: (args: { ideTag: string; label: string }) => {
+        token: string;
+        metadata: { id: string };
+      };
+    };
+    if (typeof mod.issueLocalToken === "function") {
+      issueLocalTokenFn = mod.issueLocalToken;
+    }
+  } catch (err) {
+    // Local tokens are only needed for the http-loopback bearer fallback
+    // branch, which no current IDE capability flag enables. A missing helper
+    // is fine until 8.6.5 lights up that path on a smoke-verified IDE.
+    debug(`issueLocalToken dynamic import skipped: ${(err as Error).message}`);
+  }
+
+  return {
+    ...base,
+    getDaemonPort: () => daemonPort,
+    getActiveTunnel: () => activeTunnel,
+    ...(issueLocalTokenFn
+      ? { issueLocalToken: issueLocalTokenFn }
+      : {}),
+  };
+}
+
 async function maybePromptAutoConfiguration(
   context: vscode.ExtensionContext,
   dashboard: DashboardProvider,
@@ -177,7 +379,16 @@ async function maybePromptAutoConfiguration(
     return;
   }
 
-  configureTargets("all", launcherPath, settings.chromePath);
+  const deps = await buildApplyIdeConfigDepsLive(context);
+  const outcome = await configureTargets("all", launcherPath, settings.chromePath, {
+    transportByIde: settings.mcpTransportByIde as Partial<Record<IdeTarget, McpTransportId>>,
+    deps,
+  });
+  for (const { target, result } of outcome.results) {
+    if (!result.ok) {
+      log(`[auto-config] ${target}: ${result.reason} — ${result.message}`);
+    }
+  }
   await dashboard.refresh();
 }
 
@@ -650,9 +861,37 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
       "Perplexity.generateConfigs",
       async (target: string = "all") => {
         const settings = getSettingsSnapshot();
-        configureTargets(target as IdeTarget | "all", launcherPath, settings.chromePath);
+        const deps = await buildApplyIdeConfigDepsLive(context);
+        const outcome = await configureTargets(
+          target as IdeTarget | "all",
+          launcherPath,
+          settings.chromePath,
+          {
+            transportByIde: settings.mcpTransportByIde as Partial<Record<IdeTarget, McpTransportId>>,
+            deps,
+          }
+        );
+        for (const { target: t, result } of outcome.results) {
+          if (!result.ok) {
+            log(`[auto-config] ${t}: ${result.reason} — ${result.message}`);
+          }
+        }
         await dashboard.refresh();
         await dashboard.postNotice("info", "External MCP configuration files refreshed.");
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "Perplexity.resetTransportConfirmations",
+      async () => {
+        await context.workspaceState.update(TRANSPORT_CONFIRM_STATE_KEY, {});
+        portPinNudgedThisSession = false;
+        void vscode.window.showInformationMessage(
+          "Per-IDE transport confirmations reset."
+        );
+        return true;
       }
     )
   );

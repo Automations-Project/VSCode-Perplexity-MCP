@@ -1,24 +1,34 @@
+import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   statSync,
   writeFileSync
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import {
   IDE_METADATA,
+  MCP_TRANSPORT_DEFAULT,
   PERPLEXITY_MCP_SERVER_KEY,
   PERPLEXITY_RULES_SECTION_START,
   PERPLEXITY_RULES_SECTION_END,
   type IdeStatus,
   type IdeTarget,
+  type McpTransportId,
   type RulesStatus
 } from "@perplexity-user-mcp/shared";
 import { checkLauncherHealth } from "../launcher/write-launcher.js";
+import {
+  getTransportBuilder,
+  StabilityGateError,
+  type McpServerEntry,
+} from "./transports/index.js";
 
 interface McpConfigFile {
   mcpServers?: Record<string, unknown>;
@@ -32,7 +42,77 @@ export interface IdeConfigOptions {
   configPath?: string;
   nodePath?: string;
   serverName?: string;
+  // Phase 8.6.4: transport picker. `undefined` defaults to the workspace-wide
+  // MCP_TRANSPORT_DEFAULT so callers pre-dating the picker keep working.
+  transportId?: McpTransportId;
 }
+
+/**
+ * Phase 8.6.4 dispatch dependencies. All fields optional — omitted defaults
+ * are safe-for-tests (no real VS Code, no real git spawn, no prompts) so any
+ * call site that passes `undefined` won't accidentally reach out to the host.
+ */
+export interface ApplyIdeConfigDeps {
+  confirmTransport?: (args: {
+    ideTag: IdeTarget;
+    transportId: McpTransportId;
+    configPath: string;
+  }) => Promise<boolean>;
+  warnSyncFolder?: (args: {
+    configPath: string;
+    matchedPattern: string;
+  }) => Promise<"override" | "cancel">;
+  nudgePortPin?: (args: { ideTag: IdeTarget }) => void;
+  auditGenerated?: (entry: {
+    ideTag: IdeTarget;
+    transportId: McpTransportId;
+    configPath: string;
+    bearerKind: "none" | "local";
+    resultCode:
+      | "ok"
+      | "rejected-unsupported"
+      | "rejected-sync"
+      | "rejected-tunnel-unstable"
+      | "rejected-cancelled"
+      | "rejected-port-unavailable"
+      | "error";
+    ts: string;
+  }) => void;
+  issueLocalToken?: (input: { ideTag: string; label: string }) => {
+    token: string;
+    metadata: { id: string };
+  };
+  getDaemonPort?: () => number | null;
+  getActiveTunnel?: () => {
+    providerId: "cf-quick" | "ngrok" | "cf-named";
+    url: string;
+    reservedDomain: boolean;
+  } | null;
+  syncFolderPatterns?: readonly string[];
+  homeDir?: () => string;
+  isGitTracked?: (dir: string) => boolean;
+}
+
+export type ApplyIdeConfigResult =
+  | {
+      ok: true;
+      path: string;
+      bearerKind: "none" | "local";
+      transportId: McpTransportId;
+      warnings: string[];
+    }
+  | {
+      ok: false;
+      reason:
+        | "unsupported"
+        | "cancelled"
+        | "sync-folder"
+        | "tunnel-unstable"
+        | "port-unavailable"
+        | "error";
+      message: string;
+      transportId: McpTransportId;
+    };
 
 export function getIdeConfigPath(target: IdeTarget, options?: { homeDir?: string; platform?: NodeJS.Platform }): string {
   const home = options?.homeDir ?? homedir();
@@ -321,38 +401,480 @@ function writeJsonAtomic(configPath: string, data: McpConfigFile): void {
   renameSync(tempPath, configPath);
 }
 
-export function applyIdeConfig(options: IdeConfigOptions): string {
-  const meta = IDE_METADATA[options.target];
-  if (!meta?.autoConfigurable) {
-    throw new Error(`${options.target} does not support automatic MCP configuration.`);
-  }
-
-  const configPath = options.configPath ?? getIdeConfigPath(options.target);
+/**
+ * Phase 8.6.4 dispatch pipeline. The pre-phase applyIdeConfig synchronously
+ * merged a fixed stdio server entry; this version routes through the transport
+ * registry with H3–H8 security prechecks (capability gate, sync-folder detection,
+ * confirmation modal, port-pin nudge, sanitized .bak, audit sink). Callers that
+ * used the v1 sync signature must migrate to `await`; tests silently accept
+ * via the injectable `deps` defaults.
+ */
+export async function applyIdeConfig(
+  options: IdeConfigOptions,
+  deps: ApplyIdeConfigDeps = {}
+): Promise<ApplyIdeConfigResult> {
+  const target = options.target;
+  const transportId: McpTransportId = options.transportId ?? MCP_TRANSPORT_DEFAULT;
+  const meta = IDE_METADATA[target];
+  const configPath = options.configPath ?? getIdeConfigPath(target);
   const serverName = options.serverName ?? PERPLEXITY_MCP_SERVER_KEY;
-  const serverConfig = buildServerConfig(options.serverPath, {
-    nodePath: options.nodePath,
-    chromePath: options.chromePath
+  const homeDir = deps.homeDir ?? (() => homedir());
+  const auditSink = deps.auditGenerated ?? (() => {});
+  const confirm = deps.confirmTransport ?? (async () => true);
+  const warnSync = deps.warnSyncFolder ?? (async () => "cancel" as const);
+  const nudgePort = deps.nudgePortPin ?? (() => {});
+  const getDaemonPort = deps.getDaemonPort ?? (() => null);
+  const getActiveTunnel = deps.getActiveTunnel ?? (() => null);
+  const syncFolderPatterns = deps.syncFolderPatterns ?? [];
+  const isGitTracked = deps.isGitTracked ?? defaultIsGitTracked;
+  const issueLocalToken = deps.issueLocalToken ?? defaultIssueLocalToken;
+
+  const audit = (
+    resultCode: Parameters<NonNullable<ApplyIdeConfigDeps["auditGenerated"]>>[0]["resultCode"],
+    bearerKind: "none" | "local"
+  ): void => {
+    auditSink({
+      ideTag: target,
+      transportId,
+      configPath: redactHome(configPath, homeDir()),
+      bearerKind,
+      resultCode,
+      ts: new Date().toISOString(),
+    });
+  };
+
+  if (!meta) {
+    const message = `Unknown IDE target "${target}".`;
+    audit("rejected-unsupported", "none");
+    return { ok: false, reason: "unsupported", message, transportId };
+  }
+
+  // H3 guard — legacy callers relied on `autoConfigurable` as a whole-IDE gate.
+  // Keep respecting it: if the IDE isn't auto-configurable at all, refuse.
+  if (!meta.autoConfigurable) {
+    const message = `${meta.displayName} does not support automatic MCP configuration.`;
+    audit("rejected-unsupported", "none");
+    return { ok: false, reason: "unsupported", message, transportId };
+  }
+
+  // H3 — capability gate. Each transport maps to one or more capability flags.
+  // No flag is ever flipped `true` without smoke evidence (see shared/constants.ts).
+  const caps = meta.capabilities;
+  const capabilityOk =
+    transportId === "stdio-in-process" || transportId === "stdio-daemon-proxy"
+      ? caps.stdio
+      : transportId === "http-loopback"
+        ? caps.httpOAuthLoopback || caps.httpBearerLoopback
+        : transportId === "http-tunnel"
+          ? caps.httpOAuthTunnel
+          : false;
+  if (!capabilityOk) {
+    const message =
+      `${meta.displayName} does not support transport ${transportId}. ` +
+      `Enable the capability in constants.ts (requires smoke evidence).`;
+    audit("rejected-unsupported", "none");
+    return { ok: false, reason: "unsupported", message, transportId };
+  }
+
+  // Format gate. TOML-only clients (Codex CLI) can't ingest http transports
+  // whose builders only emit JSON { url, headers }.
+  const builder = getTransportBuilder(transportId);
+  const configFormat = meta.configFormat;
+  if (configFormat !== "json" && configFormat !== "toml") {
+    // Non-JSON/TOML formats (yaml, ui-only) are outside 8.6.4 scope.
+    const message = `${meta.displayName} config format "${configFormat}" is not supported by transport ${transportId}.`;
+    audit("rejected-unsupported", "none");
+    return { ok: false, reason: "unsupported", message, transportId };
+  }
+  if (!builder.supportedFormats.includes(configFormat)) {
+    const message = `Transport ${transportId} cannot emit ${configFormat} (supported: ${builder.supportedFormats.join(", ")}).`;
+    audit("rejected-unsupported", "none");
+    return { ok: false, reason: "unsupported", message, transportId };
+  }
+
+  // Decide bearer fate BEFORE any prompt so the sync-folder warning below
+  // can accurately skip for the no-secret-written paths.
+  const bearerKind: "none" | "local" =
+    transportId === "http-loopback" &&
+    caps.httpOAuthLoopback === false &&
+    caps.httpBearerLoopback === true
+      ? "local"
+      : "none";
+
+  // H4 — sync-folder detection. Only the http-loopback bearer-fallback branch
+  // actually writes a secret to disk; stdio stores no secret at all, and
+  // http-tunnel intentionally refuses to bake a bearer into a public-URL config.
+  const syncFolderApplies =
+    transportId === "http-loopback" && bearerKind === "local";
+  if (syncFolderApplies) {
+    const match = detectSyncFolder(
+      configPath,
+      syncFolderPatterns,
+      isGitTracked
+    );
+    if (match) {
+      const decision = await warnSync({
+        configPath,
+        matchedPattern: match,
+      });
+      if (decision === "cancel") {
+        audit("rejected-sync", bearerKind);
+        return {
+          ok: false,
+          reason: "sync-folder",
+          message: `Config path is inside a sync folder (${match}). Writing a bearer here would propagate the secret. Cancelled.`,
+          transportId,
+        };
+      }
+    }
+  }
+
+  // H5 — first-time confirmation modal. Default accepts in tests; caller in
+  // extension.ts wires the real VS Code prompt and remembers per-pair acceptance.
+  const accepted = await confirm({
+    ideTag: target,
+    transportId,
+    configPath,
   });
-
-  if (existsSync(configPath)) {
-    copyFileSync(configPath, `${configPath}.bak`);
+  if (!accepted) {
+    audit("rejected-cancelled", bearerKind);
+    return {
+      ok: false,
+      reason: "cancelled",
+      message: "User cancelled the transport confirmation.",
+      transportId,
+    };
   }
 
-  if (meta.configFormat === "toml") {
-    // TOML format (Codex CLI)
-    const existing = readTomlFile(configPath);
-    const merged = mergeTomlMcpServer(existing, serverName, serverConfig);
-    mkdirSync(dirname(configPath), { recursive: true });
-    writeFileSync(configPath, merged, "utf8");
-  } else {
-    // JSON format (all other IDEs)
-    const existingConfig = readExistingConfig(configPath);
-    const mergedConfig = mergeMcpConfig(existingConfig, serverName, serverConfig);
-    writeJsonAtomic(configPath, mergedConfig);
+  // H6 — port-pin nudge. The caller uses workspace state to only call this
+  // once per session; here we only fire when the builder is actually going to
+  // bake the port into a config and the port is ephemeral (0 ⇒ OS-assigned).
+  if (transportId === "http-loopback" && getDaemonPort() === 0) {
+    try {
+      nudgePort({ ideTag: target });
+    } catch {
+      // Non-blocking by contract. Ignore handler failures.
+    }
   }
 
-  return configPath;
+  // Issue the local token AFTER confirmation (don't mint a secret we may throw
+  // away) and BEFORE the builder runs (builder needs the token in its input).
+  let localToken: string | undefined;
+  if (bearerKind === "local") {
+    try {
+      const result = issueLocalToken({
+        ideTag: target,
+        label: meta.displayName,
+      });
+      localToken = result.token;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      audit("error", bearerKind);
+      return {
+        ok: false,
+        reason: "error",
+        message,
+        transportId,
+      };
+    }
+  }
+
+  const activeTunnel = getActiveTunnel();
+
+  let entry: McpServerEntry;
+  try {
+    entry = builder.build({
+      launcherPath: options.serverPath,
+      daemonPort: getDaemonPort() ?? null,
+      tunnelUrl: activeTunnel?.url ?? null,
+      tunnelProviderId: activeTunnel?.providerId ?? null,
+      tunnelReservedDomain: activeTunnel?.reservedDomain ?? false,
+      bearerKind,
+      ...(localToken !== undefined ? { localToken } : {}),
+      ...(options.chromePath !== undefined ? { chromePath: options.chromePath } : {}),
+      ...(options.nodePath !== undefined ? { nodePath: options.nodePath } : {}),
+    });
+  } catch (err) {
+    if (err instanceof StabilityGateError) {
+      audit("rejected-tunnel-unstable", bearerKind);
+      return {
+        ok: false,
+        reason: "tunnel-unstable",
+        message: err.reason,
+        transportId,
+      };
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    audit("error", bearerKind);
+    return { ok: false, reason: "error", message, transportId };
+  }
+
+  // H3 — sanitized .bak + atomic write.
+  const hadExisting = existsSync(configPath);
+  let bakPath: string | null = null;
+  if (hadExisting) {
+    bakPath = `${configPath}.bak`;
+    try {
+      const raw = readFileSync(configPath, "utf8");
+      const sanitized = sanitizeConfigForBackup(raw, configFormat);
+      writeFileSync(bakPath, sanitized, { encoding: "utf8", mode: 0o600 });
+      applyPrivatePermissions(bakPath);
+    } catch (err) {
+      // If we can't even read the existing file, surface a structured error
+      // rather than silently clobbering it.
+      const message = err instanceof Error ? err.message : String(err);
+      audit("error", bearerKind);
+      return { ok: false, reason: "error", message, transportId };
+    }
+  }
+
+  try {
+    if (configFormat === "toml") {
+      const existing = readTomlFile(configPath);
+      const merged = mergeTomlMcpServer(
+        existing,
+        serverName,
+        entry as Record<string, unknown>
+      );
+      writeTextAtomic(configPath, merged);
+    } else {
+      const existingConfig = readExistingConfig(configPath);
+      const mergedConfig = mergeMcpConfig(
+        existingConfig,
+        serverName,
+        entry as Record<string, unknown>
+      );
+      writeJsonAtomic(configPath, mergedConfig);
+    }
+  } catch (err) {
+    // H3 rollback — restore the sanitized .bak over target then remove it.
+    if (bakPath && existsSync(bakPath)) {
+      try {
+        copyFileSync(bakPath, configPath);
+        rmSync(bakPath, { force: true });
+      } catch {
+        // Best-effort rollback; surface the original error.
+      }
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    audit("error", bearerKind);
+    return { ok: false, reason: "error", message, transportId };
+  }
+
+  // Success — clean up .bak. A stale .bak on disk is a weaker redaction target
+  // than a freshly-written one; deleting keeps the blast radius minimal.
+  if (bakPath && existsSync(bakPath)) {
+    try {
+      rmSync(bakPath, { force: true });
+    } catch {
+      // Best-effort cleanup only.
+    }
+  }
+
+  audit("ok", bearerKind);
+  return {
+    ok: true,
+    path: configPath,
+    bearerKind,
+    transportId,
+    warnings: [],
+  };
 }
+
+function redactHome(p: string, home: string): string {
+  if (!home) return p;
+  // Case-sensitive normalize on POSIX; case-insensitive on Windows where
+  // file paths are not case-sensitive in practice.
+  const norm = (s: string) => (process.platform === "win32" ? s.toLowerCase() : s);
+  const normP = norm(p);
+  const normHome = norm(home);
+  if (normP === normHome) return "~";
+  if (normP.startsWith(normHome + "/") || normP.startsWith(normHome + "\\")) {
+    return "~" + p.slice(home.length);
+  }
+  return p;
+}
+
+const SYNC_FOLDER_BUILTIN = /^(icloud|onedrive|dropbox|google\s*drive|syncthing|pcloud)/i;
+
+function detectSyncFolder(
+  configPath: string,
+  userPatterns: readonly string[],
+  isGitTracked: (dir: string) => boolean
+): string | null {
+  // Walk ancestor directory names for the built-in sync-folder name list.
+  const parts = configPath.split(/[\\/]/).filter((s) => s.length > 0);
+  for (const part of parts) {
+    if (SYNC_FOLDER_BUILTIN.test(part)) {
+      const m = part.match(SYNC_FOLDER_BUILTIN);
+      return m ? normalizeMatch(m[0]) : part;
+    }
+  }
+
+  // Git-tracked check — only the containing directory, not the whole tree.
+  try {
+    const parent = dirname(configPath);
+    if (isGitTracked(parent)) {
+      return "git-tracked";
+    }
+  } catch {
+    // Never let git detection failures leak through as a false positive.
+  }
+
+  // User-supplied regex patterns. Invalid regexes are ignored silently — the
+  // settings UI may predate validation, and a broken pattern shouldn't DOS the
+  // entire config-generate flow.
+  for (const raw of userPatterns) {
+    if (typeof raw !== "string" || raw.length === 0) continue;
+    let re: RegExp;
+    try {
+      re = new RegExp(raw, "i");
+    } catch {
+      continue;
+    }
+    if (re.test(configPath)) {
+      return raw;
+    }
+  }
+
+  return null;
+}
+
+function normalizeMatch(raw: string): string {
+  const t = raw.trim().toLowerCase();
+  if (t.startsWith("icloud")) return "iCloud";
+  if (t.startsWith("onedrive")) return "OneDrive";
+  if (t.startsWith("dropbox")) return "Dropbox";
+  if (t.startsWith("google")) return "Google Drive";
+  if (t.startsWith("syncthing")) return "Syncthing";
+  if (t.startsWith("pcloud")) return "pCloud";
+  return raw;
+}
+
+// Keys redacted case-insensitively anywhere in the tree. "Authorization" is
+// separate from "bearerToken"/"token" because some clients write it nested
+// under `headers`; the scanner visits both shapes.
+const REDACT_KEYS = new Set(["bearertoken", "token", "secret", "authorization"]);
+const LOCAL_TOKEN_RE = /^pplx_(local|at|rt|ac)_/;
+
+function sanitizeConfigForBackup(raw: string, format: "json" | "toml"): string {
+  if (format === "json") {
+    try {
+      const parsed = JSON.parse(raw);
+      return JSON.stringify(redactTree(parsed), null, 2) + "\n";
+    } catch {
+      // If existing file was non-JSON garbage, write a regex-scrubbed copy so
+      // we never persist a plaintext bearer in the .bak even on malformed input.
+      return scrubTextBearer(raw);
+    }
+  }
+  // TOML — regex-scrub. We don't round-trip-parse TOML here.
+  return scrubTextBearer(raw);
+}
+
+function scrubTextBearer(raw: string): string {
+  return raw
+    .replace(/Bearer\s+[A-Za-z0-9._\-+/=]+/g, "Bearer <redacted>")
+    .replace(/pplx_(local|at|rt|ac)_[A-Za-z0-9_\-]+/g, "<redacted>");
+}
+
+function redactTree(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(redactTree);
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (REDACT_KEYS.has(k.toLowerCase())) {
+        out[k] = "<redacted>";
+        continue;
+      }
+      out[k] = redactTree(v);
+    }
+    return out;
+  }
+  if (typeof value === "string") {
+    if (LOCAL_TOKEN_RE.test(value) || /\bBearer\s+/i.test(value)) {
+      return "<redacted>";
+    }
+  }
+  return value;
+}
+
+function writeTextAtomic(configPath: string, data: string): void {
+  mkdirSync(dirname(configPath), { recursive: true });
+  const tempPath = `${configPath}.tmp`;
+  writeFileSync(tempPath, data, { encoding: "utf8", mode: 0o600 });
+  renameSync(tempPath, configPath);
+}
+
+// Inlined from daemon/local-tokens.ts / daemon/token.ts — see 8.6.1 note:
+// both security-critical files duplicate this helper so a future refactor of
+// one can never silently weaken the other.
+function applyPrivatePermissions(path: string): void {
+  if (process.platform === "win32") {
+    restrictWindowsAcl(path);
+    return;
+  }
+  chmodSync(path, 0o600);
+}
+
+function restrictWindowsAcl(path: string): void {
+  const username = getWindowsUserName();
+  if (!username) return;
+  const grantTarget = `${username}:(R,W)`;
+  spawnSync("icacls", [path, "/inheritance:r", "/grant:r", grantTarget], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  // Best-effort: we don't fail the whole apply on icacls failure. The file is
+  // already written atomically; ACL is belt-and-suspenders for .bak only.
+}
+
+function getWindowsUserName(): string | null {
+  const username = process.env.USERNAME;
+  const domain = process.env.USERDOMAIN;
+  if (domain && username) return `${domain}\\${username}`;
+  if (username) return username;
+  return null;
+}
+
+function defaultIsGitTracked(dir: string): boolean {
+  // Silent failure on any error — git may be missing, the directory may not
+  // exist, or it may not be a repo. None of those are sync-folder signals.
+  try {
+    const result = spawnSync("git", ["-C", dir, "rev-parse", "--show-toplevel"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 500,
+      windowsHide: true,
+    });
+    return result.status === 0 && typeof result.stdout === "string" && result.stdout.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+// The default tries a dynamic import of the shared daemon entry. Because
+// `issueLocalToken` may not be re-exported on every build, the caller in
+// extension.ts is expected to inject a concrete `deps.issueLocalToken`.
+// Keep this synchronous: `await` would force every applyIdeConfig call to
+// pay the cost of an import even when bearerKind is "none".
+function defaultIssueLocalToken(_input: { ideTag: string; label: string }): {
+  token: string;
+  metadata: { id: string };
+} {
+  // The only path that reaches this is when caps.httpBearerLoopback === true.
+  // As of 8.6.4 no IDE has that flag set, so the error here is a safety net
+  // for future capability-flag flips that forget to inject the real helper.
+  throw new Error(
+    "issueLocalToken helper not injected — pass deps.issueLocalToken or do not select http-loopback bearer fallback."
+  );
+}
+
+// Sep is imported for potential future cross-platform path normalizers. A
+// static reference keeps the import from being tree-shaken by the bundler.
+void sep;
 
 export function removeIdeConfig(target: IdeTarget, options?: { configPath?: string; serverName?: string }): void {
   const meta = IDE_METADATA[target];
@@ -468,25 +990,62 @@ const AUTO_CONFIGURABLE_IDES: IdeTarget[] = [
   "cursor", "windsurf", "windsurfNext", "claudeDesktop", "claudeCode", "codexCli", "cline", "amp"
 ];
 
-export function configureTargets(
+export interface ConfigureTargetsOptions {
+  transportByIde?: Partial<Record<IdeTarget, McpTransportId>>;
+  deps?: ApplyIdeConfigDeps;
+}
+
+export async function configureTargets(
   target: IdeTarget | "all",
   serverPath: string,
-  chromePath?: string
-): Record<string, IdeStatus> {
+  chromePath?: string,
+  options?: ConfigureTargetsOptions
+): Promise<{
+  statuses: Record<string, IdeStatus>;
+  results: Array<{ target: IdeTarget; result: ApplyIdeConfigResult }>;
+}> {
   const targets: IdeTarget[] = target === "all"
     ? AUTO_CONFIGURABLE_IDES
     : [target];
 
+  const transportByIde = options?.transportByIde ?? {};
+  const deps = options?.deps;
+  const results: Array<{ target: IdeTarget; result: ApplyIdeConfigResult }> = [];
+
   for (const item of targets) {
     const meta = IDE_METADATA[item];
-    if (meta?.autoConfigurable) {
-      try {
-        applyIdeConfig({ target: item, serverPath, chromePath });
-      } catch { /* skip on error */ }
+    if (!meta?.autoConfigurable) continue;
+    try {
+      const transportId = transportByIde[item] ?? MCP_TRANSPORT_DEFAULT;
+      const result = await applyIdeConfig(
+        {
+          target: item,
+          serverPath,
+          ...(chromePath !== undefined ? { chromePath } : {}),
+          transportId,
+        },
+        deps
+      );
+      results.push({ target: item, result });
+    } catch (err) {
+      // applyIdeConfig never throws — it returns { ok:false, reason:"error" }.
+      // Catch defensively for future callers that bypass the contract.
+      results.push({
+        target: item,
+        result: {
+          ok: false,
+          reason: "error",
+          message: err instanceof Error ? err.message : String(err),
+          transportId: transportByIde[item] ?? MCP_TRANSPORT_DEFAULT,
+        },
+      });
     }
   }
 
-  return getIdeStatuses(serverPath, chromePath);
+  return {
+    statuses: getIdeStatuses(serverPath, chromePath),
+    results,
+  };
 }
 
 export function removeTarget(target: IdeTarget): void {

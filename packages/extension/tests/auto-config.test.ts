@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -39,7 +39,7 @@ describe("auto-config helpers", () => {
     });
   });
 
-  it("writes a backup before replacing an existing config file", () => {
+  it("atomically merges a new server entry while preserving existing ones", async () => {
     const root = mkdtempSync(join(tmpdir(), "perplexity-auto-config-"));
     tempDirs.push(root);
 
@@ -49,18 +49,19 @@ describe("auto-config helpers", () => {
       JSON.stringify({ mcpServers: { existing: { command: "node", args: ["existing.js"] } } }, null, 2)
     );
 
-    applyIdeConfig({
+    const result = await applyIdeConfig({
       target: "cursor",
       serverPath: "C:/bundle/server.mjs",
       nodePath: "C:/node.exe",
-      configPath
+      configPath,
+      // stdio-daemon-proxy is the default; Cursor capability stdio=true.
     });
 
-    const backupPath = `${configPath}.bak`;
+    expect(result.ok).toBe(true);
     const nextConfig = JSON.parse(readFileSync(configPath, "utf8")) as { mcpServers: Record<string, unknown> };
-    const backupConfig = JSON.parse(readFileSync(backupPath, "utf8")) as { mcpServers: Record<string, unknown> };
-
     expect(nextConfig.mcpServers.Perplexity).toBeTruthy();
-    expect(backupConfig.mcpServers.existing).toBeTruthy();
+    expect(nextConfig.mcpServers.existing).toBeTruthy();
+    // H3 spec: .bak is cleaned up on successful write.
+    expect(existsSync(`${configPath}.bak`)).toBe(false);
   });
 });
