@@ -67,4 +67,13 @@ export const ACTION_TYPES: ReadonlySet<string> = new Set<string>([
   // the dashboard button a spinner while the extension host runs the save
   // dialog + doctor probe + zip write round-trip.
   "diagnostics:capture",
+  // v0.8.4 — TransportPicker per-IDE dropdown. Each select round-trips
+  // through the extension host so `Perplexity.mcpTransportByIde` updates via
+  // vscode.workspace.getConfiguration().update, then the fresh settings
+  // snapshot comes back to the webview.
+  "transport:select",
+  // v0.8.4 — "Regenerate stale" button in the IDEs tab. Delegates to the
+  // Perplexity.generateConfigs command so user-facing modals + staleness
+  // recomputation land through a single path.
+  "transport:regenerate-stale",
 ]);

@@ -65,6 +65,7 @@ vi.mock("@perplexity-user-mcp/shared", async (importOriginal) => {
 // keeps the intent legible.
 import {
   applyIdeConfig,
+  configureTargets,
   removeIdeConfig,
   type ApplyIdeConfigDeps,
 } from "../src/auto-config/index.js";
@@ -807,5 +808,48 @@ describe("applyIdeConfig — Phase 8.6.4 dispatch", () => {
     expect(restored).toContain("<redacted>");
 
     rmSync(blockedTmp, { recursive: true, force: true });
+  });
+});
+
+/**
+ * v0.8.4 - surfaced error modals. The `Perplexity.generateConfigs` command
+ * iterates `outcome.results` and builds a user-facing modal from any entry
+ * whose `result.ok === false`. This verifies the shape callers depend on
+ * (ok, reason, message, transportId) without exercising the full vscode
+ * window.showErrorMessage round-trip.
+ *
+ * We construct the outcome by calling applyIdeConfig directly with a
+ * capability-gated failure (same shape configureTargets would push into
+ * its results array) because configureTargets reads the real filesystem
+ * for its statuses map.
+ */
+describe("configureTargets outcome shape — failure cases surface reason + message", () => {
+  it("applyIdeConfig returns { ok: false, reason, message, transportId } when the capability gate fails", async () => {
+    const root = makeTempRoot();
+    const configPath = join(root, ".codex", "config.toml");
+    const { deps } = makeDeps();
+    // codexCli is TOML-only + httpBearerLoopback=false. Requesting http-loopback
+    // hits the format/capability gate — precisely what configureTargets collects
+    // into the `outcome.results` array the extension host renders as a modal.
+    const result = await applyIdeConfig(
+      {
+        target: "codexCli",
+        serverPath: "C:/bundle/server.mjs",
+        configPath,
+        transportId: "http-loopback",
+      },
+      deps
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(["unsupported", "error"]).toContain(result.reason);
+      expect(typeof result.message).toBe("string");
+      expect(result.message.length).toBeGreaterThan(0);
+      expect(result.transportId).toBe("http-loopback");
+    }
+  });
+
+  it("configureTargets is exported and callable (smoke)", () => {
+    expect(typeof configureTargets).toBe("function");
   });
 });

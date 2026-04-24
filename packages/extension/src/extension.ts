@@ -854,7 +854,59 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
           }
         }
         await dashboard.refresh();
-        await dashboard.postNotice("info", "External MCP configuration files refreshed.");
+
+        // v0.8.4 - surface per-IDE failures to the user. Prior to this commit
+        // configureTargets would silently log failures to the Output channel
+        // while the dashboard notice lied "refreshed." to the user.
+        const failures = outcome.results.filter((r) => !r.result.ok);
+        if (failures.length === 0) {
+          await dashboard.postNotice(
+            "info",
+            `External MCP configuration files refreshed (${outcome.results.length} updated).`,
+          );
+        } else {
+          const messages = failures
+            .map(({ target: t, result }) => {
+              if (result.ok) return "";
+              const prefix = `[${t}] ${result.transportId} -> `;
+              switch (result.reason) {
+                case "unsupported":
+                  return `${prefix}${result.message}`;
+                case "sync-folder":
+                  return `${prefix}sync folder detected — cancelled by user or default-deny.`;
+                case "tunnel-unstable":
+                  return `${prefix}${result.message}`;
+                case "port-unavailable":
+                  return `${prefix}start the daemon or pin Perplexity.daemonPort to a fixed port.`;
+                case "cancelled":
+                  return `${prefix}cancelled by user.`;
+                case "error":
+                  return `${prefix}${result.message}`;
+                default:
+                  return `${prefix}failed.`;
+              }
+            })
+            .filter(Boolean);
+          void vscode.window
+            .showErrorMessage(
+              `MCP config generation finished with ${failures.length} failure${
+                failures.length === 1 ? "" : "s"
+              }.`,
+              { detail: messages.join("\n") },
+              "Open Output",
+            )
+            .then((choice) => {
+              if (choice === "Open Output") outputChannel.show(true);
+            });
+          // Keep the dashboard notice consistent — user sees both the modal
+          // (actionable) and the inline banner (persistent until dismissed).
+          await dashboard.postNotice(
+            "warning",
+            `MCP config generation finished with ${failures.length} failure${
+              failures.length === 1 ? "" : "s"
+            }. See the error modal or the Perplexity Output channel.`,
+          );
+        }
       }
     )
   );

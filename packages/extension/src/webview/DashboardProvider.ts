@@ -4,11 +4,13 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import {
   EXTENSION_ID,
+  IDE_METADATA,
   type DaemonAuditEntry,
   type DaemonStatusState,
   type DaemonTunnelState,
   type DashboardState,
   type ExtensionMessage,
+  type McpTransportId,
   type TunnelProbeResult,
   type TunnelProbeTarget,
   type WebviewMessage
@@ -28,6 +30,8 @@ import { captureDiagnostics } from "../diagnostics/capture.js";
 import { handleDiagnosticsCapture } from "../diagnostics/flow.js";
 import { redactMessage, redactObject } from "../redact.js";
 import { REVEAL_CONFIRM_LABEL, runBearerRevealGate } from "./bearer-reveal-gate.js";
+import { detectStaleConfigs } from "./staleness-detector.js";
+import { handleTransportSelect } from "./transport-select-handler.js";
 import {
   handleCfNamedCreate,
   handleCfNamedDeleteRemote,
@@ -224,12 +228,15 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
               // DashboardProvider doesn't own the deps factory (that lives in
               // extension.ts with workspaceState access). For the webview-driven
               // regenerate we defer to the command so the same deps apply.
+              // v0.8.4 — the command itself now posts success / failure notices
+              // (including the "N failures" error modal). Don't emit a blanket
+              // "MCP config written" notice here; it would overwrite the
+              // actionable failure notice the command just emitted.
               await vscode.commands.executeCommand(
                 "Perplexity.generateConfigs",
                 message.payload.target
               );
               void settings;
-              await this.postNotice("info", `MCP config written for ${message.payload.target === "all" ? "all IDEs" : message.payload.target}.`);
               await this.refresh();
               await this.postActionResult(message.id, true);
             } catch (err) {
@@ -1164,6 +1171,46 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             }
             break;
           }
+          case "transport:select": {
+            try {
+              const { ideTag, transportId } = message.payload;
+              const outcome = await handleTransportSelect(
+                { ideTag, transportId },
+                {
+                  readTransportByIde: () =>
+                    vscode.workspace
+                      .getConfiguration("Perplexity")
+                      .get<Record<string, McpTransportId>>("mcpTransportByIde", {}),
+                  writeTransportByIde: async (next) => {
+                    await vscode.workspace
+                      .getConfiguration("Perplexity")
+                      .update("mcpTransportByIde", next, vscode.ConfigurationTarget.Global);
+                  },
+                },
+              );
+              if (outcome.ok) {
+                // Post a fresh settings snapshot so the webview sees the update.
+                await this.refresh();
+                await this.postActionResult(message.id, true);
+              } else {
+                await this.postActionResult(message.id, false, outcome.reason);
+              }
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "transport:regenerate-stale": {
+            try {
+              // Route through the existing command so user-facing modals +
+              // staleness recomputation land through a single path.
+              await vscode.commands.executeCommand("Perplexity.generateConfigs", "all");
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
           case "diagnostics:capture": {
             try {
               const outcome = await handleDiagnosticsCapture(
@@ -1544,6 +1591,46 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  /**
+   * Phase 8.4 / v0.8.4 - Emit the staleness map to the webview. Called on
+   * every successful postDaemonState so the dashboard reflects current reality
+   * whenever the daemon port, tunnel URL, or bearer rotates. An empty array
+   * is the explicit zero-signal (never `null`).
+   */
+  private async postStaleness(
+    status: Awaited<ReturnType<typeof getBundledDaemonStatus>>,
+  ): Promise<void> {
+    if (!this.view) return;
+    try {
+      const settings = getSettingsSnapshot();
+      const bundledServerPath = vscode.Uri.joinPath(
+        this.context.extensionUri,
+        "dist",
+        "mcp",
+        "server.mjs",
+      ).fsPath;
+      const ideStatus = getIdeStatuses(bundledServerPath, settings.chromePath);
+      const daemonPort = status.health?.port ?? status.record?.port ?? null;
+      const tunnelUrl = status.health?.tunnel?.url ?? status.record?.tunnelUrl ?? null;
+      const daemonBearer = status.record?.bearerToken ?? null;
+      const stale = detectStaleConfigs({
+        ideStatus,
+        daemonPort,
+        tunnelUrl,
+        daemonBearer,
+        onSkip: (ideTag, reason) => {
+          debug(`[staleness] skipped ${ideTag}: ${reason}`);
+        },
+      });
+      await this.view.webview.postMessage({
+        type: "transport:staleness",
+        payload: { stale },
+      } satisfies ExtensionMessage);
+    } catch (err) {
+      debug(`[trace] postStaleness failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   private async postDaemonState(options: { ensure?: boolean; restartEvents?: boolean } = {}): Promise<void> {
     if (!this.view) {
       return;
@@ -1576,6 +1663,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       } satisfies ExtensionMessage);
       await this.postTunnelProviders();
       await this.postOAuthClients();
+      await this.postStaleness(status);
 
       if (options.restartEvents && status.running && status.healthy) {
         await this.startDaemonEventStream();
