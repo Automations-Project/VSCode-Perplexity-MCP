@@ -104,7 +104,18 @@ export function verifyLocalToken(
     if (nodeCrypto.timingSafeEqual(storedHashBuf, candidateHashBuf)) {
       const now = (options.now ?? defaultNow)();
       record.lastUsedAt = now;
-      writeRecords(records, options);
+      // lastUsedAt is ancillary audit metadata — a failed write-back must
+      // not DOS the verify hot-path. Never log the plaintext token or the
+      // hash; writeFileSync/renameSync messages typically include the file
+      // path (safe) but never the token content.
+      try {
+        writeRecords(records, options);
+      } catch (err) {
+        console.warn(
+          "[local-tokens] lastUsedAt write-back failed: " +
+            (err instanceof Error ? err.message : String(err)),
+        );
+      }
       return toPublic(record);
     }
   }
@@ -116,7 +127,10 @@ export function revokeLocalToken(
   id: string,
   options: LocalTokenOptions = {},
 ): boolean {
-  const records = readRecordsSafe(options);
+  // Use strict readRecords (not readRecordsSafe) so callers can distinguish
+  // "no such id" (false) from "disk unreadable" (thrown). Only verify's
+  // per-request hot-path is allowed to swallow malformed-file errors.
+  const records = readRecords(options);
   const match = records.find((entry) => entry.id === id);
   if (!match) {
     return false;

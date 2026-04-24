@@ -5,18 +5,24 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  writeFileSync as realWriteFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// vi.mock is hoisted; factory proxies to real node:crypto so the module under
-// test gets a spy-able namespace.
+// vi.mock is hoisted; factories proxy to real modules so the module under
+// test gets spy-able namespaces for node:crypto and node:fs.
 vi.mock("node:crypto", async () => {
   const actual = await vi.importActual("node:crypto");
   return { ...actual };
 });
+vi.mock("node:fs", async () => {
+  const actual = await vi.importActual("node:fs");
+  return { ...actual };
+});
 
 import * as nodeCrypto from "node:crypto";
+import * as nodeFs from "node:fs";
 import {
   issueLocalToken,
   listLocalTokens,
@@ -241,5 +247,52 @@ describe("local scoped bearer tokens", () => {
 
     expect(result).not.toBeNull();
     expect(spy).toHaveBeenCalled();
+  });
+
+  it("revokeLocalToken throws on unreadable/corrupt files instead of silently returning false", () => {
+    // Missing file is not "unreadable" — readRecords handles ENOENT as [] so
+    // revoke returns false (same semantics as listLocalTokens).
+    const missingPath = join(configDir, "missing.json");
+    expect(revokeLocalToken("local-any-ABCDEFGHIJK", { tokenPath: missingPath })).toBe(false);
+
+    // A file whose contents are not valid JSON is unreadable; revoke must
+    // surface the error now that it uses strict readRecords.
+    const corruptPath = join(configDir, "corrupt.json");
+    realWriteFileSync(corruptPath, "{not valid json", "utf8");
+    expect(() =>
+      revokeLocalToken("local-any-ABCDEFGHIJK", { tokenPath: corruptPath }),
+    ).toThrow(/not valid JSON/);
+  });
+
+  it("verifyLocalToken returns metadata and warns (not throws) when the lastUsedAt write-back fails", () => {
+    const issued = issueLocalToken(
+      { ideTag: "claude", label: "Claude Desktop" },
+      { tokenPath, now: () => "2026-04-24T00:00:00.000Z" },
+    );
+
+    // The on-disk file is already written by issue. Arm writeFileSync to
+    // throw on the NEXT invocation (verify's lastUsedAt write-back) without
+    // affecting anything else.
+    const writeSpy = vi.spyOn(nodeFs, "writeFileSync").mockImplementationOnce(() => {
+      throw new Error("ENOSPC: no space left on device, open 'local-tokens.json.tmp'");
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const verified = verifyLocalToken(issued.token, {
+      tokenPath,
+      now: () => "2026-04-24T00:05:00.000Z",
+    });
+
+    expect(verified).not.toBeNull();
+    expect(verified?.id).toBe(issued.metadata.id);
+    expect(verified?.lastUsedAt).toBe("2026-04-24T00:05:00.000Z");
+    expect(writeSpy).toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+
+    const warnMessage = String(warnSpy.mock.calls[0][0]);
+    expect(warnMessage).toMatch(/\[local-tokens\] lastUsedAt write-back failed/);
+    expect(warnMessage).toContain("ENOSPC");
+    // Crucially, the plaintext token must never leak into stderr.
+    expect(warnMessage).not.toContain(issued.token);
   });
 });
