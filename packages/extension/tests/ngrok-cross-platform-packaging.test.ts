@@ -20,10 +20,11 @@ import { describe, expect, it } from "vitest";
 //     the native-binding require eagerly. Test 1 below proves this: after the
 //     fix, loading `dist/extension.js` with every `@ngrok/ngrok-*` subpackage
 //     stubbed as MODULE_NOT_FOUND must succeed.
-//   - Agent B: ship all supported @ngrok/ngrok-* native variants in the VSIX
-//     so a Windows-packaged VSIX still works on macOS/Linux/ARM. Test 2 below
-//     verifies `dist/node_modules/@ngrok/` contains every variant listed in
-//     `@ngrok/ngrok`'s optionalDependencies.
+//   - Agent B: ship the SUPPORTED matrix of @ngrok/ngrok-* native variants in
+//     the VSIX (not all 13 — see scripts/prepare-package-deps.mjs for why)
+//     so a VSIX packed on one smoke-test platform still works on the others.
+//     Test 2 below verifies `dist/node_modules/@ngrok/` contains exactly the
+//     SUPPORTED_NGROK_VARIANTS matrix entries with matching os/cpu.
 
 // tests/ → extension package root. `__dirname` is used by sibling tests in
 // this directory (see auth-manager.*.test.ts) — vitest compiles to CJS.
@@ -31,6 +32,29 @@ const extensionRoot = join(__dirname, "..");
 const distExtension = join(extensionRoot, "dist", "extension.js");
 const distNodeModulesNgrok = join(extensionRoot, "dist", "node_modules", "@ngrok");
 const ngrokRootManifest = join(distNodeModulesNgrok, "ngrok", "package.json");
+const prepareDepsScript = join(
+  extensionRoot,
+  "scripts",
+  "prepare-package-deps.mjs",
+);
+
+/**
+ * Source-of-truth matrix — must match SUPPORTED_NGROK_VARIANTS in
+ * scripts/prepare-package-deps.mjs exactly. If the packaging script's matrix
+ * changes, update this duplicate too (and vice versa). A test below enforces
+ * that every entry here is materialized under dist/node_modules/@ngrok/ with
+ * matching os/cpu fields.
+ */
+const SUPPORTED_NGROK_VARIANTS: ReadonlyArray<{
+  name: string;
+  os: string;
+  cpu: string;
+}> = [
+  { name: "@ngrok/ngrok-linux-x64-gnu", os: "linux", cpu: "x64" },
+  { name: "@ngrok/ngrok-darwin-x64", os: "darwin", cpu: "x64" },
+  { name: "@ngrok/ngrok-darwin-arm64", os: "darwin", cpu: "arm64" },
+  { name: "@ngrok/ngrok-win32-x64-msvc", os: "win32", cpu: "x64" },
+];
 
 function hasBuiltBundle(): boolean {
   return existsSync(distExtension);
@@ -105,21 +129,18 @@ describe("extension bundle survives a missing @ngrok/ngrok-* native binding", ()
   );
 });
 
-describe("packaged VSIX ships every @ngrok/ngrok-* platform variant", () => {
+describe("packaged VSIX ships each supported @ngrok/ngrok-* platform variant", () => {
   it.skipIf(!hasPreparedDeps())(
-    "dist/node_modules/@ngrok/ contains each optionalDependency of @ngrok/ngrok with matching os/cpu",
+    "dist/node_modules/@ngrok/ contains each supported platform variant with matching os/cpu",
     () => {
-      const rootManifest = JSON.parse(readFileSync(ngrokRootManifest, "utf8"));
-      const optional = rootManifest.optionalDependencies ?? {};
-      const names = Object.keys(optional);
-
-      // Sanity: @ngrok/ngrok 1.7 ships 13 optional platform subpackages; if
-      // the shape ever changes, fail loudly so the test is kept honest.
-      expect(names.length).toBeGreaterThan(0);
+      // Sanity: we explicitly chose 4 variants for the smoke-test matrix;
+      // if a future agent drops this test back to enumerating
+      // optionalDependencies, catch it here.
+      expect(SUPPORTED_NGROK_VARIANTS.length).toBe(4);
 
       const missing: string[] = [];
       const mismatches: string[] = [];
-      for (const name of names) {
+      for (const { name, os: expectedOs, cpu: expectedCpu } of SUPPORTED_NGROK_VARIANTS) {
         const manifestPath = join(extensionRoot, "dist", "node_modules", name, "package.json");
         if (!existsSync(manifestPath)) {
           missing.push(name);
@@ -130,19 +151,8 @@ describe("packaged VSIX ships every @ngrok/ngrok-* platform variant", () => {
           os?: string[];
           cpu?: string[];
         };
-        // Infer expected os/cpu from the package name (napi-rs convention:
-        // @ngrok/ngrok-<os>-<cpu>[-<libc/abi>]). e.g.
-        //   @ngrok/ngrok-linux-x64-gnu       -> os=linux, cpu=x64
-        //   @ngrok/ngrok-win32-arm64-msvc    -> os=win32, cpu=arm64
-        //   @ngrok/ngrok-darwin-universal    -> os=darwin, cpu=(x64|arm64)
-        const suffix = name.slice("@ngrok/ngrok-".length);
-        const parts = suffix.split("-");
-        const expectedOs = parts[0];
-        const expectedCpu = parts[1];
-        const osOk = Array.isArray(manifest.os) ? manifest.os.includes(expectedOs) : true;
-        const cpuOk = Array.isArray(manifest.cpu)
-          ? manifest.cpu.includes(expectedCpu) || expectedCpu === "universal"
-          : true;
+        const osOk = Array.isArray(manifest.os) ? manifest.os.includes(expectedOs) : false;
+        const cpuOk = Array.isArray(manifest.cpu) ? manifest.cpu.includes(expectedCpu) : false;
         if (!osOk || !cpuOk) {
           mismatches.push(
             `${name}: manifest os=${JSON.stringify(manifest.os)} cpu=${JSON.stringify(manifest.cpu)} ` +
@@ -153,13 +163,13 @@ describe("packaged VSIX ships every @ngrok/ngrok-* platform variant", () => {
 
       expect(
         missing,
-        `Missing @ngrok/ngrok platform variants in dist/node_modules — ` +
-          `these users will crash at activation:\n  ${missing.join("\n  ")}`,
+        `Missing supported @ngrok/ngrok platform variants in dist/node_modules — ` +
+          `these smoke-matrix platforms would crash at activation:\n  ${missing.join("\n  ")}`,
       ).toEqual([]);
       expect(
         mismatches,
-        `Platform variant manifests have os/cpu that do not match their package ` +
-          `name — napi-rs loader cannot find them:\n  ${mismatches.join("\n  ")}`,
+        `Platform variant manifests have os/cpu that do not match the SUPPORTED_NGROK_VARIANTS ` +
+          `matrix — napi-rs loader cannot find them:\n  ${mismatches.join("\n  ")}`,
       ).toEqual([]);
     },
   );
@@ -170,4 +180,22 @@ describe("packaged VSIX ships every @ngrok/ngrok-* platform variant", () => {
       expect(true).toBe(true);
     },
   );
+});
+
+describe("prepare-package-deps.mjs script is textual (no literal NUL bytes)", () => {
+  // Regression guard for the 0.8.5 maintenance window: the script briefly
+  // contained a literal 0x00 byte inside `typeflag === "\0"`, which makes
+  // ripgrep treat the whole file as binary and hides it from default search.
+  // The fix is to use the JS string escape `"\0"` instead. Reading the file
+  // as bytes and asserting no NUL keeps that fix locked in.
+  it("contains no 0x00 byte", () => {
+    expect(existsSync(prepareDepsScript)).toBe(true);
+    const bytes = readFileSync(prepareDepsScript);
+    const nulIndex = bytes.indexOf(0);
+    expect(
+      nulIndex,
+      `Found literal NUL (0x00) at byte offset ${nulIndex} of ` +
+        `${prepareDepsScript}. Replace it with the JS escape "\\0".`,
+    ).toBe(-1);
+  });
 });

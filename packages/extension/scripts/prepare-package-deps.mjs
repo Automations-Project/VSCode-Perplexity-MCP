@@ -11,6 +11,34 @@ const extensionRoot = join(repoRoot, "packages", "extension");
 const extensionNodeModules = join(extensionRoot, "dist", "node_modules");
 
 /**
+ * Supported @ngrok/ngrok native platform variants shipped in the VSIX.
+ *
+ * 0.8.5 tried to bundle EVERY variant that the parent declared in
+ * optionalDependencies (13 of them), which inflated the VSIX from 12.7 MB to
+ * 60.5 MB. Almost none of those variants are covered by our smoke-test matrix
+ * and we have no realistic plan to validate them, so we explicitly pick the
+ * four we support and ship only those. Users on any other (os, cpu) land on
+ * the lazy-load fix in packages/mcp-server/src/daemon/tunnel-providers/ngrok.js
+ * which surfaces a clean `NgrokNativeMissingError` + "native-missing" setup
+ * state rather than a crash.
+ *
+ * Smoke-test matrix alignment (docs/smoke-tests.md):
+ *   - Ubuntu 22+          → @ngrok/ngrok-linux-x64-gnu
+ *   - Windows 11          → @ngrok/ngrok-win32-x64-msvc
+ *   - macOS 14+ (Intel)   → @ngrok/ngrok-darwin-x64
+ *   - macOS 14+ (Apple Si)→ @ngrok/ngrok-darwin-arm64
+ *
+ * If this matrix ever changes, update BOTH this constant AND the matching
+ * constant in packages/extension/tests/ngrok-cross-platform-packaging.test.ts.
+ */
+const SUPPORTED_NGROK_VARIANTS = [
+  { name: "@ngrok/ngrok-linux-x64-gnu", os: "linux", cpu: "x64" },
+  { name: "@ngrok/ngrok-darwin-x64", os: "darwin", cpu: "x64" },
+  { name: "@ngrok/ngrok-darwin-arm64", os: "darwin", cpu: "arm64" },
+  { name: "@ngrok/ngrok-win32-x64-msvc", os: "win32", cpu: "x64" },
+];
+
+/**
  * Root packages the extension loads at runtime. We do NOT include bundled-by-tsup
  * pure-JS deps (like got-scraping) — those are inlined into dist/extension.js by
  * the esbuild bundler. This list is only for packages that must ship with their
@@ -149,32 +177,28 @@ for (const entry of rootPackages) {
 // macOS at activation when `@ngrok/ngrok/index.js` tries to require the
 // matching subpackage.
 //
-// Fix: for every subpackage listed in the parent's optionalDependencies map,
-// either copy it from the builder's node_modules (if present by luck) or pull
-// it down fresh via `npm pack` and extract into dist/node_modules/@ngrok/.
-// Results are cached by `<name>@<version>` under node_modules/.cache/ so
-// repeat runs are fast.
+// Fix: for every variant in the SUPPORTED_NGROK_VARIANTS matrix (see the top
+// of this file), either copy it from the builder's node_modules (if present
+// by luck) or pull it down fresh via `npm pack` and extract into
+// dist/node_modules/@ngrok/. Results are cached by `<name>@<version>` under
+// node_modules/.cache/ so repeat runs are fast.
 //
-// We ship ALL variants the parent declares — overshipping tiny native .node
-// files is harmless (~2-4 MB each) and the alternative is a crashed extension.
+// We ship ONLY the explicit supported matrix (4 variants), not every variant
+// the parent declares (13 variants). Users on unsupported platforms land on
+// the lazy-load path in packages/mcp-server/src/daemon/tunnel-providers/ngrok.js
+// which surfaces a clean "native-missing" setup state rather than crashing
+// activation. Going from 13 → 4 variants keeps the VSIX near its pre-0.8.5
+// size (~12.7 MB) instead of ballooning to 60.5 MB.
 
 const ngrokSource = resolveFrom(mcpServerRoot, "@ngrok/ngrok");
 if (!ngrokSource) {
   throw new Error(
     `[prepare-package-deps] @ngrok/ngrok not found in mcp-server or repo root. ` +
-      `Cannot enumerate optional native subpackages.`
+      `Cannot materialize supported native subpackages.`
   );
 }
 const ngrokManifest = JSON.parse(readFileSync(join(ngrokSource, "package.json"), "utf8"));
 const ngrokOptionalDeps = ngrokManifest.optionalDependencies ?? {};
-const ngrokVariants = Object.keys(ngrokOptionalDeps);
-if (ngrokVariants.length === 0) {
-  throw new Error(
-    `[prepare-package-deps] @ngrok/ngrok has no optionalDependencies — unexpected, ` +
-      `this script's cross-platform logic assumes the optionalDependencies-per-platform pattern. ` +
-      `Inspect ${join(ngrokSource, "package.json")}.`
-  );
-}
 
 // Cache directory for `npm pack` tarballs. Lives under node_modules/.cache
 // (already git-ignored via the top-level node_modules rule) so repeat runs
@@ -296,7 +320,7 @@ function extractTarGzSync(tarballPath, destDir) {
       mkdirSync(outPath, { recursive: true });
       continue;
     }
-    if (typeflag === "0" || typeflag === " " || typeflag === "") {
+    if (typeflag === "0" || typeflag === "\0" || typeflag === "") {
       mkdirSync(dirname(outPath), { recursive: true });
       writeFileSync(outPath, buf.subarray(dataStart, dataEnd));
       continue;
@@ -359,7 +383,18 @@ function fetchVariantViaNpmPack(variantName, version) {
   console.log(`[prepare-package-deps] materialized ${specifier} from registry`);
 }
 
-for (const variantName of ngrokVariants) {
+for (const { name: variantName } of SUPPORTED_NGROK_VARIANTS) {
+  // Sanity-check that the variant we're about to ship is still declared by
+  // the parent @ngrok/ngrok as an optionalDependency. If upstream drops one
+  // of our smoke-matrix variants, fail loudly so we don't silently ship a
+  // mismatched native binary.
+  if (!(variantName in ngrokOptionalDeps)) {
+    throw new Error(
+      `[prepare-package-deps] ${variantName} is in SUPPORTED_NGROK_VARIANTS but not in ` +
+        `@ngrok/ngrok's optionalDependencies map. Either upstream dropped it or the matrix ` +
+        `in ${fileURLToPath(import.meta.url)} is out of date.`
+    );
+  }
   if (copyInstalledVariant(variantName)) continue;
   const version = readVariantVersion(variantName);
   fetchVariantViaNpmPack(variantName, version);
@@ -388,46 +423,12 @@ if (expressMajor !== "4") {
 }
 console.log(`[prepare-package-deps] express ${expressVersion} OK`);
 
-// Programmatic assertion: every @ngrok/ngrok-<variant> subpackage declared in
-// the parent's optionalDependencies must be materialized under
-// dist/node_modules/@ngrok/, and each must expose matching os/cpu fields. A
-// missing or mismatched variant means a VSIX packed on the current platform
-// will crash on activation on other platforms (the 0.8.5 ship-blocker).
-const osByVariantSuffix = {
-  "android-": "android",
-  "darwin-": "darwin",
-  "freebsd-": "freebsd",
-  "linux-": "linux",
-  "win32-": "win32",
-};
-const cpuBySubstr = [
-  ["-arm64", "arm64"],
-  ["-arm-", "arm"],
-  ["-x64", "x64"],
-  ["-ia32", "ia32"],
-  ["-universal", "universal"],
-];
-function expectedOsCpu(variantName) {
-  // variant name form: @ngrok/ngrok-<os>-<arch>[-abi]
-  const bare = variantName.replace(/^@ngrok\/ngrok-/, "");
-  let os = null;
-  for (const [prefix, osValue] of Object.entries(osByVariantSuffix)) {
-    if (bare.startsWith(prefix)) {
-      os = osValue;
-      break;
-    }
-  }
-  let cpu = null;
-  for (const [substr, cpuValue] of cpuBySubstr) {
-    if (bare.includes(substr)) {
-      cpu = cpuValue;
-      break;
-    }
-  }
-  return { os, cpu };
-}
-
-for (const variantName of ngrokVariants) {
+// Programmatic assertion: every variant in SUPPORTED_NGROK_VARIANTS must be
+// materialized under dist/node_modules/@ngrok/ and its package.json os/cpu
+// fields must match the matrix entry. A missing or mismatched variant means
+// a VSIX packed on one smoke-test platform would crash on activation on the
+// others (the 0.8.5 ship-blocker).
+for (const { name: variantName, os: expectedOs, cpu: expectedCpu } of SUPPORTED_NGROK_VARIANTS) {
   const variantManifestPath = join(extensionNodeModules, variantName, "package.json");
   if (!existsSync(variantManifestPath)) {
     throw new Error(
@@ -437,24 +438,26 @@ for (const variantName of ngrokVariants) {
     );
   }
   const variantManifest = JSON.parse(readFileSync(variantManifestPath, "utf8"));
-  const { os: expectedOs, cpu: expectedCpu } = expectedOsCpu(variantName);
   const actualOs = Array.isArray(variantManifest.os) ? variantManifest.os : [];
   const actualCpu = Array.isArray(variantManifest.cpu) ? variantManifest.cpu : [];
-  if (expectedOs && !actualOs.includes(expectedOs)) {
+  if (!actualOs.includes(expectedOs)) {
     throw new Error(
       `[prepare-package-deps] ${variantName} os mismatch: expected "${expectedOs}" in ` +
-        `${JSON.stringify(actualOs)}. The tarball content does not match its name — ` +
-        `investigate in ${fileURLToPath(import.meta.url)}.`
+        `${JSON.stringify(actualOs)}. The tarball content does not match the SUPPORTED_NGROK_VARIANTS ` +
+        `matrix entry — investigate in ${fileURLToPath(import.meta.url)}.`
     );
   }
-  if (expectedCpu && expectedCpu !== "universal" && !actualCpu.includes(expectedCpu)) {
+  if (!actualCpu.includes(expectedCpu)) {
     throw new Error(
       `[prepare-package-deps] ${variantName} cpu mismatch: expected "${expectedCpu}" in ` +
         `${JSON.stringify(actualCpu)}. Investigate in ${fileURLToPath(import.meta.url)}.`
     );
   }
 }
+const variantShortNames = SUPPORTED_NGROK_VARIANTS.map((v) =>
+  v.name.replace(/^@ngrok\/ngrok-/, "")
+).join(", ");
 console.log(
   `[prepare-package-deps] @ngrok/ngrok ${ngrokManifest.version} ` +
-    `+ ${ngrokVariants.length} platform variants OK`
+    `+ ${SUPPORTED_NGROK_VARIANTS.length} supported platform variants OK (${variantShortNames})`
 );
