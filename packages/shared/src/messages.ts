@@ -384,6 +384,21 @@ export type ExtensionMessage =
         phase: "starting" | "done" | "skipped-local" | "skipped-hydrated" | "error";
         error?: string;
       };
+    }
+  | {
+      type: "diagnostics:capture:result";
+      id: string;
+      ok: true;
+      outputPath: string;
+      bytesWritten: number;
+      sourcesIncluded: string[];
+      sourcesMissing: string[];
+    }
+  | {
+      type: "diagnostics:capture:result";
+      id: string;
+      ok: false;
+      error: string;
     };
 
 export type WebviewMessage =
@@ -559,4 +574,5 @@ export type WebviewMessage =
   | { type: "viewers:request-list" }
   | { type: "viewers:configure"; id: string; payload: { viewer: ExternalViewer } }
   | { type: "history:cloud-sync"; id: string; payload?: { pageSize?: number } }
-  | { type: "history:cloud-hydrate"; id: string; payload: { historyId: string } };
+  | { type: "history:cloud-hydrate"; id: string; payload: { historyId: string } }
+  | { type: "diagnostics:capture"; id: string };

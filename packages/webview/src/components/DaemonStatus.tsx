@@ -1,4 +1,4 @@
-import { ChevronDown, Copy, KeyRound, Power, RefreshCcw, ServerCog, Skull } from "lucide-react";
+import { ChevronDown, Copy, FileArchive, KeyRound, Power, RefreshCcw, ServerCog, Skull } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { DaemonAuditEntry, DaemonStatusState, WebviewMessage } from "@perplexity-user-mcp/shared";
 import { useDashboardStore, type TunnelProbeState } from "../store";
@@ -239,6 +239,14 @@ export function DaemonStatusView({
           className="danger-button btn-sm"
           title="Force-kill the daemon. Use when tunnels are stuck (ERR_NGROK_334), the daemon isn't responding, or you want a clean-slate reset. Does NOT auto-respawn; click Restart after."
           onClick={() => { console.log("[trace] DaemonStatus click", { button: "daemon:kill" }); send({ type: "daemon:kill" }); }}
+        />
+        <DaemonActionButton
+          type="diagnostics:capture"
+          label="Capture diagnostics"
+          pendingLabel="Capturing…"
+          icon={<FileArchive size={11} />}
+          title="Package redacted daemon logs, config, and a doctor report into a .zip for bug reports."
+          onClick={() => { console.log("[trace] DaemonStatus click", { button: "diagnostics:capture" }); send({ type: "diagnostics:capture" }); }}
         />
       </div>
       {status?.url ? (

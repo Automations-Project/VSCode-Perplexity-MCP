@@ -63,4 +63,8 @@ export const ACTION_TYPES: ReadonlySet<string> = new Set<string>([
   "history:cloud-sync",
   "history:cloud-hydrate",
   "viewers:configure",
+  // Phase 8.5.2 — diagnostics bundle capture. Pending-action tracking gives
+  // the dashboard button a spinner while the extension host runs the save
+  // dialog + doctor probe + zip write round-trip.
+  "diagnostics:capture",
 ]);

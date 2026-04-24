@@ -407,6 +407,24 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
       return;
     }
 
+    if (message.type === "diagnostics:capture:result") {
+      if (message.ok) {
+        const suffix =
+          message.sourcesMissing.length > 0
+            ? ` (missing: ${message.sourcesMissing.join(", ")})`
+            : "";
+        set({
+          notice: {
+            level: "info",
+            message: `Diagnostics saved to ${message.outputPath}${suffix}.`,
+          },
+        });
+      } else if (message.error !== "cancelled") {
+        set({ notice: { level: "error", message: `Diagnostics capture failed: ${message.error}` } });
+      }
+      return;
+    }
+
     if (message.type === "models:refresh:status") {
       const { phase, source, count, error } = message.payload;
       set({

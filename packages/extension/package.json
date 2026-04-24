@@ -33,7 +33,8 @@
     "onCommand:Perplexity.syncCloudHistory",
     "onCommand:Perplexity.logout",
     "onCommand:Perplexity.switchAccount",
-    "onCommand:Perplexity.addAccount"
+    "onCommand:Perplexity.addAccount",
+    "onCommand:Perplexity.captureDiagnostics"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -161,6 +162,11 @@
       {
         "command": "Perplexity.doctorReportIssue",
         "title": "Perplexity: Report Issue from Doctor",
+        "category": "Perplexity"
+      },
+      {
+        "command": "Perplexity.captureDiagnostics",
+        "title": "Perplexity: Capture Diagnostics Bundle",
         "category": "Perplexity"
       }
     ],

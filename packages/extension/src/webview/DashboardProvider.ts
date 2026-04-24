@@ -1,4 +1,6 @@
 import * as crypto from "node:crypto";
+import * as os from "node:os";
+import * as path from "node:path";
 import * as vscode from "vscode";
 import {
   EXTENSION_ID,
@@ -22,7 +24,9 @@ import {
 } from "../auto-config/index.js";
 import type { IdeTarget } from "@perplexity-user-mcp/shared";
 import { getAccountSnapshot, setLastRefreshTier } from "../auth/session.js";
-import { log, debug } from "../extension.js";
+import { log, debug, getOutputRingBuffer } from "../extension.js";
+import { captureDiagnostics } from "../diagnostics/capture.js";
+import { handleDiagnosticsCapture } from "../diagnostics/flow.js";
 import { redactMessage, redactObject } from "../redact.js";
 import { REVEAL_CONFIRM_LABEL, runBearerRevealGate } from "./bearer-reveal-gate.js";
 import {
@@ -1158,6 +1162,36 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
               });
               await this.postActionResult(message.id, false, errMsg);
             }
+            break;
+          }
+          case "diagnostics:capture": {
+            await handleDiagnosticsCapture(
+              message.id,
+              {
+                showSaveDialog: async (defaultPath) => {
+                  const uri = await vscode.window.showSaveDialog({
+                    defaultUri: vscode.Uri.file(defaultPath),
+                    filters: { "Zip archive": ["zip"] },
+                  });
+                  return uri?.fsPath;
+                },
+                captureDiagnostics,
+                runDoctor,
+                getConfigDir: () =>
+                  process.env.PERPLEXITY_CONFIG_DIR ?? path.join(os.homedir(), ".perplexity-mcp"),
+                getLogsText: () => getOutputRingBuffer()?.snapshot() ?? "",
+                getExtensionVersion: () =>
+                  String((this.context.extension.packageJSON as { version?: string }).version ?? "0.0.0"),
+                getVscodeVersion: () => vscode.version,
+                getHomedir: () => os.homedir(),
+                showInformationMessage: async (m) => vscode.window.showInformationMessage(m),
+                showErrorMessage: async (m) => vscode.window.showErrorMessage(m),
+              },
+              async (msg) => {
+                await this.view?.webview.postMessage(msg satisfies ExtensionMessage);
+              },
+            );
+            await this.postActionResult(message.id, true);
             break;
           }
         }

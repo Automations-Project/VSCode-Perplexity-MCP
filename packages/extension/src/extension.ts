@@ -1,8 +1,14 @@
 import * as crypto from "node:crypto";
+import * as os from "node:os";
+import * as path from "node:path";
 import * as vscode from "vscode";
 import { MCP_PROVIDER_ID, MCP_SERVER_LABEL, type ExportFormat, type IdeTarget } from "@perplexity-user-mcp/shared";
 import { getActiveName, getProfile, listProfiles, setActive, createProfile } from "perplexity-user-mcp/profiles";
+import { runDoctor } from "perplexity-user-mcp";
 import { redactMessage } from "./redact.js";
+import { OutputRingBuffer } from "./diagnostics/output-buffer.js";
+import { captureDiagnostics } from "./diagnostics/capture.js";
+import { runDiagnosticsCaptureFlow } from "./diagnostics/flow.js";
 import { configureTargets, getIdeStatuses } from "./auto-config/index.js";
 import { hasStoredLogin } from "./auth/session.js";
 import { getSettingsSnapshot } from "./settings.js";
@@ -23,14 +29,27 @@ import { listHistoryEntries, rebuildHistoryEntries, runCloudSync, runExport } fr
 
 let outputChannel: vscode.OutputChannel;
 let debugEnabled = false;
+// Mirror of `outputChannel` content so diagnostics capture can read back the
+// last ~5000 lines (VS Code does not expose a read API for OutputChannel).
+// Initialised in activate(); `?.` guards in log()/debug() make pre-activation
+// calls no-op-safe.
+let outputBuffer: OutputRingBuffer | undefined;
+
+export function getOutputRingBuffer(): OutputRingBuffer | undefined {
+  return outputBuffer;
+}
 
 export function log(message: string): void {
-  outputChannel?.appendLine(`[${new Date().toISOString()}] ${redactMessage(message)}`);
+  const line = `[${new Date().toISOString()}] ${redactMessage(message)}`;
+  outputChannel?.appendLine(line);
+  outputBuffer?.append(line);
 }
 
 export function debug(message: string): void {
   if (debugEnabled) {
-    outputChannel?.appendLine(`[${new Date().toISOString()}] [DEBUG] ${redactMessage(message)}`);
+    const line = `[${new Date().toISOString()}] [DEBUG] ${redactMessage(message)}`;
+    outputChannel?.appendLine(line);
+    outputBuffer?.append(line);
   }
 }
 
@@ -167,6 +186,7 @@ async function maybePromptAutoConfiguration(
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   outputChannel = vscode.window.createOutputChannel("Perplexity Internal MCP");
+  outputBuffer = new OutputRingBuffer(5000);
   context.subscriptions.push(outputChannel);
   const settings = getSettingsSnapshot();
   debugEnabled = settings.debugMode;
@@ -594,6 +614,46 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
     vscode.commands.registerCommand("Perplexity.doctorReportIssue", async () => {
       await dashboard.reveal();
       await dashboard.postDoctorReportIssue();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("Perplexity.captureDiagnostics", async () => {
+      const extVersion = String((context.extension.packageJSON as { version?: string }).version ?? "0.0.0");
+      let savedPath: string | null = null;
+      const outcome = await runDiagnosticsCaptureFlow({
+        showSaveDialog: async (defaultPath) => {
+          const uri = await vscode.window.showSaveDialog({
+            defaultUri: vscode.Uri.file(defaultPath),
+            filters: { "Zip archive": ["zip"] },
+          });
+          return uri?.fsPath;
+        },
+        captureDiagnostics: async (opts) => {
+          savedPath = opts.outputPath;
+          return captureDiagnostics(opts);
+        },
+        runDoctor: async () => runDoctor(),
+        getConfigDir: () =>
+          process.env.PERPLEXITY_CONFIG_DIR ?? path.join(os.homedir(), ".perplexity-mcp"),
+        getLogsText: () => outputBuffer?.snapshot() ?? "",
+        getExtensionVersion: () => extVersion,
+        getVscodeVersion: () => vscode.version,
+        getHomedir: () => os.homedir(),
+        showInformationMessage: async (message) => {
+          const choice = await vscode.window.showInformationMessage(message, "Show in folder");
+          if (choice === "Show in folder" && savedPath) {
+            try {
+              await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(savedPath));
+            } catch {
+              await vscode.env.openExternal(vscode.Uri.file(savedPath));
+            }
+          }
+          return choice;
+        },
+        showErrorMessage: async (message) => vscode.window.showErrorMessage(message),
+      });
+      return outcome.kind === "ok";
     })
   );
 
