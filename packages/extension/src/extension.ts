@@ -145,12 +145,71 @@ const TRANSPORT_CONFIRM_STATE_KEY = "mcpTransportConfirmed";
 // one nudge forever (users may decide to pin after ignoring the first prompt).
 let portPinNudgedThisSession = false;
 
-async function buildApplyIdeConfigDeps(
+/**
+ * Build deps with an async-sourced live daemon snapshot. `getDaemonPort` and
+ * `getActiveTunnel` must return synchronously (builders don't await), so the
+ * caller awaits the daemon status once, then closes over it. This is the sole
+ * ApplyIdeConfigDeps factory — the previous two-tier (base + Live) split left
+ * `getDaemonPort` returning `null` in the base, which would silently fail the
+ * stability gate for any caller that forgot to use the Live variant. Single
+ * factory keeps that footgun out of the codebase.
+ */
+async function buildApplyIdeConfigDepsLive(
   context: vscode.ExtensionContext
 ): Promise<ApplyIdeConfigDeps> {
   const settings = getSettingsSnapshot();
 
-  return {
+  let daemonPort: number | null = null;
+  let activeTunnel: {
+    providerId: "cf-quick" | "ngrok" | "cf-named";
+    url: string;
+    reservedDomain: boolean;
+  } | null = null;
+
+  try {
+    const status = await getBundledDaemonStatus();
+    daemonPort = status.health?.port ?? status.record?.port ?? null;
+    const tunnelUrl = status.health?.tunnel?.url ?? status.record?.tunnelUrl ?? null;
+    const tunnelStatus = status.health?.tunnel?.status ?? null;
+    if (tunnelUrl && tunnelStatus === "enabled") {
+      const providerId = getBundledActiveTunnelProvider();
+      const ngrok = getBundledNgrokSettings();
+      const reservedDomain = providerId === "ngrok" && Boolean(ngrok.domain);
+      activeTunnel = {
+        providerId,
+        url: tunnelUrl,
+        reservedDomain,
+      };
+    }
+  } catch {
+    // Leave port/tunnel at null — builders will throw StabilityGateError on
+    // the relevant transports, which applyIdeConfig maps to "tunnel-unstable".
+  }
+
+  // Resolve the local-token issuer up front. `perplexity-user-mcp/daemon`
+  // is import-only; doing the dynamic import at deps-build time lets the
+  // returned synchronous closure satisfy the builder's sync contract.
+  let issueLocalTokenFn:
+    | ((input: { ideTag: string; label: string }) => { token: string; metadata: { id: string } })
+    | null = null;
+  try {
+    const mod = (await import("perplexity-user-mcp/daemon")) as unknown as {
+      issueLocalToken?: (args: { ideTag: string; label: string }) => {
+        token: string;
+        metadata: { id: string };
+      };
+    };
+    if (typeof mod.issueLocalToken === "function") {
+      issueLocalTokenFn = mod.issueLocalToken;
+    }
+  } catch (err) {
+    // Local tokens are only needed for the http-loopback bearer fallback
+    // branch, which no current IDE capability flag enables. A missing helper
+    // is fine until 8.6.5 lights up that path on a smoke-verified IDE.
+    debug(`issueLocalToken dynamic import skipped: ${(err as Error).message}`);
+  }
+
+  const deps: ApplyIdeConfigDeps = {
     confirmTransport: async ({ ideTag, transportId, configPath }) => {
       const stored = context.workspaceState.get<Record<string, boolean>>(
         TRANSPORT_CONFIRM_STATE_KEY,
@@ -213,32 +272,8 @@ async function buildApplyIdeConfigDeps(
       );
     },
 
-    // The mcp-server daemon subpath is ESM-only — a sync require() in the
-    // extension's CJS bundle would either fail at bundle-time (tsup can't
-    // inline import-only exports) or at runtime. Real wiring happens in
-    // buildApplyIdeConfigDepsLive() below via a pre-awaited dynamic import,
-    // so this default is a safety net for any codepath that bypasses the
-    // async builder.
-    issueLocalToken: (_input) => {
-      throw new Error(
-        "issueLocalToken helper not yet wired at this entry point. Call buildApplyIdeConfigDepsLive first."
-      );
-    },
-
-    getDaemonPort: () => {
-      // Fetch synchronously: `configureTargets` awaits one IDE at a time, so
-      // a snapshot-per-dispatch is acceptable. We cache nothing — the port can
-      // change if the daemon restarts between dispatches.
-      try {
-        // Synchronous equivalent: readTunnelSettings etc. are sync; the full
-        // status getter is async and safe to await, so do that in the caller.
-        return null;
-      } catch {
-        return null;
-      }
-    },
-
-    getActiveTunnel: () => null,
+    getDaemonPort: () => daemonPort,
+    getActiveTunnel: () => activeTunnel,
 
     syncFolderPatterns: settings.syncFolderPatterns,
 
@@ -265,77 +300,11 @@ async function buildApplyIdeConfigDeps(
         return false;
       }
     },
+
+    ...(issueLocalTokenFn ? { issueLocalToken: issueLocalTokenFn } : {}),
   };
-}
 
-/**
- * Build deps with an async-sourced live daemon snapshot. `getDaemonPort` and
- * `getActiveTunnel` must return synchronously (builders don't await), so the
- * caller awaits the daemon status once, then closes over it.
- */
-async function buildApplyIdeConfigDepsLive(
-  context: vscode.ExtensionContext
-): Promise<ApplyIdeConfigDeps> {
-  const base = await buildApplyIdeConfigDeps(context);
-
-  let daemonPort: number | null = null;
-  let activeTunnel: {
-    providerId: "cf-quick" | "ngrok" | "cf-named";
-    url: string;
-    reservedDomain: boolean;
-  } | null = null;
-
-  try {
-    const status = await getBundledDaemonStatus();
-    daemonPort = status.health?.port ?? status.record?.port ?? null;
-    const tunnelUrl = status.health?.tunnel?.url ?? status.record?.tunnelUrl ?? null;
-    const tunnelStatus = status.health?.tunnel?.status ?? null;
-    if (tunnelUrl && tunnelStatus === "enabled") {
-      const providerId = getBundledActiveTunnelProvider();
-      const ngrok = getBundledNgrokSettings();
-      const reservedDomain = providerId === "ngrok" && Boolean(ngrok.domain);
-      activeTunnel = {
-        providerId,
-        url: tunnelUrl,
-        reservedDomain,
-      };
-    }
-  } catch {
-    // Leave port/tunnel at null — builders will throw StabilityGateError on
-    // the relevant transports, which applyIdeConfig maps to "tunnel-unstable".
-  }
-
-  // Resolve the local-token issuer up front. `perplexity-user-mcp/daemon`
-  // is import-only; doing the dynamic import at deps-build time lets the
-  // returned synchronous closure satisfy the builder's sync contract.
-  let issueLocalTokenFn:
-    | ((input: { ideTag: string; label: string }) => { token: string; metadata: { id: string } })
-    | null = null;
-  try {
-    const mod = (await import("perplexity-user-mcp/daemon")) as unknown as {
-      issueLocalToken?: (args: { ideTag: string; label: string }) => {
-        token: string;
-        metadata: { id: string };
-      };
-    };
-    if (typeof mod.issueLocalToken === "function") {
-      issueLocalTokenFn = mod.issueLocalToken;
-    }
-  } catch (err) {
-    // Local tokens are only needed for the http-loopback bearer fallback
-    // branch, which no current IDE capability flag enables. A missing helper
-    // is fine until 8.6.5 lights up that path on a smoke-verified IDE.
-    debug(`issueLocalToken dynamic import skipped: ${(err as Error).message}`);
-  }
-
-  return {
-    ...base,
-    getDaemonPort: () => daemonPort,
-    getActiveTunnel: () => activeTunnel,
-    ...(issueLocalTokenFn
-      ? { issueLocalToken: issueLocalTokenFn }
-      : {}),
-  };
+  return deps;
 }
 
 async function maybePromptAutoConfiguration(

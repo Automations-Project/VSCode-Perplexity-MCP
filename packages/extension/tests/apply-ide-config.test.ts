@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -62,7 +63,11 @@ vi.mock("@perplexity-user-mcp/shared", async (importOriginal) => {
 
 // Intentionally import AFTER the vi.mock call; vitest hoists mocks but this
 // keeps the intent legible.
-import { applyIdeConfig, type ApplyIdeConfigDeps } from "../src/auto-config/index.js";
+import {
+  applyIdeConfig,
+  removeIdeConfig,
+  type ApplyIdeConfigDeps,
+} from "../src/auto-config/index.js";
 
 const tempDirs: string[] = [];
 
@@ -470,6 +475,10 @@ describe("applyIdeConfig — Phase 8.6.4 dispatch", () => {
     // still be here.
     const restored = readFileSync(configPath, "utf8");
     expect(restored).not.toMatch(/pplx_local_old_YYYY/);
+    // Positive assertion: `<redacted>` must appear so a future regression where
+    // the rollback copies unredacted content can't pass trivially (the
+    // plaintext bearer simply happening to not match a specific substring).
+    expect(restored).toContain("<redacted>");
     expect(audit.at(-1)?.resultCode).toBe("error");
 
     rmSync(blockedTmp, { recursive: true, force: true });
@@ -620,5 +629,122 @@ describe("applyIdeConfig — Phase 8.6.4 dispatch", () => {
     expect(result.ok).toBe(true);
     expect(audit[0]?.configPath.startsWith("~")).toBe(true);
     expect(audit[0]?.configPath).not.toContain(fakeHome);
+  });
+
+  it("writes the final config with 0o600 perms (bearer-kind happy path)", async () => {
+    // Regression for B1 — the tempfile used by writeJsonAtomic previously had
+    // default (world-readable) permissions, so during the window between
+    // `writeFileSync` and `renameSync` a concurrent reader could lift the
+    // embedded Bearer token. Both the tempfile and the resulting config file
+    // must open at 0o600 (POSIX) / locked ACL (Windows).
+    const root = makeTempRoot();
+    const configPath = join(root, ".cursor", "mcp.json");
+
+    const result = await applyIdeConfig(
+      {
+        target: "cursorBearer" as never,
+        serverPath: "C:/bundle/server.mjs",
+        configPath,
+        transportId: "http-loopback",
+      },
+      {
+        confirmTransport: async () => true,
+        warnSyncFolder: async () => "override",
+        issueLocalToken: () => ({
+          token: "pplx_local_cursorbearer_TESTxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          metadata: { id: "local-cursorbearer-test" },
+        }),
+        getDaemonPort: () => 54321,
+        isGitTracked: () => false,
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    expect(existsSync(configPath)).toBe(true);
+    // Windows uses ACLs rather than POSIX mode bits; skip the bit check but
+    // keep the existence assertion so at least the write is verified.
+    if (process.platform !== "win32") {
+      const mode = statSync(configPath).mode & 0o777;
+      expect(mode).toBe(0o600);
+    }
+  });
+
+  it("removeIdeConfig — sanitized .bak is written then cleaned up on success", async () => {
+    // Regression for I1 — removeIdeConfig previously used a raw copyFileSync
+    // into `.bak` with default perms and no cleanup, leaving a plaintext
+    // bearer on disk permanently.
+    const root = makeTempRoot();
+    const configPath = join(root, "mcp.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          mcpServers: {
+            Perplexity: {
+              url: "http://127.0.0.1:54321/mcp",
+              headers: {
+                Authorization:
+                  "Bearer pplx_local_abc_REMOVETESTxxxxxxxxxxxxxxxxxxxxxx",
+              },
+            },
+          },
+        },
+        null,
+        2
+      )
+    );
+
+    removeIdeConfig("cursor", { configPath });
+
+    // Success path: `.bak` was created, sanitized, then deleted. It must not
+    // linger on disk — a stale redacted artifact still leaks structure.
+    expect(existsSync(`${configPath}.bak`)).toBe(false);
+
+    // The config is cleaned (Perplexity entry removed).
+    const remaining = JSON.parse(readFileSync(configPath, "utf8")) as {
+      mcpServers?: Record<string, unknown>;
+    };
+    expect(remaining.mcpServers?.Perplexity).toBeUndefined();
+  });
+
+  it("removeIdeConfig — rollback restores sanitized .bak when the write fails", async () => {
+    const root = makeTempRoot();
+    const configPath = join(root, "mcp.json");
+    const originalContent = JSON.stringify(
+      {
+        mcpServers: {
+          Perplexity: { command: "node", args: ["x"] },
+          tainted: {
+            headers: {
+              Authorization:
+                "Bearer pplx_local_old_REMOVETESTyyyyyyyyyyyyyyyyyyyyyy",
+            },
+          },
+        },
+      },
+      null,
+      2
+    );
+    writeFileSync(configPath, originalContent);
+
+    // Force renameSync inside writeJsonAtomic to fail by parking a non-empty
+    // directory at the `.tmp` path. Same trick the existing H3 rollback test
+    // uses — portable across platforms without fs spy.
+    const blockedTmp = `${configPath}.tmp`;
+    mkdirSync(blockedTmp, { recursive: true });
+    writeFileSync(join(blockedTmp, "blocker"), "x");
+
+    removeIdeConfig("cursor", { configPath });
+
+    // Post-rollback: `.bak` was removed, and configPath now holds the
+    // sanitized content (the rollback copies `.bak` over the target). The
+    // plaintext bearer must be gone and `<redacted>` present — parity with
+    // the applyIdeConfig H3 rollback test.
+    expect(existsSync(`${configPath}.bak`)).toBe(false);
+    const restored = readFileSync(configPath, "utf8");
+    expect(restored).not.toMatch(/pplx_local_old_REMOVETEST/);
+    expect(restored).toContain("<redacted>");
+
+    rmSync(blockedTmp, { recursive: true, force: true });
   });
 });

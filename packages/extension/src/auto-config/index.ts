@@ -397,7 +397,14 @@ function removeTomlMcpServer(toml: string, serverName: string): string {
 function writeJsonAtomic(configPath: string, data: McpConfigFile): void {
   mkdirSync(dirname(configPath), { recursive: true });
   const tempPath = `${configPath}.tmp`;
-  writeFileSync(tempPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+  // H3 invariant: the tempfile may transiently contain a bearer token during
+  // http-loopback bearer-kind writes. `writeFileSync`'s default mode is 0o666
+  // minus umask (typically 0o644, world-readable) — unacceptable for secrets.
+  // Match `writeTextAtomic` and the `.bak` hygiene: open at 0o600 on POSIX,
+  // then run `applyPrivatePermissions` (chmod/icacls) BEFORE the rename so the
+  // target inherits the hardened ACL.
+  writeFileSync(tempPath, `${JSON.stringify(data, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  applyPrivatePermissions(tempPath);
   renameSync(tempPath, configPath);
 }
 
@@ -804,7 +811,11 @@ function redactTree(value: unknown): unknown {
 function writeTextAtomic(configPath: string, data: string): void {
   mkdirSync(dirname(configPath), { recursive: true });
   const tempPath = `${configPath}.tmp`;
+  // H3 invariant: harden the tempfile identically to `writeJsonAtomic` — the
+  // mode bit covers POSIX; `applyPrivatePermissions` adds the Windows icacls
+  // lockdown before the rename so the final config inherits the ACL.
   writeFileSync(tempPath, data, { encoding: "utf8", mode: 0o600 });
+  applyPrivatePermissions(tempPath);
   renameSync(tempPath, configPath);
 }
 
@@ -884,16 +895,61 @@ export function removeIdeConfig(target: IdeTarget, options?: { configPath?: stri
   const serverName = options?.serverName ?? PERPLEXITY_MCP_SERVER_KEY;
 
   if (!existsSync(configPath)) return;
-  copyFileSync(configPath, `${configPath}.bak`);
 
-  if (meta.configFormat === "toml") {
-    const existing = readTomlFile(configPath);
-    const cleaned = removeTomlMcpServer(existing, serverName);
-    writeFileSync(configPath, cleaned, "utf8");
-  } else {
-    const existingConfig = readExistingConfig(configPath);
-    const cleaned = removeMcpEntry(existingConfig, serverName);
-    writeJsonAtomic(configPath, cleaned);
+  // H3 parity with applyIdeConfig: sanitize the .bak (redact bearers), harden
+  // the permissions (0o600 + icacls), and delete it on success. A permanent
+  // `.bak` written via raw `copyFileSync` would preserve a plaintext bearer on
+  // disk forever — the pre-8.6.4 pattern that this branch eliminates.
+  const configFormat: "json" | "toml" = meta.configFormat === "toml" ? "toml" : "json";
+  const bakPath = `${configPath}.bak`;
+  try {
+    const raw = readFileSync(configPath, "utf8");
+    const sanitized = sanitizeConfigForBackup(raw, configFormat);
+    writeFileSync(bakPath, sanitized, { encoding: "utf8", mode: 0o600 });
+    applyPrivatePermissions(bakPath);
+  } catch {
+    // If we can't read the existing file, don't proceed with a destructive
+    // remove — leave the config untouched. Mirrors applyIdeConfig's fail-closed
+    // stance on pre-write hazards.
+    return;
+  }
+
+  try {
+    if (configFormat === "toml") {
+      const existing = readTomlFile(configPath);
+      const cleaned = removeTomlMcpServer(existing, serverName);
+      writeTextAtomic(configPath, cleaned);
+    } else {
+      const existingConfig = readExistingConfig(configPath);
+      const cleaned = removeMcpEntry(existingConfig, serverName);
+      writeJsonAtomic(configPath, cleaned);
+    }
+  } catch {
+    // Rollback: restore the sanitized .bak over the target, then delete .bak.
+    // The restored content is redacted (not the plaintext original); callers
+    // that need the plaintext should re-apply, not inspect .bak.
+    if (existsSync(bakPath)) {
+      try {
+        copyFileSync(bakPath, configPath);
+      } catch {
+        // Best-effort; surface nothing — removeIdeConfig is a void API.
+      }
+      try {
+        rmSync(bakPath, { force: true });
+      } catch {
+        // Best-effort cleanup only.
+      }
+    }
+    return;
+  }
+
+  // Success — delete the sanitized .bak so no redacted artifact lingers.
+  if (existsSync(bakPath)) {
+    try {
+      rmSync(bakPath, { force: true });
+    } catch {
+      // Best-effort cleanup only.
+    }
   }
 }
 
