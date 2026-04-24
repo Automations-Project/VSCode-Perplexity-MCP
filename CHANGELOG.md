@@ -4,6 +4,36 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [0.8.4] — 2026-04-24 — Phase 8.6 hotfix: picker actually works
+
+v0.8.3 shipped the transport picker UI + dispatcher but the wire between the two was severed — HTTP transport options looked clickable and landed in the picker but never persisted, and the capability matrix kept every HTTP option disabled for every IDE. Owner's smoke produced a diagnostics zip showing `mcpTransportByIde: {}` after picking HTTP in the UI and every audit line defaulting to `stdio-daemon-proxy`. This release closes the five gaps surfaced by that smoke.
+
+### Added
+- **`http-loopback` static-bearer variant.** New `bearerKind: "static"` on `TransportBuildInput`; `http-loopback` builder embeds `Authorization: Bearer <daemon-static-bearer>` when this kind is set. The daemon's static bearer is already accepted on loopback via Phase 8.2 H11's source-aware `verifyAccessToken`, so this transport now works out of the box for every IDE the picker can reach. Per-client scoped bearers (the `local-tokens.ts` primitives shipped in 8.6.1) remain for future work — the dispatcher's `bearerKind` decision now prefers `"static"` when `httpBearerLoopback` is the capability, and the `"local"` branch is unreachable until a future evidence-gated capability flip re-enables it.
+- **Capability baseline.** `IdeMeta.capabilities.httpBearerLoopback` flipped `true` for every auto-configurable JSON IDE (`cursor`, `claudeDesktop`, `claudeCode`, `cline`, `windsurf`, `windsurfNext`, `amp`, `rooCode`, `continueDev`, `zed`). Evidence file: `docs/smoke-evidence/2026-04-24-http-loopback-static-bearer.md`. `httpOAuthLoopback` and `httpOAuthTunnel` remain `false` everywhere — those require the OAuth-discovery + RFC 8707 resource-binding evidence paths which are separate future work.
+- **`getDaemonBearer` dependency** on `ApplyIdeConfigDeps`. Wired in `buildApplyIdeConfigDepsLive` to read `status.record.bearerToken` from the bundled daemon lockfile. Unit tests cover the error paths (null bearer → `ok: false, reason: "error"`; dep not provided → same shape).
+- **`transport:select` + `transport:regenerate-stale` extension-host handlers** in `DashboardProvider`. The first persists the user's per-IDE choice to `Perplexity.mcpTransportByIde` via `vscode.workspace.getConfiguration().update(...)`, then re-posts the settings snapshot so the webview re-renders with the committed value. The second delegates to the existing `Perplexity.generateConfigs` command so both entry points (dashboard button and command palette) share the same modal + capability gates. Unit-testable via a new extracted `transport-select-handler.ts` helper following the repo's `bearer-reveal-gate.ts` pattern.
+- **Staleness detector** at `packages/extension/src/webview/staleness-detector.ts`. Pure function that reads each auto-configurable IDE's mcp.json, extracts the Perplexity entry, and compares `url` / `headers.Authorization` against the live daemon port + tunnel URL + static bearer. Returns `{ ideTag, reason: "bearer" | "url" }[]`. Skips unreadable or malformed configs silently per IDE. Wired into `DashboardProvider.postDaemonState` so every daemon-state push triggers a fresh comparison; the result flows to the webview via `transport:staleness`, populating the `staleConfigs` slice added in 8.6.5 and finally making the "N configs contain stale auth" banner visible.
+- **Surfaced error modals** in `Perplexity.generateConfigs`. The command handler now inspects `outcome.results`, groups failures, builds a reason-specific message per target, and surfaces via `window.showErrorMessage` with an "Open Output" action that reveals the Perplexity output channel. Covers `unsupported`, `sync-folder`, `tunnel-unstable`, `port-unavailable`, `cancelled`, `error` reasons. Previous behaviour: audit-only, silent to the user.
+- **Cloudflare Named Tunnel WAF warning banner** in the dashboard's TunnelManager card. Fires when `activeProvider === "cf-named"` AND `tunnel.status === "enabled"`. Text: the tunnel URL inline, an inline `Path = "/mcp"` WAF-Skip-rule recipe, and a link to `https://developers.cloudflare.com/waf/custom-rules/skip/`. Not dismissable — the warning corresponds to a one-time Zone configuration; future "tested & working" state collapse is a deferred enhancement.
+
+### Changed
+- `packages/mcp-server` + `packages/extension` bump to `0.8.4`.
+- `ApplyIdeConfigResult` audit line shapes expanded with the new `"static"` bearer-kind tag. The surfaced toast includes failure detail aggregated across targets; successful generates still post an info notice to the dashboard.
+
+### Security
+- **No design regression.** The static daemon bearer is now embedded in IDE `mcp.json` files only when the capability matrix allows http-loopback, and only for loopback URLs (`http://127.0.0.1:<port>/mcp`). The daemon has rejected static bearers over tunnel since Phase 8.2 H11; that invariant is unchanged here. `http-tunnel` continues to emit `{ url }` only — **no `headers` key, ever** — regardless of `bearerKind`.
+- **H4 sync-folder detection** now also guards the new `"static"` bearer path (previously only `"local"` triggered it). If a user picks http-loopback for an IDE whose mcp.json lives under a sync folder, the same modal + default-deny still fires.
+
+### Tests
+- **742 passed / 86 files** — up from 705 / 83 at v0.8.3 (+37 tests across the patch). Breakdown: 7 http-loopback static-variant + 2 apply-ide-config static-branch error paths (Wave 1), 14 staleness-detector + 7 transport-select-handler + 2 apply-ide-config additional (Wave 2α), 7 cf-named WAF banner (Wave 2γ).
+
+### Release gate
+- Typecheck: green across all 4 packages.
+- Full suite: 742 passed / 86 files.
+- Secret-leak gate: clean on `.test-artifacts/vitest.log`.
+- Manual smoke: **consolidated final-smoke pass still pending against this VSIX.** If this release's smoke surfaces further regressions, they ship as `v0.8.5` patch commits (same pattern as v0.6.0 → v0.6.1).
+
 ## [0.8.3] — 2026-04-24 — Phase 8.6: MCP transport picker
 
 Per-IDE choice between four MCP transports — `stdio-in-process`, `stdio-daemon-proxy` (default), `http-loopback`, `http-tunnel` — with capability-gated availability, security prechecks (H3–H8 from the 8.6 design), and a dashboard picker UI. **All HTTP capability flags start `false` across every IDE**; flipping one to `true` requires a dated `docs/smoke-evidence/*.md` file plus a committed generator golden fixture. As of 0.8.3 every IDE ships stdio-only — the contract, UI, and dispatcher are in place for individual HTTP capabilities to flip as evidence lands.
