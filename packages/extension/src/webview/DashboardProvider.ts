@@ -36,6 +36,7 @@ import {
   type RegenerateStaleIdesDeps,
 } from "./staleness-auto-regen.js";
 import { handleTransportSelect } from "./transport-select-handler.js";
+import { confirmTunnelSwitch } from "./tunnel-switch-confirm.js";
 import {
   handleCfNamedCreate,
   handleCfNamedDeleteRemote,
@@ -583,7 +584,32 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
           case "daemon:set-tunnel-provider": {
             try {
               const { providerId } = message.payload;
-              const wasRunning = (await getBundledDaemonStatus()).record?.tunnelUrl != null;
+              // v0.8.5: confirm gate. Read pre-switch state so the modal can
+              // tell the user what will be disrupted. We inspect the live
+              // daemon status for the "tunnel actually enabled right now"
+              // signal (matches the existing hasTunnel check in
+              // daemon:clear-ngrok-settings) and use the settings file for the
+              // currently-selected provider.
+              const beforeStatus = await getBundledDaemonStatus();
+              const currentTunnelEnabled = Boolean(
+                beforeStatus.health?.tunnel?.url ?? beforeStatus.record?.tunnelUrl,
+              );
+              const currentProvider = getBundledActiveTunnelProvider();
+              const confirmed = await confirmTunnelSwitch({
+                nextProvider: providerId,
+                deps: {
+                  showWarningMessage: vscode.window.showWarningMessage,
+                  currentProvider,
+                  currentTunnelEnabled,
+                },
+              });
+              if (!confirmed) {
+                // User cancelled — not a failure. Clear the spinner and bail.
+                await this.postActionResult(message.id, true);
+                break;
+              }
+
+              const wasRunning = beforeStatus.record?.tunnelUrl != null;
               if (wasRunning) {
                 await disableBundledDaemonTunnel();
               }
@@ -596,6 +622,11 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
                     ? "Cloudflare Named Tunnel"
                     : "Cloudflare Quick";
               await this.postNotice("info", `Active tunnel provider set to ${providerLabel}. Click Enable to start it.`);
+              // v0.8.5: re-run staleness so the banner reflects the new
+              // provider immediately. The tunnel URL is gone at this point (we
+              // disabled it above), so any http-tunnel IDE should now flag as
+              // stale until the user re-enables + regenerates.
+              await this.postStaleness(await getBundledDaemonStatus());
               await this.postActionResult(message.id, true);
             } catch (err) {
               await this.postActionResult(message.id, false, (err as Error).message);
