@@ -8,6 +8,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import type { ExternalViewer, HistoryItem, WebviewMessage } from "@perplexity-user-mcp/shared";
+import { useDisclosureMenu } from "../lib/useDisclosureMenu";
 
 type SendFn = (message: WebviewMessage | Omit<Extract<WebviewMessage, { id: string }>, "id">) => void;
 
@@ -67,36 +68,7 @@ export function OpenWithMenu({
     };
   }, [open, updateMenuPosition]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        close();
-        toggleRef.current?.focus();
-      }
-      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-        e.preventDefault();
-        const items = containerRef.current?.querySelectorAll<HTMLElement>(".hist-menu-item:not(:disabled)");
-        if (!items || items.length === 0) return;
-        const active = document.activeElement;
-        const idx = Array.from(items).indexOf(active as HTMLElement);
-        const next = e.key === "ArrowDown"
-          ? items[(idx + 1) % items.length]
-          : items[(idx - 1 + items.length) % items.length];
-        next?.focus();
-      }
-    };
-    const onClick = (e: MouseEvent) => {
-      if (!containerRef.current?.contains(e.target as Node)) close();
-    };
-    document.addEventListener("keydown", onKey);
-    document.addEventListener("click", onClick);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.removeEventListener("click", onClick);
-    };
-  }, [open, close]);
+  useDisclosureMenu({ triggerRef: toggleRef, menuRef: containerRef, isOpen: open, onClose: close });
 
   const onToggleKey = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" || e.key === " ") {

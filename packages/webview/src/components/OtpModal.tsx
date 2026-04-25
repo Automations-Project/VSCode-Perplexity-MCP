@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useId, useEffect, useRef, useState } from "react";
 import type React from "react";
 import { useDashboardStore } from "../store";
 import type { SendFn } from "../views";
+import { useFocusTrap } from "../lib/useFocusTrap";
 
 export function OtpModal({ send }: { send: SendFn }) {
   const prompt = useDashboardStore((s) => s.otpPrompt);
@@ -9,18 +10,28 @@ export function OtpModal({ send }: { send: SendFn }) {
   const [digits, setDigits] = useState<string[]>(Array(6).fill(""));
   const [secondsLeft, setSecondsLeft] = useState(300);
   const firstRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
 
+  const isOpen = prompt?.open ?? false;
+
+  // Reset state and focus first input when modal opens.
   useEffect(() => {
-    if (!prompt?.open) return;
+    if (!isOpen) return;
     setDigits(Array(6).fill(""));
     setSecondsLeft(300);
+    // useFocusTrap handles initial focus; firstRef focus here is belt-and-suspenders
+    // for the case where the trap fires before the rAF in useFocusTrap.
     firstRef.current?.focus();
     const t = setInterval(() => setSecondsLeft((s) => Math.max(0, s - 1)), 1000);
     return () => clearInterval(t);
-  }, [prompt?.open]);
+  }, [isOpen]);
 
-  if (!prompt?.open) return null;
-  const activePrompt = prompt;
+  // Focus trap: Tab cycling, Esc to cancel, focus restoration on close.
+  useFocusTrap({ active: isOpen, containerRef: dialogRef, onEscape: cancel });
+
+  if (!isOpen) return null;
+  const activePrompt = prompt!;
 
   function submit(code: string) {
     send({ type: "auth:otp-submit", id: crypto.randomUUID(), payload: { profile: activePrompt.profile, otp: code } });
@@ -40,10 +51,10 @@ export function OtpModal({ send }: { send: SendFn }) {
   function cancel() { close(); }
 
   return (
-    <div className="otp-modal-backdrop" role="dialog" aria-modal="true">
-      <div className="otp-modal">
-        <h3>Enter the code from your email</h3>
-        <p className="otp-email">{prompt.email}</p>
+    <div className="otp-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+      <div className="otp-modal" ref={dialogRef}>
+        <h3 id={titleId}>Enter the code from your email</h3>
+        <p className="otp-email">{activePrompt.email}</p>
         <div className="otp-inputs">
           {digits.map((d, i) => (
             <input key={i} ref={i === 0 ? firstRef : undefined} className="otp-input" maxLength={1} value={d}

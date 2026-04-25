@@ -1,4 +1,5 @@
 import { useId, useEffect, useRef, useState } from "react";
+import { useFocusTrap } from "../lib/useFocusTrap";
 
 export interface PromptModalProps {
   open: boolean;
@@ -26,12 +27,16 @@ export function PromptModal({
   const titleId = useId();
   const [value, setValue] = useState(defaultValue);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
     setValue(defaultValue);
     inputRef.current?.focus();
   }, [open, defaultValue]);
+
+  // Focus trap: Tab cycling, Esc, and focus restoration on close.
+  useFocusTrap({ active: open, containerRef: dialogRef, onEscape: onCancel });
 
   if (!open) return null;
 
@@ -41,12 +46,13 @@ export function PromptModal({
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter") handleConfirm();
-    if (e.key === "Escape") onCancel();
+    // Esc is handled by the focus trap at the document level.
   }
 
   return (
     <div className="rich-view-overlay" role="dialog" aria-modal="true" aria-labelledby={titleId}>
       <div
+        ref={dialogRef}
         className="glass-panel"
         style={{ alignSelf: "center", width: "min(420px, 100%)", padding: "20px", display: "flex", flexDirection: "column", gap: "14px" }}
         onClick={(e) => e.stopPropagation()}
