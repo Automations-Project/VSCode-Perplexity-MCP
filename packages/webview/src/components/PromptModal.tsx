@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useId, useEffect, useRef, useState } from "react";
 
 export interface PromptModalProps {
   open: boolean;
@@ -23,6 +23,7 @@ export function PromptModal({
   onConfirm,
   onCancel,
 }: PromptModalProps) {
+  const titleId = useId();
   const [value, setValue] = useState(defaultValue);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -44,33 +45,24 @@ export function PromptModal({
   }
 
   return (
-    <div className="rich-view-overlay" role="dialog" aria-modal="true" aria-labelledby="prompt-modal-title">
+    <div className="rich-view-overlay" role="dialog" aria-modal="true" aria-labelledby={titleId}>
       <div
         className="glass-panel"
         style={{ alignSelf: "center", width: "min(420px, 100%)", padding: "20px", display: "flex", flexDirection: "column", gap: "14px" }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 id="prompt-modal-title" style={{ margin: 0, fontSize: "0.95rem", fontWeight: 600 }}>{title}</h3>
+        <h3 id={titleId} style={{ margin: 0, fontSize: "0.95rem", fontWeight: 600 }}>{title}</h3>
         {description && (
           <p style={{ margin: 0, fontSize: "0.8rem", color: "var(--text-secondary)" }}>{description}</p>
         )}
         <input
           ref={inputRef}
           type="text"
+          className="setting-input"
           value={value}
           placeholder={placeholder}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
-          style={{
-            background: "rgba(255,255,255,0.06)",
-            border: "1px solid var(--border-color)",
-            borderRadius: "8px",
-            padding: "7px 10px",
-            fontSize: "0.8rem",
-            color: "var(--text-primary)",
-            width: "100%",
-            boxSizing: "border-box",
-          }}
         />
         <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
           <button className="ghost-button" onClick={onCancel}>{cancelLabel}</button>

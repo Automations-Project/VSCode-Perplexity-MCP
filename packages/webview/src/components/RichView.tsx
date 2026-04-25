@@ -29,13 +29,11 @@ export function RichView({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
+      if (event.key === "Escape" && !tagPromptOpen) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, tagPromptOpen]);
 
   // Auto-fetch the real content on first open of a cloud stub.
   useEffect(() => {

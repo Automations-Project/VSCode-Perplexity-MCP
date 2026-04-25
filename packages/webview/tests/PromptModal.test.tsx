@@ -102,4 +102,10 @@ describe("PromptModal", () => {
     fireEvent.keyDown(input, { key: "Escape" });
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
+
+  it("focuses the input when opened", () => {
+    setup({ open: true });
+    const input = screen.getByRole("textbox");
+    expect(document.activeElement).toBe(input);
+  });
 });
