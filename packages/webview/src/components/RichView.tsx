@@ -1,11 +1,12 @@
 import { CloudDownload, ExternalLink, Tag } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ExternalViewer, HistoryEntryDetail, WebviewMessage } from "@perplexity-user-mcp/shared";
 import { Markdown } from "../markdown";
 import { AttachmentsList } from "./AttachmentsList";
 import { DownloadMenu } from "./DownloadMenu";
 import { OpenWithMenu } from "./OpenWithMenu";
 import { useDashboardStore } from "../store";
+import { PromptModal } from "./PromptModal";
 
 type SendFn = (message: WebviewMessage | Omit<Extract<WebviewMessage, { id: string }>, "id">) => void;
 
@@ -24,6 +25,7 @@ export function RichView({
   const hydrating = cloudHydrate.historyId === entry.id && cloudHydrate.phase === "starting";
   const needsHydration = entry.source === "cloud" && !entry.cloudHydratedAt;
   const autoTriggered = useRef<string | null>(null);
+  const [tagPromptOpen, setTagPromptOpen] = useState(false);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -45,10 +47,11 @@ export function RichView({
   }, [entry.id, needsHydration, hydrating, send]);
 
   const updateTags = () => {
-    const next = window.prompt("Comma-separated tags", (entry.tags ?? []).join(", "));
-    if (next == null) {
-      return;
-    }
+    setTagPromptOpen(true);
+  };
+
+  const handleTagConfirm = (next: string) => {
+    setTagPromptOpen(false);
     send({
       type: "history:tag",
       payload: {
@@ -59,6 +62,17 @@ export function RichView({
   };
 
   return (
+    <>
+    <PromptModal
+      open={tagPromptOpen}
+      title="Edit tags"
+      description="Enter comma-separated tags for this entry."
+      defaultValue={(entry.tags ?? []).join(", ")}
+      placeholder="tag1, tag2, …"
+      confirmLabel="Save"
+      onConfirm={handleTagConfirm}
+      onCancel={() => setTagPromptOpen(false)}
+    />
     <div className="rich-view-overlay" role="dialog" aria-modal="true" onClick={onClose}>
       <div className="rich-view-panel glass-panel" onClick={(event) => event.stopPropagation()}>
         <div className="rich-view-header">
@@ -158,5 +172,6 @@ export function RichView({
         </div>
       </div>
     </div>
+    </>
   );
 }
