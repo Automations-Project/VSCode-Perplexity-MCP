@@ -44,10 +44,10 @@ export function ProfileSwitcher({ send }: { send: SendFn }) {
   return (
     <div className="profile-switcher">
       <button className="profile-pill" onClick={() => setOpen(!open)} aria-expanded={open}>
-        <StatusDot variant={dotVariant} />
+        <StatusDot variant={dotVariant} decorative />
         <span className="profile-pill-name">{label}</span>
         <span className="profile-pill-tier">{tier}</span>
-        <ChevronDown size={14} />
+        <ChevronDown size={14} aria-hidden="true" />
       </button>
       {open && (
         <div className="profile-menu" role="menu">

@@ -140,7 +140,7 @@ export function DaemonStatusView({
 
       <div className="daemon-chip-row">
         <span className={`chip ${healthChip.chip}`} data-testid="daemon-health-chip">
-          <StatusDot variant={healthChip.dot} />
+          <StatusDot variant={healthChip.dot} decorative />
           {healthChip.label}
         </span>
         <span className={`chip ${tunnel.status === "enabled" ? "chip-accent" : tunnel.status === "crashed" ? "chip-danger" : "chip-muted"}`}>
@@ -232,7 +232,7 @@ export function DaemonStatusView({
               {auditTail.length}
             </span>
           ) : null}
-          <ChevronDown size={14} className="daemon-disclosure-icon text-[var(--text-muted)]" />
+          <ChevronDown size={14} className="daemon-disclosure-icon text-[var(--text-muted)]" aria-hidden="true" />
         </summary>
         {auditTail.length === 0 ? (
           <div className="empty-state daemon-empty-offset">No daemon tool calls recorded yet.</div>

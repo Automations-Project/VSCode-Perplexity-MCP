@@ -228,7 +228,7 @@ export function DashboardView({
           detail="Shared browser profile reused by the extension, bundled MCP server, and external IDE configs."
         />
         <div className="flex items-center gap-2">
-          <StatusDot variant={snapshot.loggedIn ? "ok" : "off"} />
+          <StatusDot variant={snapshot.loggedIn ? "ok" : "off"} decorative />
           <div className="dashboard-status-text">
             {snapshot.loggedIn
               ? "Session active and ready."
@@ -1709,6 +1709,7 @@ function HistoryCardRich({
                 className="hist-footer-btn"
                 onClick={(e) => { e.stopPropagation(); copyToClipboard(recoverPrompt, "recover"); }}
                 title="Copy recover prompt"
+                aria-label="Copy recover prompt"
               >
                 {copied === "recover" ? <ClipboardCheck size={11} /> : <RotateCcw size={11} />}
               </button>
@@ -1718,8 +1719,11 @@ function HistoryCardRich({
                 href={item.threadUrl}
                 className="hist-footer-link"
                 onClick={(e) => e.stopPropagation()}
+                aria-label="Open thread on perplexity.ai (new tab)"
+                target="_blank"
+                rel="noopener noreferrer"
               >
-                <ExternalLink size={11} />
+                <ExternalLink size={11} aria-hidden="true" />
               </a>
             )}
           </div>

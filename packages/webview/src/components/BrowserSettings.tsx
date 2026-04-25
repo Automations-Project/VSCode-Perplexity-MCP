@@ -62,7 +62,7 @@ function BrowserActiveChip({ browser }: { browser: BrowserInfo | undefined }) {
   const Icon = browser.channel ? CHANNEL_ICON[browser.channel] : CHANNEL_ICON.chromium;
   return (
     <span className="chip chip-pro" data-testid="browser-active-chip">
-      <StatusDot variant="ok" />
+      <StatusDot variant="ok" decorative />
       <span>
         <span aria-hidden="true" className="browser-active-icon"><Icon /></span>
         {browser.label ?? channelLabel(browser.channel)}

@@ -37,17 +37,17 @@ export function DoctorCategoryCard({
         className="ghost-button doctor-category-header"
         onClick={() => setOpen((o) => !o)}
       >
-        <StatusDot variant={STATUS_TO_VARIANT[status]} />
+        <StatusDot variant={STATUS_TO_VARIANT[status]} decorative />
         <span className="doctor-category-name">{category}</span>
         <span className="doctor-category-status">{STATUS_LABEL[status]}</span>
-        {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        {open ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
       </button>
       {open && (
         <ul className="doctor-check-list">
           {checks.map((c) => (
             <li key={c.name} className="doctor-check-item">
               <div className="doctor-check-row">
-                <StatusDot variant={STATUS_TO_VARIANT[c.status]} />
+                <StatusDot variant={STATUS_TO_VARIANT[c.status]} decorative />
                 <code className="doctor-check-code">{c.name}</code>
                 <span className="doctor-check-message">{c.message}</span>
               </div>
