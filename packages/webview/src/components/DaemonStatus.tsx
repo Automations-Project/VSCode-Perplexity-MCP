@@ -167,14 +167,16 @@ export function DaemonStatusView({
 
       <div className="daemon-section-divider" aria-hidden="true" />
 
-      <BearerReveal
-        available={bearerAvailable}
-        revealed={revealedBearer ?? null}
-        feedback={bearerFeedback}
-        onReveal={revealBearer}
-        onCopy={copyBearer}
-        now={now}
-      />
+      <div role="status" aria-live="polite">
+        <BearerReveal
+          available={bearerAvailable}
+          revealed={revealedBearer ?? null}
+          feedback={bearerFeedback}
+          onReveal={revealBearer}
+          onCopy={copyBearer}
+          now={now}
+        />
+      </div>
 
 
       <div className="daemon-section-divider" aria-hidden="true" />

@@ -70,6 +70,19 @@ a {
   outline-offset: var(--focus-ring-offset);
 }
 
+/* ── Reduced motion (a11y) ──────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .refresh-spin { animation: none; }
+  .app-shell::before, .app-shell::after { animation: none; }
+}
+
 /* ── App Shell ────────────────────────────── */
 .app-shell {
   position: relative;

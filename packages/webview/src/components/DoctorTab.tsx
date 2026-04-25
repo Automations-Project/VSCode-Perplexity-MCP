@@ -49,7 +49,7 @@ export function DoctorTab({
         </div>
       </header>
 
-      {running && <p>Running checks…</p>}
+      {running && <p aria-live="polite">Running checks…</p>}
       {!report && !running && <p className="doctor-empty">Click Run to audit your install.</p>}
       {report && (
         <>

@@ -1,5 +1,5 @@
 import { BookOpen, Bot, Clock3, Compass, Layers3, RefreshCcw, Settings2, ShieldCheck, Sparkles, Stethoscope } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { startTransition, useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
 import type { ExtensionMessage, HistoryItem, WebviewMessage } from "@perplexity-user-mcp/shared";
 import { postMessage } from "./lib/vscode";
@@ -88,6 +88,8 @@ function App() {
   const richViewEntry = useDashboardStore((store) => store.richViewEntry);
   const externalViewers = useDashboardStore((store) => store.externalViewers);
   const setRichViewEntry = useDashboardStore((store) => store.setRichViewEntry);
+
+  const reduceMotion = useReducedMotion();
 
   const [modelFilter, setModelFilter] = useState("");
   const [historyFilter, setHistoryFilter] = useState("");
@@ -225,11 +227,15 @@ function App() {
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -12 }}
-            transition={{ duration: 0.22, ease: "easeOut" }}
+            transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: "easeOut" }}
             className="grid gap-3"
           >
             {notice ? (
-              <div className={`glass-panel notice notice-${notice.level}`}>
+              <div
+                className={`glass-panel notice notice-${notice.level}`}
+                role={notice.level === "error" ? "alert" : "status"}
+                aria-live={notice.level === "error" ? "assertive" : "polite"}
+              >
                 <div className="text-sm text-[var(--text-primary)]">{notice.message}</div>
                 <button className="ghost-button" onClick={clearNotice}>
                   Dismiss

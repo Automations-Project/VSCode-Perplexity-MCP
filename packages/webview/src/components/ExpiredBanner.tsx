@@ -16,7 +16,7 @@ export function ExpiredBanner({ send }: { send: SendFn }) {
 
   return (
     <>
-      <div className="expired-banner">
+      <div className="expired-banner" role="alert">
         <AlertTriangle size={16} />
         <span>Your Perplexity session for <b>{active}</b> has expired.</span>
         <button onClick={() => send({ type: "auth:login" })}>Re-login</button>
