@@ -195,7 +195,6 @@ a {
 }
 
 /* ── Panels ───────────────────────────────── */
-.header-panel,
 .section-panel,
 .hero-panel,
 .metric-card,
@@ -241,11 +240,6 @@ a {
 
 .daemon-list-row {
   margin-top: 10px;
-  align-items: flex-start;
-}
-
-.daemon-list-row-sm {
-  margin-top: 8px;
   align-items: flex-start;
 }
 
@@ -322,14 +316,6 @@ a {
   min-width: 0;
 }
 
-.daemon-action-fill-sm {
-  flex: 1 1 140px;
-}
-
-.daemon-action-fill-md {
-  flex: 1 1 150px;
-}
-
 .daemon-action-fill-lg {
   flex: 1 1 180px;
 }
@@ -359,10 +345,6 @@ a {
 
 .daemon-input-mono {
   font-family: var(--font-mono, monospace);
-}
-
-.daemon-link-button {
-  text-decoration: none;
 }
 
 .daemon-accent-link {
@@ -722,19 +704,6 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
   }
 }
 
-.header-panel {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
-}
-
-.hero-grid {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: 1fr;
-}
-
 .metric-column {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1039,7 +1008,6 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
 
 /* ── Cards ────────────────────────────────── */
 .action-card,
-.model-card,
 .history-card,
 .toggle-row,
 .list-row,
@@ -1078,13 +1046,8 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
   margin-top: 2px;
 }
 
-.history-card,
-.model-card {
+.history-card {
   padding: 10px;
-}
-
-.history-card-wide {
-  padding: 14px;
 }
 
 /* ── IDE Status Cards ─────────────────────── */
@@ -1896,16 +1859,6 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
   min-width: 0;
 }
 
-.hist-actions-group {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px;
-  border-radius: 9px;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.04);
-}
-
 .hist-actions-divider {
   display: inline-block;
   width: 1px;
@@ -2223,21 +2176,6 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
 .hist-menu-item:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-}
-
-.hist-menu-item-kbd {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.04);
-  font-family: var(--font-mono);
-  font-size: 0.6rem;
-  color: var(--text-muted);
 }
 
 .hist-menu-footer {
@@ -3010,17 +2948,12 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
     gap: 12px;
   }
 
-  .header-panel,
   .section-panel,
   .hero-panel,
   .metric-card,
   .notice {
     border-radius: 18px;
     padding: 16px;
-  }
-
-  .hero-grid {
-    grid-template-columns: minmax(0, 1.5fr) minmax(180px, 0.7fr);
   }
 }
 
