@@ -7,6 +7,7 @@
   --text-secondary: var(--vscode-descriptionForeground, #cbd5e1);
   --text-muted: var(--vscode-disabledForeground, #94a3b8);
   --border-color: color-mix(in srgb, var(--vscode-panel-border, #1e293b) 72%, white 28%);
+  --border-muted: color-mix(in srgb, var(--border-color) 60%, transparent);
   --accent: color-mix(in srgb, var(--vscode-focusBorder, #38bdf8) 78%, white 22%);
   --success: #22c55e;
   --warning: #fbbf24;
@@ -358,6 +359,10 @@ a {
 
 .daemon-disclosure-summary {
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
 }
 
 .daemon-disclosure-main {
@@ -493,12 +498,6 @@ a {
 /* <details>/<summary> disclosure pattern used by the daemon card's
    Audit Tail and managed-caveat panels. `listStyle: none` removes the
    native marker — the rotating ChevronDown provides a cleaner affordance. */
-.daemon-disclosure-summary {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  list-style: none;
-}
 
 .daemon-disclosure-summary::-webkit-details-marker {
   display: none;
@@ -515,6 +514,7 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
 
 .cf-named-tunnel-list {
   container-type: inline-size;
+  margin-top: 10px;
 }
 
 .cf-named-card-list {
@@ -605,10 +605,6 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
 
 .cf-named-config-line-error {
   color: #fca5a5;
-}
-
-.cf-named-tunnel-list {
-  margin-top: 10px;
 }
 
 .cf-named-list-toolbar {
@@ -2979,10 +2975,6 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
 
   .hero-grid {
     grid-template-columns: minmax(0, 1.5fr) minmax(180px, 0.7fr);
-  }
-
-  .metric-column {
-    grid-template-columns: 1fr;
   }
 }
 
