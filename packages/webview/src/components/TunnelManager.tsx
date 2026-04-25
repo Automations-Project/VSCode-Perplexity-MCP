@@ -292,7 +292,7 @@ function FullTunnelManager({
             onClick={() => send({ type: "daemon:tunnel-probe", payload: { targets: ["/", "/mcp"], timeoutMs: 5000 } })}
           />
           {tunnelFeedback ? (
-            <span className="tunnel-feedback">
+            <span className="tunnel-feedback" role="status" aria-live="polite">
               {tunnelFeedback}
             </span>
           ) : null}
