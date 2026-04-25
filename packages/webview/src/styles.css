@@ -1009,6 +1009,11 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
   outline: none;
 }
 
+.search-field input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .search-field input::placeholder {
   color: var(--text-muted);
 }
@@ -1293,6 +1298,11 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
   background: rgba(255, 255, 255, 0.06);
 }
 
+.setting-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .setting-input::placeholder {
   color: var(--text-muted);
 }
@@ -1316,6 +1326,11 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
 
 .setting-select:focus {
   border-color: var(--accent);
+}
+
+.setting-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .setting-select option {
@@ -2475,6 +2490,11 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
 
 .mdl-tool-select:focus {
   border-color: var(--accent);
+}
+
+.mdl-tool-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .mdl-tool-select option,
