@@ -76,4 +76,13 @@ export const ACTION_TYPES: ReadonlySet<string> = new Set<string>([
   // Perplexity.generateConfigs command so user-facing modals + staleness
   // recomputation land through a single path.
   "transport:regenerate-stale",
+  // Browser picker + runtime-manager actions. Each round-trips through
+  // DashboardProvider → AuthManager and needs a pending-action id so the
+  // button in BrowserSettings renders a spinner + disabled state during
+  // the round-trip (file picker, bundled-Chromium download/remove).
+  "browser:select",
+  "browser:refresh-detection",
+  "browser:pick-custom",
+  "browser:install-bundled",
+  "browser:remove-bundled",
 ]);

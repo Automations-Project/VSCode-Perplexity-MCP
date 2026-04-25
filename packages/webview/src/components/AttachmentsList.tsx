@@ -6,14 +6,14 @@ export function AttachmentsList({ attachments }: { attachments?: HistoryAttachme
   }
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="attachment-list">
       {attachments.map((attachment) => (
         <div key={`${attachment.relPath}-${attachment.filename}`} className="list-row">
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: "0.78rem", fontWeight: 500 }} className="text-[var(--text-primary)]">
+          <div className="attachment-body">
+            <div className="attachment-title">
               {attachment.filename}
             </div>
-            <div style={{ fontSize: "0.68rem" }} className="text-[var(--text-muted)]">
+            <div className="attachment-path">
               {attachment.relPath}
             </div>
           </div>

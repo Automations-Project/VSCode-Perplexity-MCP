@@ -55,17 +55,15 @@ export function BearerReveal({
 
   return (
     <div
-      className="list-row"
-      style={{ marginTop: 8, alignItems: "flex-start" }}
+      className="list-row bearer-reveal-row"
       data-testid="bearer-reveal-row"
     >
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ fontSize: "0.72rem", fontWeight: 600 }} className="text-[var(--text-primary)]">
+      <div className="bearer-reveal-body">
+        <div className="bearer-reveal-title">
           Bearer token
           {isLive ? (
             <span
-              style={{ marginLeft: 8, fontSize: "0.66rem", fontWeight: 500 }}
-              className="text-[var(--text-muted)]"
+              className="bearer-reveal-countdown"
               data-testid="bearer-reveal-countdown"
             >
               clears in {remainingSec}s
@@ -73,8 +71,7 @@ export function BearerReveal({
           ) : null}
         </div>
         <div
-          style={{ fontSize: "0.7rem", marginTop: 3, fontFamily: "var(--font-mono)", overflowWrap: "anywhere" }}
-          className="text-[var(--text-muted)]"
+          className="bearer-reveal-value"
           data-testid="bearer-reveal-value"
         >
           {isLive && revealed ? (
@@ -87,12 +84,12 @@ export function BearerReveal({
             <>&lt;hidden — click Reveal or Copy&gt;</>
           )}
         </div>
-        <div style={{ fontSize: "0.66rem", marginTop: 4 }} className="text-[var(--text-muted)]">
+        <div className="bearer-reveal-note">
           Required in an <code>Authorization: Bearer …</code> header for every MCP request (loopback or tunnel).
           Reveal / Copy opens a modal confirmation; reveal auto-clears after 30s.
         </div>
       </div>
-      <div className="flex items-center gap-1 flex-wrap" style={{ justifyContent: "flex-end" }}>
+      <div className="bearer-reveal-actions">
         <DaemonActionButton
           type="daemon:bearer:reveal"
           label="Reveal token"
@@ -107,7 +104,7 @@ export function BearerReveal({
           onClick={onCopy}
         />
         {feedback ? (
-          <span style={{ fontSize: "0.66rem" }} className="text-[var(--text-muted)]">
+          <span className="bearer-reveal-feedback">
             {feedback}
           </span>
         ) : null}

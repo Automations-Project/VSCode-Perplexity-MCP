@@ -20,18 +20,32 @@ The server speaks MCP over stdio, so normally you point your MCP client (Claude 
 
 ## Browser requirement
 
-The server automates a real browser to reach Perplexity (Cloudflare-protected). You need **one** of:
+The server automates a real browser to reach Perplexity (Cloudflare-protected). Any of these work out of the box, probed in the order listed:
 
-- **Google Chrome** installed at a standard location *(recommended — best Cloudflare compatibility)*. Auto-detected on Windows, macOS, and Linux.
-- **Patchright's bundled Chromium**, downloaded with:
+1. **Google Chrome** *(recommended — best Cloudflare compatibility)*
+2. **Microsoft Edge** (all three platforms)
+3. **System Chromium** (mainly Linux)
+4. **Brave Browser** (Chromium-based — works unchanged)
+5. **Patchright's bundled Chromium**, downloaded with:
 
-  ```bash
-  npx patchright install chromium
-  ```
+   ```bash
+   npx patchright install chromium
+   ```
 
-- An explicit executable via `PERPLEXITY_CHROME_PATH=/path/to/chrome`.
+6. **Obscura** — a 30 MB Rust headless browser from [h4ckf0r0day/obscura](https://github.com/h4ckf0r0day/obscura) that speaks the Chrome DevTools Protocol. Unlike the others, Obscura is *connected to* over CDP rather than launched. **Headless search only** — the first-run Cloudflare Turnstile bootstrap always falls back to a real Chrome-family browser because CF compatibility is unproven.
 
-If no browser is found, the server exits at startup with instructions. Edge and system Chromium are also auto-detected as fallbacks.
+If none of those are installed the server exits at startup with instructions.
+
+### Picking a specific browser
+
+All three overrides are optional and evaluated at call time:
+
+| Variable | Effect |
+|---|---|
+| `PERPLEXITY_BROWSER_PATH` | Absolute path to an executable. Takes precedence over auto-detection. |
+| `PERPLEXITY_BROWSER_CHANNEL` | `chrome` \| `msedge` \| `chromium` \| `obscura`. Controls which Patchright channel is used (or triggers the CDP-connect path for `obscura`). |
+| `PERPLEXITY_CHROME_PATH` | Legacy alias for `PERPLEXITY_BROWSER_PATH`. Still honored. |
+| `PERPLEXITY_OBSCURA_ENDPOINT` | CDP HTTP URL (e.g. `http://127.0.0.1:9332`) of a running `obscura serve` process. Required alongside `PERPLEXITY_BROWSER_CHANNEL=obscura`. |
 
 ## First run & login
 
@@ -72,7 +86,10 @@ Claude Desktop (`claude_desktop_config.json`) uses the same shape.
 | Variable | Purpose |
 |---|---|
 | `PERPLEXITY_CONFIG_DIR` | Override `~/.perplexity-mcp` config/profile location. |
-| `PERPLEXITY_CHROME_PATH` | Explicit browser executable path (skips auto-detection). |
+| `PERPLEXITY_BROWSER_PATH` | Explicit browser executable path (skips auto-detection). |
+| `PERPLEXITY_BROWSER_CHANNEL` | `chrome` / `msedge` / `chromium` / `obscura`. Channel passed to Patchright, or `obscura` for the CDP-connect path. |
+| `PERPLEXITY_OBSCURA_ENDPOINT` | CDP URL of a running `obscura serve` process (required for the `obscura` channel). |
+| `PERPLEXITY_CHROME_PATH` | **Legacy** alias for `PERPLEXITY_BROWSER_PATH`. Still honored. |
 | `PERPLEXITY_HEADLESS_ONLY` | `1` to skip the headed Turnstile bootstrap and rely on cached `cf_clearance`. Useful on servers; fails if no clearance is cached yet. |
 | `PERPLEXITY_SESSION_TOKEN` | Pre-supplied `__Secure-next-auth.session-token` (skips interactive login). |
 | `PERPLEXITY_CSRF_TOKEN` | Optional companion to `PERPLEXITY_SESSION_TOKEN`. |
@@ -102,7 +119,7 @@ import { readHistory } from "perplexity-user-mcp";
 ## Requirements
 
 - Node.js >= 20
-- A real Chrome install, patchright's bundled Chromium, or a browser path via `PERPLEXITY_CHROME_PATH`
+- A browser runtime — any of: real Chrome, Microsoft Edge, Brave, system Chromium, patchright's bundled Chromium, or Obscura (see the [Browser requirement](#browser-requirement) section)
 - An active Perplexity account (free tier works; Pro/Max unlock reason/research/compute)
 
 ## License

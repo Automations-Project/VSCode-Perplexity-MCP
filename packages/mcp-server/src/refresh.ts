@@ -30,7 +30,9 @@ import {
   RATE_LIMIT_ENDPOINT,
   EXPERIMENTS_ENDPOINT,
   USER_INFO_ENDPOINT,
+  findBrowser,
   findChromeExecutable,
+  getOrCreateContext,
   getSavedCookies,
   resolveBrowserExecutable,
   type AccountInfo,
@@ -265,21 +267,50 @@ interface ImpitModule {
 /**
  * Dynamically import impit from the user's native-deps directory.
  * Returns null if impit isn't installed there.
+ *
+ * Note on createRequire: when this code is bundled into the extension host
+ * (CJS via tsup), `import.meta.url` is undefined, which makes
+ * `createRequire(import.meta.url)` throw — the previous implementation
+ * silently caught that and reported "impit not installed" even when the
+ * package was on disk. Rooting `createRequire` at the impit module's own
+ * absolute path works in both CJS- and ESM-bundled output (Node accepts a
+ * file path string per the docs) and resolves impit's peer native binding
+ * from native-deps/node_modules correctly.
  */
 async function loadImpit(): Promise<ImpitModule | null> {
+  // Order matters. impit 0.13+ ships TWO entry files:
+  //   index.wrapper.js — the user-facing API, exposes the `Impit` class that
+  //                      canonicalizes headers from {object} → [[k,v]] tuples
+  //                      before forwarding to the native binding. THIS is what
+  //                      package.json["main"] points at.
+  //   index.js         — the raw NAPI binding loader; calling .fetch() with
+  //                      a plain object on this throws "Given napi value is
+  //                      not an array on RequestInit.headers" because the
+  //                      binding-side check only accepts arrays.
+  // Older impit versions only had index.js (the wrapper didn't exist yet) —
+  // those continue to work because the binding accepted objects then.
+  // dist/index.js is the legacy 0.10.x layout for completeness.
   const candidates = [
+    join(getImpitRuntimeDirPath(), "node_modules", "impit", "index.wrapper.js"),
     join(getImpitRuntimeDirPath(), "node_modules", "impit", "index.js"),
     join(getImpitRuntimeDirPath(), "node_modules", "impit", "dist", "index.js"),
   ];
+  const failures: string[] = [];
   for (const p of candidates) {
     if (!existsSync(p)) continue;
     try {
       const { createRequire } = await import("node:module");
-      const req = createRequire(import.meta.url);
+      const req = createRequire(p);
       return req(p) as ImpitModule;
-    } catch {
-      // fall through to next candidate
+    } catch (err) {
+      failures.push(`${p}: ${(err as Error).message ?? err}`);
     }
+  }
+  // Surface the real reason on stderr so log scrapes show the cause when the
+  // package is on disk but a require throws (broken native binding, mismatched
+  // ABI). Silent return-null masked the createRequire bug above for months.
+  if (failures.length) {
+    try { console.error(`[impit] load failed: ${failures.join(" | ")}`); } catch { /* ignore */ }
   }
   return null;
 }
@@ -387,18 +418,21 @@ async function tierBrowser(cookies: PlaywrightCookie[], log: (l: string) => void
     return { ok: false, error: `patchright missing: ${(err as Error).message}`, elapsedMs: Date.now() - started };
   }
 
-  const chromePath = findChromeExecutable();
-  log(`browser: launching headless chromium (${chromePath ? "system Chrome" : "bundled"})`);
-
+  const probe = findBrowser();
+  const label = probe
+    ? `${probe.channel}${probe.path.toLowerCase().includes("brave") ? " (brave)" : ""}`
+    : "bundled";
+  log(`browser: launching headless ${label}`);
   const browser = await chromium.launch({
     headless: true,
     args: STEALTH_ARGS,
-    ...(chromePath ? { executablePath: chromePath } : {}),
+    ...(probe ? { executablePath: probe.path } : {}),
+    ...(probe && ["chrome", "msedge", "chromium"].includes(probe.channel) ? { channel: probe.channel as any } : {}),
     ignoreDefaultArgs: ["--enable-automation"],
   });
 
   try {
-    const context = await browser.newContext({
+    const context = await getOrCreateContext(browser, {
       viewport: { width: 1920, height: 1080 },
       userAgent: USER_AGENT,
     });

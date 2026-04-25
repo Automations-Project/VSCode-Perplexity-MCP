@@ -37,29 +37,27 @@ export function TunnelPerformanceView({ snapshot }: { snapshot: TunnelPerformanc
 
   return (
     <div
-      className="daemon-inset-panel"
-      style={{ marginTop: 8 }}
+      className="daemon-inset-panel tunnel-performance-card"
       data-testid="tunnel-performance-card"
     >
-      <div className="flex items-center gap-1" style={{ fontSize: "0.72rem", fontWeight: 600 }}>
+      <div className="tunnel-performance-title">
         <Activity size={12} aria-hidden="true" />
-        <span className="text-[var(--text-primary)]">Tunnel performance</span>
+        <span>Tunnel performance</span>
       </div>
 
-      <div style={{ marginTop: 6 }}>
-        <div style={{ fontSize: "0.66rem", fontWeight: 600 }} className="text-[var(--text-muted)]">
+      <div className="tunnel-performance-section-compact">
+        <div className="tunnel-performance-label">
           Last enables
         </div>
         {snapshot.enableHistory.length === 0 ? (
           <div
-            style={{ fontSize: "0.66rem", marginTop: 2 }}
-            className="text-[var(--text-muted)]"
+            className="tunnel-performance-empty"
             data-testid="tunnel-performance-enables-empty"
           >
             No enables recorded in this session.
           </div>
         ) : (
-          <div className="flex flex-col gap-1" style={{ marginTop: 3 }}>
+          <div className="tunnel-performance-rows">
             {snapshot.enableHistory.slice(0, 5).map((record, idx) => (
               <EnableRow key={`${record.startedAt}-${idx}`} record={record} />
             ))}
@@ -67,13 +65,12 @@ export function TunnelPerformanceView({ snapshot }: { snapshot: TunnelPerformanc
         )}
       </div>
 
-      <div style={{ marginTop: 8 }}>
-        <div style={{ fontSize: "0.66rem", fontWeight: 600 }} className="text-[var(--text-muted)]">
+      <div className="tunnel-performance-section">
+        <div className="tunnel-performance-label">
           Health check latency (last {Math.max(1, snapshot.healthLatencySamples)})
         </div>
         <div
-          style={{ fontSize: "0.7rem", marginTop: 2 }}
-          className="text-[var(--text-primary)]"
+          className="tunnel-performance-value"
           data-testid="tunnel-performance-health-avg"
         >
           {snapshot.healthLatencySamples === 0 || snapshot.healthLatencyAvgMs === null
@@ -82,18 +79,17 @@ export function TunnelPerformanceView({ snapshot }: { snapshot: TunnelPerformanc
         </div>
       </div>
 
-      <div style={{ marginTop: 8 }}>
-        <div style={{ fontSize: "0.66rem", fontWeight: 600 }} className="text-[var(--text-muted)]">
+      <div className="tunnel-performance-section">
+        <div className="tunnel-performance-label">
           /mcp requests (audit window: {snapshot.mcpTotal})
         </div>
-        <div className="flex flex-col gap-1" style={{ marginTop: 3 }}>
+        <div className="tunnel-performance-rows">
           <McpRow label="loopback" bucket={loopbackBucket} />
           <McpRow label="tunnel" bucket={tunnelBucket} />
         </div>
         {showUnauthHint ? (
           <div
-            style={{ fontSize: "0.64rem", marginTop: 5 }}
-            className="text-[#fca5a5]"
+            className="tunnel-performance-hint"
             data-testid="tunnel-performance-unauth-hint"
           >
             High unauth rate ({formatPercent(unauthRatio)}) &mdash; see tunnel setup
@@ -108,22 +104,20 @@ export function TunnelPerformanceView({ snapshot }: { snapshot: TunnelPerformanc
 function EnableRow({ record }: { record: TunnelEnableRecord }) {
   return (
     <div
-      className="list-row"
-      style={{ padding: 4, fontSize: "0.66rem" }}
+      className="list-row tunnel-performance-row"
       data-testid="tunnel-performance-enable-row"
     >
-      <div style={{ minWidth: 0, flex: 1 }}>
+      <div className="tunnel-performance-row-main">
         <span className="text-[var(--text-primary)]">{record.provider}</span>
-        <span className="text-[var(--text-muted)]" style={{ marginLeft: 6 }}>
+        <span className="tunnel-performance-muted-spaced">
           {formatDuration(record.durationMs)}
         </span>
-        <span className="text-[var(--text-muted)]" style={{ marginLeft: 6 }}>
+        <span className="tunnel-performance-muted-spaced">
           {formatAgo(record.startedAt)}
         </span>
       </div>
       <span
-        className={`chip ${record.ok ? "chip-pro" : "chip-danger"}`}
-        style={{ padding: "1px 6px" }}
+        className={`chip tunnel-performance-chip ${record.ok ? "chip-pro" : "chip-danger"}`}
       >
         {record.ok ? "ok" : "failed"}
       </span>
@@ -135,11 +129,10 @@ function McpRow({ label, bucket }: { label: string; bucket: TunnelPerformanceMcp
   const total = bucketTotal(bucket);
   return (
     <div
-      className="list-row"
-      style={{ padding: 4, fontSize: "0.66rem" }}
+      className="list-row tunnel-performance-row"
       data-testid={`tunnel-performance-mcp-row-${label}`}
     >
-      <div style={{ minWidth: 0, flex: 1 }}>
+      <div className="tunnel-performance-row-main">
         <span className="text-[var(--text-primary)]">{label}</span>
       </div>
       <div className="text-[var(--text-muted)]">

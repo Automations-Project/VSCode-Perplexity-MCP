@@ -1,6 +1,7 @@
-import { Stethoscope, RefreshCcw, Download, Zap, AlertOctagon } from "lucide-react";
+import { Stethoscope, RefreshCcw, Download, Zap, AlertOctagon, FileArchive } from "lucide-react";
 import type { DoctorCategory, DoctorReport, WebviewMessage } from "@perplexity-user-mcp/shared";
 import { DoctorCategoryCard } from "./DoctorCategoryCard";
+import { useIsActionPending } from "../store";
 
 const CATEGORY_ORDER: DoctorCategory[] = [
   "runtime", "config", "profiles", "vault", "browser",
@@ -19,12 +20,13 @@ export function DoctorTab({
   send: (m: WebviewMessage | Omit<Extract<WebviewMessage, { id: string }>, "id">) => void;
 }) {
   const running = phase === "running";
+  const capturing = useIsActionPending("diagnostics:capture");
   return (
-    <div style={{ padding: 16 }}>
-      <header style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+    <div className="doctor-shell">
+      <header className="doctor-header">
         <Stethoscope size={18} />
-        <h2 style={{ margin: 0, fontSize: "1rem" }}>Doctor</h2>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+        <h2 className="doctor-title">Doctor</h2>
+        <div className="doctor-actions">
           <button className="ghost-button" disabled={running} onClick={() => send({ type: "doctor:run", payload: {} })}>
             <RefreshCcw size={14} /> Run
           </button>
@@ -34,14 +36,24 @@ export function DoctorTab({
           <button className="ghost-button" disabled={!report} onClick={() => send({ type: "doctor:export", payload: {} })}>
             <Download size={14} /> Export
           </button>
+          <button
+            className="ghost-button"
+            disabled={running || capturing}
+            aria-busy={capturing || undefined}
+            onClick={() => send({ type: "diagnostics:capture" })}
+            title="Bundle a redacted .zip of daemon logs, config, and the latest doctor report — share this when filing a bug."
+          >
+            {capturing ? <RefreshCcw size={14} className="refresh-spin" /> : <FileArchive size={14} />}
+            {capturing ? "Capturing…" : "Capture diagnostics"}
+          </button>
         </div>
       </header>
 
       {running && <p>Running checks…</p>}
-      {!report && !running && <p style={{ color: "var(--text-muted)" }}>Click Run to audit your install.</p>}
+      {!report && !running && <p className="doctor-empty">Click Run to audit your install.</p>}
       {report && (
         <>
-          <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+          <p className="doctor-summary">
             Overall: <strong>{report.overall}</strong> · generated{" "}
             {new Date(report.generatedAt).toLocaleString()} · {report.durationMs}ms
             {report.probeRan && " · probe ran"}
@@ -56,7 +68,7 @@ export function DoctorTab({
             />
           ))}
           {report.overall === "fail" && !reportingOptOut && (
-            <footer style={{ marginTop: 12 }}>
+            <footer className="doctor-report-footer">
               <button
                 className="primary-button"
                 onClick={() => {

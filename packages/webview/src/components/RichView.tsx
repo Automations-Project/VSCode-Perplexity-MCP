@@ -62,14 +62,14 @@ export function RichView({
     <div className="rich-view-overlay" role="dialog" aria-modal="true" onClick={onClose}>
       <div className="rich-view-panel glass-panel" onClick={(event) => event.stopPropagation()}>
         <div className="rich-view-header">
-          <div style={{ minWidth: 0 }}>
+          <div className="rich-view-title-block">
             <div className="eyebrow">Rich View</div>
-            <div className="title" style={{ marginTop: 4 }}>{entry.query}</div>
-            <div className="detail" style={{ marginTop: 4 }}>
+            <div className="title rich-view-title">{entry.query}</div>
+            <div className="detail rich-view-detail">
               {entry.tool} · {entry.model ?? "default"} · {entry.status ?? "completed"}
             </div>
           </div>
-          <div className="flex items-center gap-2" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <div className="rich-view-actions">
             <button className="ghost-button btn-sm" onClick={() => send({ type: "history:open-preview", payload: { historyId: entry.id } })}>
               Preview
             </button>
@@ -94,17 +94,16 @@ export function RichView({
         <div className="rich-view-grid">
           <div className="rich-view-body">
             {entry.source === "cloud" && !entry.cloudHydratedAt ? (
-              <div className="glass-panel section-panel" style={{ marginBottom: 12 }}>
-                <div className="flex items-center gap-2">
+              <div className="glass-panel section-panel rich-view-cloud-card">
+                <div className="rich-view-cloud-row">
                   <CloudDownload size={14} />
-                  <span style={{ fontSize: "0.75rem" }}>
+                  <span className="rich-view-cloud-message">
                     {hydrating ? "Fetching thread from Perplexity…" : cloudHydrate.phase === "error" && cloudHydrate.historyId === entry.id ? `Fetch failed: ${cloudHydrate.error}` : "Cloud thread — fetching details…"}
                   </span>
                   {cloudHydrate.phase === "error" && cloudHydrate.historyId === entry.id ? (
                     <button
-                      className="ghost-button btn-sm"
+                      className="ghost-button btn-sm rich-view-cloud-retry"
                       onClick={() => send({ type: "history:cloud-hydrate", payload: { historyId: entry.id } })}
-                      style={{ padding: "4px 8px", fontSize: "0.68rem" }}
                     >
                       Retry
                     </button>
@@ -131,7 +130,7 @@ export function RichView({
                 ))}
               </div>
               {entry.threadUrl ? (
-                <a className="hist-source-link" href={entry.threadUrl} style={{ marginTop: 12 }}>
+                <a className="hist-source-link rich-view-thread-link" href={entry.threadUrl}>
                   <ExternalLink size={12} />
                   Open thread on Perplexity
                 </a>

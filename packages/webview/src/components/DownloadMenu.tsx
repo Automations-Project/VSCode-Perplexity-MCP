@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ChevronDown,
   Download,
@@ -27,12 +27,53 @@ const FORMATS: FormatConfig[] = [
 
 export function DownloadMenu({ item, send }: { item: HistoryItem; send: SendFn }) {
   const [open, setOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<React.CSSProperties>();
   const containerRef = useRef<HTMLDivElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
 
   const hasMarkdown = item.answerPreview.trim().length > 0;
   const toggleDisabled = !hasMarkdown && !item.threadSlug;
   const close = useCallback(() => setOpen(false), []);
+  const updateMenuPosition = useCallback(() => {
+    const rect = toggleRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const viewportWidth = document.documentElement.clientWidth || window.innerWidth;
+    const viewportMargin = 12;
+    const popoverWidth = Math.min(220, Math.max(0, viewportWidth - viewportMargin * 2));
+    const preferredRight = Math.max(viewportMargin, Math.round(viewportWidth - rect.right));
+    const maxRight = Math.max(viewportMargin, Math.round(viewportWidth - viewportMargin - popoverWidth));
+    const top = Math.max(8, Math.round(rect.bottom + 8));
+    const right = Math.min(preferredRight, maxRight);
+    setMenuPosition({
+      "--hist-menu-top": `${top}px`,
+      "--hist-menu-right": `${right}px`,
+      "--hist-menu-width": `${popoverWidth}px`,
+    } as React.CSSProperties);
+  }, []);
+
+  const toggleMenu = useCallback(() => {
+    if (open) {
+      close();
+      return;
+    }
+    updateMenuPosition();
+    setOpen(true);
+  }, [close, open, updateMenuPosition]);
+
+  useLayoutEffect(() => {
+    if (open) updateMenuPosition();
+  }, [open, updateMenuPosition]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPlacementChange = () => updateMenuPosition();
+    window.addEventListener("resize", onPlacementChange);
+    window.addEventListener("scroll", onPlacementChange, true);
+    return () => {
+      window.removeEventListener("resize", onPlacementChange);
+      window.removeEventListener("scroll", onPlacementChange, true);
+    };
+  }, [open, updateMenuPosition]);
 
   useEffect(() => {
     if (!open) return;
@@ -68,7 +109,7 @@ export function DownloadMenu({ item, send }: { item: HistoryItem; send: SendFn }
   const onToggleKey = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      setOpen((v) => !v);
+      toggleMenu();
     }
   };
 
@@ -83,7 +124,7 @@ export function DownloadMenu({ item, send }: { item: HistoryItem; send: SendFn }
   };
 
   return (
-    <div ref={containerRef} className="hist-menu">
+    <div ref={containerRef} className="hist-menu hist-menu-right">
       <button
         ref={toggleRef}
         type="button"
@@ -91,7 +132,7 @@ export function DownloadMenu({ item, send }: { item: HistoryItem; send: SendFn }
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={toggleDisabled}
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggleMenu}
         onKeyDown={onToggleKey}
       >
         <Download size={12} />
@@ -99,7 +140,7 @@ export function DownloadMenu({ item, send }: { item: HistoryItem; send: SendFn }
         <ChevronDown size={11} className="hist-action-caret" aria-hidden="true" />
       </button>
       {open && (
-        <div className="hist-menu-popover" role="menu">
+        <div className="hist-menu-popover hist-menu-popover-fixed" role="menu" style={menuPosition}>
           <div className="hist-menu-section-label">Export as</div>
           {FORMATS.map((format) => {
             const { disabled, reason } = formatIsDisabled(format);

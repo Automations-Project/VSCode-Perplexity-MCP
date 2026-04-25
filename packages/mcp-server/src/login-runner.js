@@ -59,10 +59,12 @@ async function main() {
 
   const PROFILE = resolveProfile();
   const localOrigin = isLocalOrigin(ORIGIN);
+
   let executablePath;
+  let channel;
   if (!localOrigin) {
     try {
-      ({ path: executablePath } = await resolveBrowserExecutable());
+      ({ path: executablePath, channel } = await resolveBrowserExecutable());
     } catch (err) {
       emit({ ok: false, reason: "chrome_missing", error: redact(String(err?.message ?? err)) });
       process.exit(4);
@@ -72,6 +74,7 @@ async function main() {
   const browser = await chromium.launch({
     headless: localOrigin,
     ...(executablePath ? { executablePath } : {}),
+    ...(channel && ["chrome", "msedge", "chromium"].includes(channel) ? { channel } : {}),
     args: localOrigin ? [] : ["--start-minimized"],
   });
   const ctx = await browser.newContext({ ignoreHTTPSErrors: true });

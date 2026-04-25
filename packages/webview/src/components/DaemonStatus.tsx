@@ -1,4 +1,4 @@
-import { ChevronDown, FileArchive, KeyRound, Power, RefreshCcw, ServerCog, Skull } from "lucide-react";
+import { ChevronDown, KeyRound, Power, RefreshCcw, ServerCog, Skull } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { DaemonAuditEntry, DaemonStatusState, WebviewMessage } from "@perplexity-user-mcp/shared";
 import { useDashboardStore, type TunnelProbeState } from "../store";
@@ -138,7 +138,7 @@ export function DaemonStatusView({
         <div className="detail">One local daemon shared by all VS Code windows and MCP clients.</div>
       </div>
 
-      <div className="flex items-center gap-2 flex-wrap" style={{ marginBottom: 10 }}>
+      <div className="daemon-chip-row">
         <span className={`chip ${healthChip.chip}`} data-testid="daemon-health-chip">
           <StatusDot variant={healthChip.dot} />
           {healthChip.label}
@@ -151,7 +151,7 @@ export function DaemonStatusView({
         ) : null}
       </div>
 
-      <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
+      <div className="daemon-metric-grid">
         <DaemonMetric label="PID" value={status?.pid ? String(status.pid) : "not running"} />
         <DaemonMetric label="Port" value={status?.port ? String(status.port) : "n/a"} />
         <DaemonMetric label="Uptime" value={formatUptime(status?.uptimeMs ?? null)} />
@@ -179,7 +179,7 @@ export function DaemonStatusView({
 
       <div className="daemon-section-divider" aria-hidden="true" />
 
-      <div className="flex items-center gap-2 flex-wrap" style={{ marginTop: 10 }}>
+      <div className="daemon-action-row">
         <DaemonActionButton
           type="daemon:status"
           label="Refresh"
@@ -212,49 +212,41 @@ export function DaemonStatusView({
           title="Force-kill the daemon. Use when tunnels are stuck (ERR_NGROK_334), the daemon isn't responding, or you want a clean-slate reset. Does NOT auto-respawn; click Restart after."
           onClick={() => { console.log("[trace] DaemonStatus click", { button: "daemon:kill" }); send({ type: "daemon:kill" }); }}
         />
-        <DaemonActionButton
-          type="diagnostics:capture"
-          label="Capture diagnostics"
-          pendingLabel="Capturing…"
-          icon={<FileArchive size={11} />}
-          title="Package redacted daemon logs, config, and a doctor report into a .zip for bug reports."
-          onClick={() => { console.log("[trace] DaemonStatus click", { button: "diagnostics:capture" }); send({ type: "diagnostics:capture" }); }}
-        />
       </div>
       {status?.url ? (
-        <div style={{ fontSize: "0.68rem", marginTop: 4 }} className="text-[var(--text-muted)]">
+        <div className="daemon-muted-note">
           Loopback {status.url}
         </div>
       ) : null}
 
-      <details style={{ marginTop: 12 }}>
-        <summary className="daemon-disclosure-summary" style={{ cursor: "pointer", listStyle: "none" }}>
-          <div style={{ flex: 1 }}>
+      <details className="daemon-disclosure">
+        <summary className="daemon-disclosure-summary">
+          <div className="daemon-disclosure-main">
             <div className="eyebrow">Audit Tail</div>
             <div className="title">Last tool calls</div>
           </div>
           {auditTail.length > 0 ? (
-            <span className="chip chip-neutral" style={{ marginLeft: 8, fontSize: "0.62rem" }}>
+            <span className="chip chip-neutral daemon-disclosure-count">
               {auditTail.length}
             </span>
           ) : null}
           <ChevronDown size={14} className="daemon-disclosure-icon text-[var(--text-muted)]" />
         </summary>
         {auditTail.length === 0 ? (
-          <div className="empty-state" style={{ marginTop: 8 }}>No daemon tool calls recorded yet.</div>
+          <div className="empty-state daemon-empty-offset">No daemon tool calls recorded yet.</div>
         ) : (
-          <div className="flex flex-col gap-2" style={{ maxHeight: 220, overflow: "auto", marginTop: 8 }}>
+          <div className="daemon-audit-list">
             {[...auditTail].reverse().map((entry, index) => (
               <div key={`${entry.timestamp}-${entry.tool}-${index}`} className="list-row">
-                <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
+                <div className="daemon-audit-row-main">
                   <ServerCog size={12} className={entry.ok ? "text-[#86efac]" : "text-[#fca5a5]"} />
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: "0.75rem", fontWeight: 600 }} className="text-[var(--text-primary)]">{entry.tool}</div>
-                    <div style={{ fontSize: "0.66rem" }} className="text-[var(--text-muted)]">
+                  <div className="daemon-audit-entry-body">
+                    <div className="daemon-audit-tool">{entry.tool}</div>
+                    <div className="daemon-audit-meta">
                       {entry.clientId} / {entry.source} / <RelativeTime iso={entry.timestamp} />
                     </div>
                     {entry.error ? (
-                      <div style={{ fontSize: "0.66rem" }} className="text-[#fca5a5]">{entry.error}</div>
+                      <div className="daemon-audit-error">{entry.error}</div>
                     ) : null}
                   </div>
                 </div>
@@ -270,9 +262,9 @@ export function DaemonStatusView({
 
 function DaemonMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="metric-card" style={{ minHeight: 68 }}>
+    <div className="metric-card daemon-metric-card">
       <div className="metric-label">{label}</div>
-      <div className="metric-value" style={{ fontSize: "1.1rem" }}>{value}</div>
+      <div className="metric-value daemon-metric-value">{value}</div>
     </div>
   );
 }

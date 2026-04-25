@@ -423,6 +423,48 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
   // the Perplexity output channel. Previously only the reason enum was logged,
   // which hid the real error ("Vault locked: ...") on headless Linux.
   authManager.setLogger((line) => log(line));
+
+  // Attach the browser-download manager so the user can pull patchright's
+  // bundled Chromium when no system browser is installed. Optional — the
+  // extension works unchanged when nothing is attached.
+  //
+  // (v0.8.5 also briefly attached an ObscuraManager for the h4ckf0r0day/obscura
+  // CDP server; removed because Obscura's CDP implementation lacked the
+  // Target.createTarget / frame-attachment domains Patchright requires.)
+  const { BrowserDownloadManager } = await import("./browser/browser-download.js");
+  const browserDownloadManager = new BrowserDownloadManager(context, context.extensionPath);
+  context.subscriptions.push(browserDownloadManager);
+  authManager.attachDownloadManager(browserDownloadManager);
+  // Replay the persisted browserChoice from VS Code settings BEFORE the
+  // initial probe so the user's last selection is honored across restarts.
+  // Reading from `settings` (already loaded above) avoids a second configuration
+  // read and keeps the flow: settings → AuthManager state → re-probe.
+  let persistedBrowserChoice = settings.browserChoice;
+  // v0.8.5 cleanup: users who experimented with the (removed) Obscura channel
+  // would have `browserChoice.channel === "obscura"` saved in their settings.
+  // Silently downgrade to mode:"auto" so they don't boot into a no-op state
+  // where every login routes through a fallback. Persist the rewrite back
+  // so the bad value is gone for good.
+  if ((persistedBrowserChoice as { channel?: string } | undefined)?.channel === "obscura") {
+    log("[browser] migrating stale browserChoice=obscura → auto (Obscura support removed)");
+    persistedBrowserChoice = { mode: "auto" };
+    // VS Code returns Thenable, not Promise — wrap so we can swallow rejections
+    // when the user has no Global-scope setting to clear.
+    Promise.resolve(
+      vscode.workspace
+        .getConfiguration("Perplexity")
+        .update("browserChoice", undefined, vscode.ConfigurationTarget.Global),
+    ).catch(() => { /* nothing to clear */ });
+  }
+  if (persistedBrowserChoice) {
+    authManager.setBrowserChoice(persistedBrowserChoice);
+  }
+  // Seed the initial browser probe so availableBrowsers is populated before
+  // the webview mounts — otherwise the dashboard shows "no browser" for a
+  // split second until the first health-check fires. This is idempotent when
+  // setBrowserChoice already fired a refresh above.
+  authManager.refreshBrowserDetection();
+
   context.subscriptions.push(authManager);
   dashboard.setAuthManager(authManager);
   authManager.onDidChange(async (s) => { await dashboard.postAuthState(s); });

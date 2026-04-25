@@ -23,7 +23,19 @@ export interface ExtensionSettingsSnapshot {
   reasonModel: string;
   researchModel: string;
   computeModel: string;
+  /**
+   * Legacy plain-path override (maps to `Perplexity.chromePath`). Kept for
+   * back-compat; new users should go through the rich `browserChoice` picker
+   * in the Settings tab which also handles channel selection + bundled
+   * Chromium install/remove.
+   */
   chromePath: string;
+  /**
+   * User-selected browser runtime. Persisted to `Perplexity.browserChoice`
+   * so the pick survives VS Code restarts. `undefined` / `mode: 'auto'`
+   * means "use the first available probe from browser-detect.ts".
+   */
+  browserChoice?: BrowserChoice;
   debugMode: boolean;
   autoConfigureCursor: boolean;
   autoConfigureWindsurf: boolean;
@@ -199,6 +211,49 @@ export type AuthStatus =
   | "unknown" | "checking" | "valid" | "expired" | "error"
   | "logging-in" | "awaiting_otp" | "chrome_missing" | "sso_required";
 
+export type BrowserChannel = "chrome" | "msedge" | "chromium";
+
+/**
+ * Snapshot of a launchable Chromium-family browser runtime available to the
+ * extension. (v0.8.5 also exposed an "obscura" channel for the
+ * h4ckf0r0day/obscura CDP server, but its CDP implementation didn't support
+ * the Target.createTarget / frame-attachment domains Patchright relies on,
+ * so it was removed — see CHANGELOG entry for v0.8.5.)
+ */
+export interface BrowserInfo {
+  /** True when a runtime is actually usable. */
+  found: boolean;
+  /** Channel passed to Patchright. */
+  channel?: BrowserChannel;
+  /** Absolute path to a launchable executable. */
+  executablePath?: string;
+  /** Human-readable name rendered in the dashboard picker. */
+  label?: string;
+  /** True when the entry came from a download managed by BrowserDownloadManager. */
+  downloaded?: boolean;
+}
+
+export type BrowserDownloadStatus = "idle" | "downloading" | "done" | "error";
+
+export interface BrowserDownloadState {
+  status: BrowserDownloadStatus;
+  /** 0-100 during downloads. */
+  progress?: number;
+  error?: string;
+}
+
+/**
+ * Persisted user preference for which browser to use. `mode: 'auto'` means
+ * "first available in the preferred order"; `mode: 'custom'` pins a specific
+ * executable path.
+ */
+export interface BrowserChoice {
+  mode: "auto" | "custom";
+  channel?: BrowserChannel;
+  executablePath?: string;
+  label?: string;
+}
+
 export interface AuthState {
   profile: string;
   status: AuthStatus;
@@ -208,6 +263,14 @@ export interface AuthState {
   lastLogin?: string;
   lastChecked?: string;
   error?: string;
+  /** Currently-selected browser runtime, when one was detected. */
+  browser?: BrowserInfo;
+  /** Live download state when the user is pulling bundled Chromium. */
+  browserDownload?: BrowserDownloadState;
+  /** Every runtime the extension could discover, in preferred order. */
+  availableBrowsers?: BrowserInfo[];
+  /** Persisted user pick; defaults to auto when absent. */
+  browserChoice?: BrowserChoice;
 }
 
 export interface Profile {
@@ -662,4 +725,13 @@ export type WebviewMessage =
   // `IdeTarget`, to avoid tight coupling with the hardcoded string-union.
   // The 8.6.4 handler will validate `ideTag in IDE_METADATA` at receive-time.
   | { type: "transport:select"; id: string; payload: { ideTag: string; transportId: McpTransportId } }
-  | { type: "transport:regenerate-stale"; id: string };
+  | { type: "transport:regenerate-stale"; id: string }
+  // Browser picker + runtime-manager actions. Each round-trips through the
+  // DashboardProvider into AuthManager, which updates the live BrowserProbe
+  // and emits a fresh auth:state message so the picker re-renders with the
+  // new selection / download progress.
+  | { type: "browser:select"; id: string; payload: { mode: "auto" | "custom"; channel?: BrowserChannel; executablePath?: string; label?: string } }
+  | { type: "browser:refresh-detection"; id: string }
+  | { type: "browser:pick-custom"; id: string }
+  | { type: "browser:install-bundled"; id: string }
+  | { type: "browser:remove-bundled"; id: string };

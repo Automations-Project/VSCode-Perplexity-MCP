@@ -151,19 +151,19 @@ function App() {
       ) : null}
 
       <header className="glass-panel sidebar-panel">
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="app-header-row">
           <div className="brand-mark">
             <Bot size={14} />
           </div>
-          <div className="min-w-0 flex-1">
-            <div style={{ fontSize: "0.65rem" }} className="uppercase tracking-[0.2em] text-[var(--text-muted)]">Perplexity</div>
+          <div className="app-header-title">
+            <div className="app-header-eyebrow">Perplexity</div>
             <div className="text-sm font-semibold text-[var(--text-primary)] truncate">
               {!activeProfile ? "No Account Yet" : snapshot?.loggedIn ? "Command Center" : "Login Required"}
             </div>
           </div>
-          <div className="flex-shrink-0 flex items-center gap-2">
+          <div className="app-header-actions">
             {snapshot ? (
-              <div className={`chip ${tierClass(snapshot.tier)}`} style={{ padding: "4px 8px", fontSize: "0.7rem" }}>
+              <div className={`chip app-tier-chip ${tierClass(snapshot.tier)}`}>
                 <ShieldCheck size={12} />
                 <span>{snapshot.tier}</span>
               </div>
@@ -188,10 +188,9 @@ function App() {
           })}
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="app-quick-actions">
           <button
-            className="ghost-button flex-1"
-            style={{ padding: "6px 10px", fontSize: "0.78rem", minWidth: 0, justifyContent: "center" }}
+            className="ghost-button app-quick-action"
             onClick={() => send({ type: "models:refresh" })}
             disabled={modelsRefresh.phase === "pending"}
             title="Re-fetch live models + account info from Perplexity"
@@ -200,17 +199,17 @@ function App() {
             <span>{modelsRefresh.phase === "pending" ? "Refreshing..." : "Refresh"}</span>
           </button>
           {!activeProfile ? (
-            <button className="primary-button flex-1" style={{ padding: "6px 10px", fontSize: "0.78rem", minWidth: 0, justifyContent: "center" }} onClick={() => send({ type: "profile:add-prompt" })}>
+            <button className="primary-button app-quick-action" onClick={() => send({ type: "profile:add-prompt" })}>
               <Sparkles size={13} />
               <span>Add account</span>
             </button>
           ) : snapshot?.loggedIn ? (
-            <button className="ghost-button flex-1" style={{ padding: "6px 10px", fontSize: "0.78rem", minWidth: 0, justifyContent: "center", opacity: 0.7 }} onClick={() => send({ type: "auth:login" })}>
+            <button className="ghost-button app-quick-action app-quick-action-muted" onClick={() => send({ type: "auth:login" })}>
               <Sparkles size={13} />
               <span>Re-login</span>
             </button>
           ) : (
-            <button className="primary-button flex-1" style={{ padding: "6px 10px", fontSize: "0.78rem", minWidth: 0, justifyContent: "center" }} onClick={() => send({ type: "auth:login" })}>
+            <button className="primary-button app-quick-action" onClick={() => send({ type: "auth:login" })}>
               <Sparkles size={13} />
               <span>Login</span>
             </button>
@@ -218,7 +217,7 @@ function App() {
         </div>
       </header>
 
-      <main className="content-shell" style={{ gap: "12px" }}>
+      <main className="content-shell">
 
         <AnimatePresence mode="wait">
           <motion.section

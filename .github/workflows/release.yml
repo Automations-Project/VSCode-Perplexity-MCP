@@ -6,11 +6,12 @@ on:
       target:
         description: "What to release"
         type: choice
-        options: [extension, mcp-server, both]
+        options: [auto, extension, mcp-server, both]
       bump:
-        description: "Version bump"
+        description: "Version bump (ignored when target=auto)"
         type: choice
         options: [patch, minor, major]
+        default: patch
       dry_run:
         description: "Dry run (no publish)"
         type: boolean
@@ -38,24 +39,45 @@ jobs:
       - run: npm run build
       - run: npm test
 
-      - name: Bump and publish MCP server
-        if: inputs.target == 'mcp-server' || inputs.target == 'both'
+      - name: Smart bump versions (auto)
+        if: inputs.target == 'auto'
+        id: smart_bump
         run: |
-          cd packages/mcp-server
-          npm version ${{ inputs.bump }} --no-git-tag-version
+          node scripts/bump-version.mjs
+          MCP_VERSION=$(node -p "require('./packages/mcp-server/package.json').version")
+          EXT_VERSION=$(node -p "require('./packages/extension/package.json').version")
+          TAG=$(git describe --tags --abbrev=0)
+          MCP_OLD=$(git show "${TAG}:packages/mcp-server/package.json" 2>/dev/null | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version" 2>/dev/null || echo "0.0.0")
+          EXT_OLD=$(git show "${TAG}:packages/extension/package.json" 2>/dev/null | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version" 2>/dev/null || echo "0.0.0")
+          if [ "$MCP_VERSION" != "$MCP_OLD" ]; then echo "mcp_changed=true" >> "$GITHUB_OUTPUT"; else echo "mcp_changed=false" >> "$GITHUB_OUTPUT"; fi
+          if [ "$EXT_VERSION" != "$EXT_OLD" ]; then echo "ext_changed=true" >> "$GITHUB_OUTPUT"; else echo "ext_changed=false" >> "$GITHUB_OUTPUT"; fi
+          echo "mcp_version=${MCP_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "ext_version=${EXT_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Bump and publish MCP server
+        if: (inputs.target == 'mcp-server' || inputs.target == 'both') || (inputs.target == 'auto' && steps.smart_bump.outputs.mcp_changed == 'true')
+        run: |
+          if [ "${{ inputs.target }}" != "auto" ]; then
+            cd packages/mcp-server
+            npm version ${{ inputs.bump }} --no-git-tag-version
+          fi
           if [ "${{ inputs.dry_run }}" = "false" ]; then
+            cd packages/mcp-server
             npm publish --provenance --access public
           else
-            echo "DRY RUN: would publish v$(node -p 'require("./package.json").version')"
+            echo "DRY RUN: would publish v$(node -p "require('./packages/mcp-server/package.json').version" 2>/dev/null || node -p "require('./package.json').version")"
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Bump and publish extension
-        if: inputs.target == 'extension' || inputs.target == 'both'
+        if: (inputs.target == 'extension' || inputs.target == 'both') || (inputs.target == 'auto' && steps.smart_bump.outputs.ext_changed == 'true')
         run: |
+          if [ "${{ inputs.target }}" != "auto" ]; then
+            cd packages/extension
+            npm version ${{ inputs.bump }} --no-git-tag-version
+          fi
           cd packages/extension
-          npm version ${{ inputs.bump }} --no-git-tag-version
           npm run prepare:package-deps
           if [ "${{ inputs.dry_run }}" = "false" ]; then
             npx @vscode/vsce publish --no-dependencies

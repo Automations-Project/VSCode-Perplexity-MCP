@@ -1352,8 +1352,128 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             }
             break;
           }
+          case "browser:select": {
+            try {
+              if (!this.authManager) {
+                await this.postActionResult(message.id, false, "AuthManager not ready");
+                break;
+              }
+              const { mode, channel, executablePath, label } = message.payload;
+              const choice = mode === "custom" && executablePath
+                ? { mode, channel, executablePath, label }
+                : mode === "auto" && (channel || executablePath)
+                  ? { mode, channel, executablePath, label }
+                  : { mode }; // pure auto: reset to first-available
+              // Persist to VS Code settings so the pick survives restarts.
+              // Passing `null` clears the custom setting when the user chooses
+              // pure auto so the schema doesn't hold a stale object forever.
+              await vscode.workspace.getConfiguration("Perplexity").update(
+                "browserChoice",
+                choice.mode === "auto" && !choice.executablePath && !choice.channel ? null : choice,
+                vscode.ConfigurationTarget.Global,
+              );
+              this.authManager.setBrowserChoice(choice);
+              await this.postActionResult(message.id, true);
+              await this.refresh();
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "browser:refresh-detection": {
+            try {
+              if (!this.authManager) {
+                await this.postActionResult(message.id, false, "AuthManager not ready");
+                break;
+              }
+              this.authManager.refreshBrowserDetection();
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "browser:pick-custom": {
+            try {
+              // Native VS Code file picker so the path value is validated and
+              // normalized for the current platform (preserves spaces in
+              // "/Applications/Google Chrome.app/…" on macOS, etc.).
+              const filters = process.platform === "win32"
+                ? { Executables: ["exe"] }
+                : undefined;
+              const uri = await vscode.window.showOpenDialog({
+                canSelectFiles: true,
+                canSelectFolders: false,
+                canSelectMany: false,
+                openLabel: "Use this browser",
+                title: "Select a Chromium-based browser executable",
+                ...(filters ? { filters } : {}),
+              });
+              if (!uri || uri.length === 0) {
+                await this.postActionResult(message.id, true);
+                break;
+              }
+              if (this.authManager) {
+                const fsPath = uri[0].fsPath;
+                const label = path.basename(fsPath);
+                const choice = {
+                  mode: "custom" as const,
+                  channel: "chromium" as const,
+                  executablePath: fsPath,
+                  label: label.replace(/\.(exe|app)$/i, "") || label,
+                };
+                await vscode.workspace.getConfiguration("Perplexity").update(
+                  "browserChoice",
+                  choice,
+                  vscode.ConfigurationTarget.Global,
+                );
+                this.authManager.setBrowserChoice(choice);
+                await this.refresh();
+              }
+              await this.postActionResult(message.id, true);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
+          case "browser:install-bundled": {
+            try {
+              if (!this.authManager) {
+                await this.postActionResult(message.id, false, "AuthManager not ready");
+                break;
+              }
+              debug("[browser:install-bundled] starting patchright install chromium");
+              const state = await this.authManager.downloadBundledChromium();
+              debug(`[browser:install-bundled] finished status=${state.status}${state.error ? ` error=${state.error}` : ""}`);
+              await this.postActionResult(message.id, state.status !== "error", state.error);
+            } catch (err) {
+              const msg = (err as Error).message;
+              debug(`[browser:install-bundled] threw: ${msg}`);
+              await this.postActionResult(message.id, false, msg);
+            }
+            break;
+          }
+          case "browser:remove-bundled": {
+            try {
+              if (!this.authManager) {
+                await this.postActionResult(message.id, false, "AuthManager not ready");
+                break;
+              }
+              const ok = await this.authManager.removeBundledChromium();
+              await this.postActionResult(message.id, ok);
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
           case "diagnostics:capture": {
             try {
+              // Closure-captured so the "Show in folder" handler in the
+              // showInformationMessage lambda below can reveal the zip after
+              // the toast is clicked — mirrors the Perplexity.captureDiagnostics
+              // command-palette wire-up so the dashboard path gets the same
+              // affordance.
+              let savedPath: string | null = null;
               const outcome = await handleDiagnosticsCapture(
                 message.id,
                 {
@@ -1364,7 +1484,10 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
                     });
                     return uri?.fsPath;
                   },
-                  captureDiagnostics,
+                  captureDiagnostics: async (opts) => {
+                    savedPath = opts.outputPath;
+                    return captureDiagnostics(opts);
+                  },
                   runDoctor: this.buildRunDoctor(),
                   getConfigDir: () =>
                     process.env.PERPLEXITY_CONFIG_DIR ?? path.join(os.homedir(), ".perplexity-mcp"),
@@ -1373,7 +1496,17 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
                     String((this.context.extension.packageJSON as { version?: string }).version ?? "0.0.0"),
                   getVscodeVersion: () => vscode.version,
                   getHomedir: () => os.homedir(),
-                  showInformationMessage: async (m) => vscode.window.showInformationMessage(m),
+                  showInformationMessage: async (message) => {
+                    const choice = await vscode.window.showInformationMessage(message, "Show in folder");
+                    if (choice === "Show in folder" && savedPath) {
+                      try {
+                        await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(savedPath));
+                      } catch {
+                        await vscode.env.openExternal(vscode.Uri.file(savedPath));
+                      }
+                    }
+                    return choice;
+                  },
                   showErrorMessage: async (m) => vscode.window.showErrorMessage(m),
                 },
                 async (msg) => {

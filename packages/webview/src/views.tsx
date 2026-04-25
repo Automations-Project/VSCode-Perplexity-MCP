@@ -35,6 +35,7 @@ import { AuthorizedClients } from "./components/AuthorizedClients";
 import { DownloadMenu } from "./components/DownloadMenu";
 import { OpenWithMenu } from "./components/OpenWithMenu";
 import { TransportPicker } from "./components/TransportPicker";
+import { BrowserSettings } from "./components/BrowserSettings";
 import { getIdeIcon } from "./ide-icons";
 import { Markdown } from "./markdown";
 import {
@@ -105,10 +106,10 @@ function ModelsSourceBadge({
     lastTier === "got-scraping"
       ? "via HTTP (got-scraping)"
       : lastTier === "impit"
-      ? "via HTTP (impit)"
-      : lastTier === "browser"
-      ? "via headless browser"
-      : null;
+        ? "via HTTP (impit)"
+        : lastTier === "browser"
+          ? "via headless browser"
+          : null;
 
   const meta = {
     live: { label: "Live", tone: "chip-pro", detail: `Fetched ${relative}${tierBadge ? ` ${tierBadge}` : ""}` },
@@ -118,14 +119,13 @@ function ModelsSourceBadge({
   }[source];
 
   return (
-    <div className="flex items-center justify-between gap-2" style={{ marginTop: 10, flexWrap: "wrap" }}>
-      <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
-        <span className={`chip ${meta.tone}`} style={{ fontSize: "0.68rem" }}>{meta.label}</span>
-        <span style={{ fontSize: "0.7rem" }} className="text-[var(--text-muted)]">{meta.detail}</span>
+    <div className="mdl-source-row">
+      <div className="mdl-source-meta">
+        <span className={`chip mdl-source-chip ${meta.tone}`}>{meta.label}</span>
+        <span className="mdl-source-detail">{meta.detail}</span>
       </div>
       <button
-        className="ghost-button"
-        style={{ padding: "4px 10px", fontSize: "0.72rem" }}
+        className="ghost-button mdl-source-refresh"
         onClick={() => send({ type: "models:refresh" })}
         title="Fetch /rest/models/config live from Perplexity"
       >
@@ -229,7 +229,7 @@ export function DashboardView({
         />
         <div className="flex items-center gap-2">
           <StatusDot variant={snapshot.loggedIn ? "ok" : "off"} />
-          <div style={{ fontSize: "0.78rem" }} className="text-[var(--text-secondary)]">
+          <div className="dashboard-status-text">
             {snapshot.loggedIn
               ? "Session active and ready."
               : "Run login once to unlock the server."}
@@ -304,15 +304,15 @@ export function DashboardView({
           ) : (
             rateLimitEntries.map(([mode, details]) => (
               <div key={mode} className="list-row">
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: "0.8rem", fontWeight: 500 }} className="text-[var(--text-primary)]">{prettifyMode(mode)}</div>
+                <div className="rate-limit-main">
+                  <div className="rate-limit-title">{prettifyMode(mode)}</div>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className={`chip ${details.available ? "chip-pro" : "chip-danger"}`}>
                     {details.available ? "Available" : "Unavailable"}
                   </span>
                   {details.remaining_detail.kind === "exact" && (
-                    <span style={{ fontSize: "0.72rem" }} className="text-[var(--text-muted)]">
+                    <span className="rate-limit-remaining">
                       {details.remaining_detail.remaining ?? 0} left
                     </span>
                   )}
@@ -558,7 +558,7 @@ export function ModelsView({
           detail=""
         />
         <div className="flex items-center gap-2 mb-2">
-          <div className="search-field" style={{ flex: 1 }}>
+          <div className="search-field">
             <Search size={14} />
             <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter models..." />
           </div>
@@ -619,10 +619,10 @@ export function ModelsView({
                       <div className="mdl-card-top">
                         <div className="mdl-card-name">
                           {entry.label}
-                          {entry.has_new_tag && <span className="chip chip-accent" style={{ fontSize: "0.55rem", padding: "1px 5px", marginLeft: "6px" }}>NEW</span>}
+                          {entry.has_new_tag && <span className="chip chip-accent mdl-chip-new">NEW</span>}
                         </div>
-                        <div className="flex items-center gap-1">
-                          {isDefault && <span className="chip chip-pro" style={{ fontSize: "0.55rem", padding: "1px 5px" }}>DEFAULT</span>}
+                        <div className="mdl-card-badges">
+                          {isDefault && <span className="chip chip-pro mdl-chip-tiny">DEFAULT</span>}
                           <span className={`chip ${entry.subscription_tier === "max" ? "chip-max" : entry.subscription_tier === "pro" ? "chip-pro" : "chip-neutral"}`}>
                             {entry.subscription_tier}
                           </span>
@@ -686,10 +686,7 @@ export function ModelsView({
                             if (toolMatches.length === 0) {
                               return (
                                 <div className="mdl-card-assign">
-                                  <div
-                                    style={{ fontSize: "0.7rem" }}
-                                    className="text-[var(--text-muted)]"
-                                  >
+                                  <div className="mdl-card-note">
                                     Not used by any Perplexity MCP tool — this mode (
                                     {prettifyMode(group.mode)}) is shown for reference only.
                                   </div>
@@ -774,29 +771,28 @@ function CloudSyncBar({ send }: { send: SendFn }) {
   const cloudSync = useDashboardStore((s) => s.cloudSync);
   const inFlight = cloudSync.phase === "starting" || cloudSync.phase === "syncing";
   return (
-    <div className="flex items-center gap-2 mt-3" style={{ flexWrap: "wrap" }}>
+    <div className="hist-cloud-sync-row">
       <button
-        className="ghost-button btn-sm"
+        className="ghost-button btn-sm hist-cloud-sync-button"
         onClick={() => { if (!inFlight) send({ type: "history:cloud-sync" }); }}
         disabled={inFlight}
         title="Fetch all Perplexity.ai threads and merge into local history. Never deletes local-only entries."
-        style={{ padding: "6px 10px", fontSize: "0.7rem" }}
       >
         <RefreshCcw size={13} />
-        <span style={{ marginLeft: 4 }}>{inFlight ? "Syncing from cloud…" : "Sync from Cloud"}</span>
+        <span className="hist-cloud-sync-button-label">{inFlight ? "Syncing from cloud…" : "Sync from Cloud"}</span>
       </button>
       {inFlight ? (
-        <span className="muted" style={{ fontSize: "0.68rem" }}>
+        <span className="hist-cloud-sync-note">
           Fetched {cloudSync.fetched ?? 0}
           {cloudSync.inserted ? ` · ${cloudSync.inserted} new` : ""}
           {cloudSync.updated ? ` · ${cloudSync.updated} updated` : ""}
         </span>
       ) : cloudSync.phase === "done" ? (
-        <span className="muted" style={{ fontSize: "0.68rem" }}>
+        <span className="hist-cloud-sync-note">
           Last sync: {cloudSync.inserted ?? 0} new · {cloudSync.updated ?? 0} updated · {cloudSync.skipped ?? 0} unchanged
         </span>
       ) : cloudSync.phase === "error" ? (
-        <span className="text-error" style={{ fontSize: "0.68rem" }}>Error: {cloudSync.error}</span>
+        <span className="hist-cloud-sync-error">Error: {cloudSync.error}</span>
       ) : null}
     </div>
   );
@@ -872,7 +868,7 @@ export function HistoryView({
         {Object.keys(toolCounts).length > 1 && (
           <div className="flex flex-wrap gap-1 mt-2">
             {Object.entries(toolCounts).sort((a, b) => b[1] - a[1]).map(([tool, count]) => (
-              <span key={tool} className={`chip ${getToolChipClass(tool)}`} style={{ fontSize: "0.65rem" }}>
+              <span key={tool} className={`chip hist-chip-tool-count ${getToolChipClass(tool)}`}>
                 {shortToolName(tool)} ({count})
               </span>
             ))}
@@ -883,8 +879,8 @@ export function HistoryView({
 
       {/* Search + sort controls */}
       <div className="glass-panel section-panel">
-        <div className="flex items-center gap-2">
-          <div className="search-field" style={{ flex: 1 }}>
+        <div className="history-control-row">
+          <div className="search-field">
             <Search size={14} />
             <input
               value={filter}
@@ -894,22 +890,20 @@ export function HistoryView({
             />
           </div>
           <button
-            className="ghost-button btn-sm"
+            className="ghost-button btn-sm hist-control-button"
             onClick={() => send({ type: "history:rebuild-index" })}
             title="Re-scan markdown entries and rebuild the history index"
-            style={{ flexShrink: 0, padding: "6px 8px" }}
           >
             <RefreshCcw size={13} />
-            <span style={{ fontSize: "0.68rem" }}>Rebuild</span>
+            <span className="hist-control-label">Rebuild</span>
           </button>
           <button
-            className="ghost-button btn-sm"
+            className="ghost-button btn-sm hist-control-button"
             onClick={() => setSortNewest(!sortNewest)}
             title={sortNewest ? "Showing newest first" : "Showing oldest first"}
-            style={{ flexShrink: 0, padding: "6px 8px" }}
           >
             {sortNewest ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
-            <span style={{ fontSize: "0.68rem" }}>{sortNewest ? "Newest" : "Oldest"}</span>
+            <span className="hist-control-label">{sortNewest ? "Newest" : "Oldest"}</span>
           </button>
         </div>
       </div>
@@ -960,30 +954,30 @@ function SpeedBoostCard({ state, send }: { state: DashboardState; send: SendFn }
         detail="Optional Rust-backed TLS impersonation library. Adds a fast HTTP tier ahead of the headless-browser fallback — refresh drops from ~3-5s to ~300-500ms. Installed on demand, not bundled with the extension."
       />
 
-      <div className="flex items-center gap-2 mb-2" style={{ flexWrap: "wrap" }}>
+      <div className="speed-boost-status-row">
         <Rocket size={14} className="text-[var(--text-muted)]" />
         {boost.installed ? (
           <>
-            <span className="chip chip-pro" style={{ fontSize: "0.68rem" }}>
+            <span className="chip chip-pro speed-boost-chip">
               Installed
             </span>
             {boost.version ? (
-              <span style={{ fontSize: "0.7rem" }} className="text-[var(--text-muted)]">
+              <span className="speed-boost-meta">
                 impit {boost.version}
               </span>
             ) : null}
             {installedAtRel ? (
-              <span style={{ fontSize: "0.7rem" }} className="text-[var(--text-muted)]">
+              <span className="speed-boost-meta">
                 · installed {installedAtRel}
               </span>
             ) : null}
           </>
         ) : (
           <>
-            <span className="chip chip-neutral" style={{ fontSize: "0.68rem" }}>
+            <span className="chip chip-neutral speed-boost-chip">
               Not installed
             </span>
-            <span style={{ fontSize: "0.7rem" }} className="text-[var(--text-muted)]">
+            <span className="speed-boost-meta">
               Refresh will use headless browser (works fine, just slower).
             </span>
           </>
@@ -1021,22 +1015,16 @@ export function SettingsView({
   send: SendFn;
 }) {
   const settings = state.settings;
+  const authState = useDashboardStore((store) => store.authState);
   const staleConfigs = useDashboardStore((store) => store.staleConfigs);
   const staleIdeTags = new Set((staleConfigs ?? []).map((s) => s.ideTag));
   const ideEntries = Object.entries(state.ideStatus) as Array<[string, IdeStatus]>;
   const autoConfigurable = ideEntries.filter(([, s]) => s.autoConfigurable);
   const manualOnly = ideEntries.filter(([, s]) => !s.autoConfigurable);
 
-  const [chromePath, setChromePath] = useState(settings.chromePath);
-
-  const commitChromePath = useCallback(() => {
-    if (chromePath !== settings.chromePath) {
-      send({ type: "settings:update", payload: { chromePath } });
-    }
-  }, [chromePath, settings.chromePath, send]);
-
   return (
     <div className="grid gap-3">
+      <BrowserSettings auth={authState} send={send} />
       <SpeedBoostCard state={state} send={send} />
 
       <div className="glass-panel section-panel">
@@ -1090,21 +1078,21 @@ export function SettingsView({
             {manualOnly.map(([key, status]) => {
               const ManualIcon = getIdeIcon(key);
               return (
-              <div key={key} className={`ide-card${POPULAR_IDES.has(key) ? " ide-card-popular" : ""}`}>
-                <div className="ide-card-header">
-                  <span className="ide-card-name" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                    <ManualIcon />
-                    {status.displayName}
-                  </span>
-                  <span className={`chip ${status.detected ? "chip-neutral" : "chip-muted"}`}>
-                    {status.detected ? "Detected" : "Not found"}
-                  </span>
+                <div key={key} className={`ide-card${POPULAR_IDES.has(key) ? " ide-card-popular" : ""}`}>
+                  <div className="ide-card-header">
+                    <span className="ide-card-name ide-card-name-icon">
+                      <ManualIcon />
+                      {status.displayName}
+                    </span>
+                    <span className={`chip ${status.detected ? "chip-neutral" : "chip-muted"}`}>
+                      {status.detected ? "Detected" : "Not found"}
+                    </span>
+                  </div>
+                  <div className="ide-card-path-wrap">{status.path}</div>
+                  <div className="ide-card-config-note">
+                    Config format: {status.configFormat} — configure manually
+                  </div>
                 </div>
-                <div className="ide-card-path-wrap">{status.path}</div>
-                <div style={{ fontSize: "0.68rem" }} className="text-[var(--text-muted)]">
-                  Config format: {status.configFormat} — configure manually
-                </div>
-              </div>
               );
             })}
           </div>
@@ -1185,26 +1173,17 @@ export function SettingsView({
             <div className="setting-row-hint">Model used by perplexity_search and perplexity_ask tools.</div>
           </div>
 
-          <div className="setting-row">
-            <div className="setting-row-label">Chrome Path</div>
-            <input
-              type="text"
-              className="setting-input"
-              value={chromePath}
-              placeholder="Auto-detect (leave empty)"
-              onChange={(e) => setChromePath(e.target.value)}
-              onBlur={commitChromePath}
-              onKeyDown={(e) => { if (e.key === "Enter") commitChromePath(); }}
-            />
-            <div className="setting-row-hint">Absolute path to Chrome/Chromium. Leave empty for auto-detection.</div>
-          </div>
+          {/* Chrome Path input moved to the BrowserSettings picker at the top
+              of this tab (0.8.x browser-runtime expansion). That component
+              owns channel selection, bundled-Chromium install/remove, and
+              custom-executable selection via the native VS Code file picker. */}
 
           <SettingToggle
             label="Debug Mode"
             checked={settings.debugMode}
             onChange={(v) => send({ type: "settings:update", payload: { debugMode: v } })}
           />
-          <div style={{ fontSize: "0.68rem", paddingLeft: "12px" }} className="text-[var(--text-muted)]">
+          <div className="settings-debug-note">
             Enable verbose logging in Output → Perplexity Internal MCP.
           </div>
         </div>
@@ -1268,9 +1247,9 @@ export function RulesView({
           title="Rules content"
           detail=""
         />
-        <div style={{ fontSize: "0.72rem", lineHeight: 1.5 }} className="text-[var(--text-secondary)]">
+        <div className="rules-content-copy">
           <p>Each IDE gets Perplexity MCP tool descriptions and usage guidelines in its native format:</p>
-          <ul style={{ paddingLeft: "1.2em", margin: "6px 0" }} className="list-disc">
+          <ul className="list-disc rules-content-list">
             <li><strong>Cursor</strong> — <code className="code-pill">.cursor/rules/perplexity-mcp.mdc</code></li>
             <li><strong>Windsurf</strong> — <code className="code-pill">.windsurf/rules/perplexity-mcp.md</code></li>
             <li><strong>Claude Code</strong> — section in <code className="code-pill">CLAUDE.md</code></li>
@@ -1352,9 +1331,9 @@ function ActionCard({
       <div className="icon-badge">
         <Icon size={13} />
       </div>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: "0.8rem", fontWeight: 500 }} className="text-[var(--text-primary)]">{title}</div>
-        <div style={{ fontSize: "0.72rem", lineHeight: 1.35 }} className="text-[var(--text-secondary)] mt-0.5">{description}</div>
+      <div className="action-card-body">
+        <div className="action-card-title">{title}</div>
+        <div className="action-card-desc">{description}</div>
       </div>
     </button>
   );
@@ -1391,7 +1370,7 @@ function IdeCard({
   return (
     <div className={`ide-card${isPopular ? " ide-card-popular" : ""}`}>
       <div className="ide-card-header">
-        <span className="ide-card-name" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+        <span className="ide-card-name ide-card-name-icon">
           <IconComponent />
           {status.displayName}
           {isStale ? (
@@ -1542,23 +1521,23 @@ function HistoryCardRich({
       {/* Header row: click to expand */}
       <button className="hist-card-header" onClick={() => onToggle(item.id)} aria-expanded={expanded}>
         <div className="hist-card-top">
-          <span className={`chip ${getToolChipClass(item.tool)}`} style={{ fontSize: "0.65rem" }}>
+          <span className={`chip hist-chip-tool ${getToolChipClass(item.tool)}`}>
             {shortToolName(item.tool)}
           </span>
           {item.model && (
-            <span className="chip chip-muted" style={{ fontSize: "0.62rem" }}>{item.model}</span>
+            <span className="chip chip-muted hist-chip-model">{item.model}</span>
           )}
           {item.tier ? (
-            <span className="chip chip-accent" style={{ fontSize: "0.62rem" }}>{item.tier}</span>
+            <span className="chip chip-accent hist-chip-model">{item.tier}</span>
           ) : null}
           {item.pinned ? (
-            <span className="chip chip-pro" style={{ fontSize: "0.62rem" }}>
+            <span className="chip chip-pro hist-chip-model">
               <Pin size={10} />
               Pinned
             </span>
           ) : null}
           {item.source === "cloud" ? (
-            <span className="chip chip-accent" style={{ fontSize: "0.62rem" }}>
+            <span className="chip chip-accent hist-chip-model">
               <Cloud size={10} />
               Cloud
             </span>
@@ -1629,7 +1608,7 @@ function HistoryCardRich({
                 {item.language}
               </span>
             )}
-            <span className="hist-meta-item" style={{ marginLeft: "auto" }}>
+            <span className="hist-meta-item hist-meta-time">
               <Clock size={11} />
               {new Date(item.createdAt).toLocaleString()}
             </span>
@@ -1755,15 +1734,15 @@ function HistoryCard({ item }: { item: HistoryItem; compact?: boolean }) {
   return (
     <div className="history-card">
       <div className="flex flex-wrap items-center gap-1">
-        <div className={`chip ${getToolChipClass(item.tool)}`} style={{ fontSize: "0.65rem" }}>{shortToolName(item.tool)}</div>
-        {item.model ? <div className="chip chip-muted" style={{ fontSize: "0.62rem" }}>{item.model}</div> : null}
-        <div style={{ fontSize: "0.65rem" }} className="text-[var(--text-muted)]">{relativeTime(item.createdAt)}</div>
+        <div className={`chip hist-chip-tool ${getToolChipClass(item.tool)}`}>{shortToolName(item.tool)}</div>
+        {item.model ? <div className="chip chip-muted hist-chip-model">{item.model}</div> : null}
+        <div className="hist-compact-time">{relativeTime(item.createdAt)}</div>
       </div>
-      <div style={{ fontSize: "0.8rem", fontWeight: 500 }} className="mt-1.5 text-[var(--text-primary)]">{item.query}</div>
-      <div className="hist-card-preview" style={{ marginTop: "4px" }}>
+      <div className="hist-compact-query">{item.query}</div>
+      <div className="hist-card-preview hist-compact-preview">
         <Markdown content={item.answerPreview} maxLines={3} />
       </div>
-      <div className="mt-2 flex items-center justify-between gap-2" style={{ fontSize: "0.68rem" }}>
+      <div className="hist-compact-meta">
         <span className="text-[var(--text-muted)]">{item.sourceCount} sources</span>
         {item.threadUrl ? (
           <a href={item.threadUrl} className="inline-flex items-center gap-1 text-[#7dd3fc]">
@@ -1779,8 +1758,8 @@ function HistoryCard({ item }: { item: HistoryItem; compact?: boolean }) {
 function PathRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="path-row">
-      <div style={{ fontSize: "0.6rem" }} className="uppercase tracking-[0.18em] text-[var(--text-muted)]">{label}</div>
-      <div style={{ fontSize: "0.75rem" }} className="mt-1 break-all text-[var(--text-primary)]">{value}</div>
+      <div className="path-row-label">{label}</div>
+      <div className="path-row-value">{value}</div>
     </div>
   );
 }
@@ -1796,7 +1775,7 @@ function SettingToggle({
 }) {
   return (
     <label className="toggle-row">
-      <span style={{ fontSize: "0.78rem", fontWeight: 500 }} className="text-[var(--text-primary)]">{label}</span>
+      <span className="setting-toggle-label">{label}</span>
       <span className="toggle-switch">
         <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
         <span className="toggle-track" />

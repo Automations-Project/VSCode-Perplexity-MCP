@@ -86,13 +86,20 @@ export async function runDiagnosticsCaptureFlow(deps: DiagnosticsFlowDeps): Prom
       doctorReport,
       now: deps.now,
     });
-    await deps.showInformationMessage(`Diagnostics saved to ${result.outputPath}`);
+    // Fire-and-forget: VS Code info notifications without an auto-dismiss
+    // (and even some without action items) only resolve when the user clicks
+    // the X. Awaiting that gates the dashboard spinner on user interaction
+    // with a toast — leaving the "Capturing…" label stuck for minutes after
+    // the zip is already on disk. The "Show in folder" action wired by the
+    // command-palette caller still fires asynchronously when clicked, since
+    // the underlying lambda runs to completion in the background.
+    void Promise.resolve(deps.showInformationMessage(`Diagnostics saved to ${result.outputPath}`)).catch(() => {});
     return { kind: "ok", result };
   } catch (err) {
     const raw = err instanceof Error ? err.message : String(err);
     // Redact before surfacing — the error may embed paths or tokens.
     const redacted = redactMessage(raw);
-    await deps.showErrorMessage(`Diagnostics capture failed: ${redacted}`);
+    void Promise.resolve(deps.showErrorMessage(`Diagnostics capture failed: ${redacted}`)).catch(() => {});
     return { kind: "error", error: redacted };
   }
 }

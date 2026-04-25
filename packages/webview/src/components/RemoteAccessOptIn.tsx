@@ -18,7 +18,6 @@ export function RemoteAccessOptIn({ send }: { send: SendFn }) {
     <div
       className="remote-access-optin"
       data-testid="remote-access-optin"
-      style={{ marginTop: 10 }}
     >
       <div className="section-header">
         <div className="eyebrow">Remote access</div>
@@ -43,7 +42,6 @@ export function RemoteAccessOptIn({ send }: { send: SendFn }) {
       </button>
       <div
         className="remote-access-optin-note"
-        style={{ fontSize: "0.66rem", marginTop: 6 }}
       >
         Recommended only if you need remote access. Requires choosing a
         provider (Cloudflare or ngrok) + authenticating with them. Read the

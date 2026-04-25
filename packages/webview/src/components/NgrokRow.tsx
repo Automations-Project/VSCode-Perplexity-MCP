@@ -26,32 +26,31 @@ export function NgrokRow({
     <>
       {!setupReady ? (
         <div
-          className="daemon-inset-panel"
-          style={{ marginTop: 10, borderColor: "rgba(255, 180, 80, 0.3)" }}
+          className="daemon-inset-panel ngrok-setup-panel"
         >
-          <div style={{ fontSize: "0.72rem", fontWeight: 600 }} className="text-[var(--text-primary)]">
+          <div className="daemon-row-title">
             ngrok setup
           </div>
-          <div style={{ fontSize: "0.66rem", marginTop: 3 }} className="text-[var(--text-muted)]">
+          <div className="daemon-row-detail">
             Paste the authtoken from{" "}
             <a
               href="https://dashboard.ngrok.com/get-started/your-authtoken"
               target="_blank"
               rel="noreferrer"
-              style={{ color: "var(--text-accent)" }}
+              className="daemon-accent-link"
             >
               dashboard.ngrok.com
             </a>
             . Required once per machine.
           </div>
-          <div className="flex items-center gap-1 flex-wrap" style={{ marginTop: 6 }}>
+          <div className="daemon-button-row daemon-button-row-compact">
             <input
               type="password"
               autoComplete="off"
               placeholder="2a1b3c4d…ngrokAuthToken"
               value={authtokenInput}
               onChange={(event) => setAuthtokenInput(event.target.value)}
-              style={{ flex: 1, minWidth: 180, fontSize: "0.7rem", padding: "4px 8px", borderRadius: 4 }}
+              className="daemon-compact-input daemon-input-md"
             />
             <DaemonActionButton
               type="daemon:set-ngrok-authtoken"
@@ -69,32 +68,32 @@ export function NgrokRow({
       ) : null}
 
       {configured ? (
-        <div className="list-row" style={{ marginTop: 8, alignItems: "flex-start" }}>
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <div style={{ fontSize: "0.72rem", fontWeight: 600 }} className="text-[var(--text-primary)]">
+        <div className="list-row ngrok-domain-row">
+          <div className="daemon-row-main">
+            <div className="daemon-row-title">
               ngrok reserved domain <span className="text-[var(--text-muted)]">(optional)</span>
             </div>
-            <div style={{ fontSize: "0.66rem", marginTop: 3 }} className="text-[var(--text-muted)]">
+            <div className="daemon-row-detail">
               Without a reserved domain ngrok gives you a new random hostname each run. Reserve one free{" "}
               <a
                 href="https://dashboard.ngrok.com/domains"
                 target="_blank"
                 rel="noreferrer"
-                style={{ color: "var(--text-accent)" }}
+                className="daemon-accent-link"
               >
                 here
               </a>
               .
             </div>
           </div>
-          <div className="flex items-center gap-1 flex-wrap" style={{ justifyContent: "flex-end" }}>
+          <div className="daemon-button-row daemon-actions-end daemon-action-fill-lg">
             <input
               type="text"
               autoComplete="off"
               placeholder={domain ?? "yourname.ngrok-free.app"}
               value={domainInput}
               onChange={(event) => setDomainInput(event.target.value)}
-              style={{ width: 220, fontSize: "0.7rem", padding: "4px 8px", borderRadius: 4 }}
+              className="daemon-compact-input daemon-input-md"
             />
             <DaemonActionButton
               type="daemon:set-ngrok-domain"
@@ -116,7 +115,6 @@ export function NgrokRow({
               href="https://dashboard.ngrok.com/endpoints"
               target="_blank"
               rel="noreferrer"
-              style={{ textDecoration: "none" }}
               title="Remote ngrok endpoint/domain cleanup stays in ngrok unless a future API-key flow is added."
             >
               Open dashboard

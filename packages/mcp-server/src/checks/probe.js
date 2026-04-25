@@ -3,10 +3,25 @@ const CATEGORY = "probe";
 async function defaultSearch({ timeoutMs }) {
   const { PerplexityClient } = await import("../client.js");
   const client = new PerplexityClient();
-  await client.init();
-  const authenticated = client.authenticated;
+  // Force the headless-only path so the probe never opens a visible browser
+  // window. The headed Cloudflare bootstrap was leaving Chrome windows
+  // dangling on every Deep check / probe re-run when init() or close() failed
+  // mid-flight; the probe is a smoke test for the headless search path that
+  // tools actually use, so skipping the headed phase is the right scope. The
+  // env var is restored in a finally so concurrent tool-call clients aren't
+  // affected.
+  const HEADLESS_KEY = "PERPLEXITY_HEADLESS_ONLY";
+  const prevHeadlessOnly = process.env[HEADLESS_KEY];
+  process.env[HEADLESS_KEY] = "1";
   const t0 = Date.now();
   try {
+    // init() is INSIDE the try so the finally always runs shutdown(), even
+    // when init throws (browser launch failure, CF timeout, etc.). Previously
+    // a failed init left both the persistent context AND the freshly-spawned
+    // chrome.exe dangling, which is how visible browser windows were piling
+    // up across repeated Deep check clicks.
+    await client.init();
+    const authenticated = client.authenticated;
     const result = await client.search({
       query: "What is the capital of France? Cite at least one web source.",
       modelPreference: "turbo",
@@ -24,6 +39,8 @@ async function defaultSearch({ timeoutMs }) {
     };
   } finally {
     await client.shutdown().catch(() => {});
+    if (prevHeadlessOnly === undefined) delete process.env[HEADLESS_KEY];
+    else process.env[HEADLESS_KEY] = prevHeadlessOnly;
   }
 }
 

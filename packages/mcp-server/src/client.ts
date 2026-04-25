@@ -16,9 +16,12 @@ import {
   RATE_LIMIT_ENDPOINT,
   EXPERIMENTS_ENDPOINT,
   SUPPORTED_BLOCK_USE_CASES,
+  findBrowser,
   findChromeExecutable,
   resolveBrowserExecutable,
+  getOrCreateContext,
   getSavedCookies,
+  type BrowserChannel,
   type ASIFile,
   type SearchResult,
   type ModelsConfigResponse,
@@ -60,11 +63,14 @@ const USER_AGENT =
 
 /**
  * Build launch options for Playwright persistent context.
- * Uses real Chrome when available (bypasses CF fingerprinting),
- * falls back to bundled Chromium.
+ *
+ * Uses the first available system browser (Chrome > Edge > Chromium > Brave)
+ * for best Cloudflare fingerprinting, falling back to patchright's bundled
+ * Chromium. The resolved `channel` is passed through so Patchright can apply
+ * channel-specific stealth tweaks (important for msedge on Windows).
  */
 function buildLaunchOptions(headless: boolean): Record<string, any> {
-  const chromePath = findChromeExecutable();
+  const browser = findBrowser();
   const opts: Record<string, any> = {
     headless,
     args: STEALTH_ARGS,
@@ -73,9 +79,15 @@ function buildLaunchOptions(headless: boolean): Record<string, any> {
     // Strip --enable-automation (Playwright default) which is a CF red flag
     ignoreDefaultArgs: ["--enable-automation"],
   };
-  if (chromePath) {
-    opts.executablePath = chromePath;
-    console.error(`[perplexity-mcp] Using system Chrome: ${chromePath}`);
+  if (browser) {
+    opts.executablePath = browser.path;
+    // Only pass channel when it's a first-party Playwright channel. Brave
+    // uses channel "chromium" with an explicit executablePath — Patchright
+    // treats it as generic Chromium which is the correct behavior.
+    if (browser.channel === "chrome" || browser.channel === "msedge" || browser.channel === "chromium") {
+      opts.channel = browser.channel;
+    }
+    console.error(`[perplexity-mcp] Using ${browser.channel}: ${browser.path}`);
   }
   return opts;
 }
@@ -127,17 +139,17 @@ export class PerplexityClient {
       this.loadCachedAccountInfo();
     }
 
-    // Phase 2: Headless browser for search operations
-    // Use NON-persistent browser to avoid Chrome profile lock conflicts.
+    // Phase 2: Headless browser for search operations.
     console.error("[perplexity-mcp] Launching headless browser...");
     const launchOpts = buildLaunchOptions(true);
     this.browser = await chromium.launch({
       headless: launchOpts.headless,
       args: launchOpts.args,
       ...(launchOpts.executablePath ? { executablePath: launchOpts.executablePath } : {}),
+      ...(launchOpts.channel ? { channel: launchOpts.channel } : {}),
       ignoreDefaultArgs: launchOpts.ignoreDefaultArgs,
     });
-    this.context = await this.browser.newContext({
+    this.context = await getOrCreateContext(this.browser, {
       viewport: launchOpts.viewport,
       userAgent: launchOpts.userAgent,
     });

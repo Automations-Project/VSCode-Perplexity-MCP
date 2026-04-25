@@ -9,6 +9,10 @@ const DEFAULTS: ExtensionSettingsSnapshot = {
   researchModel: "pplx_alpha",
   computeModel: "pplx_asi",
   chromePath: "",
+  // browserChoice starts undefined which means "auto-detect first available".
+  // Once the user picks something in the dashboard it's written here and
+  // `getSettingsSnapshot()` will return a concrete value on subsequent loads.
+  browserChoice: undefined,
   debugMode: false,
   autoConfigureCursor: false,
   autoConfigureWindsurf: false,
@@ -36,6 +40,7 @@ export function getSettingsSnapshot(): ExtensionSettingsSnapshot {
     researchModel: configuration.get("researchModel", DEFAULTS.researchModel),
     computeModel: configuration.get("computeModel", DEFAULTS.computeModel),
     chromePath: configuration.get("chromePath", DEFAULTS.chromePath),
+    browserChoice: configuration.get("browserChoice", DEFAULTS.browserChoice),
     debugMode: configuration.get("debugMode", DEFAULTS.debugMode),
     autoConfigureCursor: configuration.get("autoConfigureCursor", DEFAULTS.autoConfigureCursor),
     autoConfigureWindsurf: configuration.get("autoConfigureWindsurf", DEFAULTS.autoConfigureWindsurf),

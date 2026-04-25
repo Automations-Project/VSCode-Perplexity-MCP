@@ -1,7 +1,7 @@
 {
   "name": "perplexity-vscode",
   "displayName": "Perplexity Internal MCP",
-  "version": "0.8.5",
+  "version": "0.8.8",
   "publisher": "private",
   "private": true,
   "description": "Native VS Code extension for the Perplexity Internal MCP server with dashboard, auth, and multi-IDE config generation",
@@ -226,7 +226,38 @@
         "Perplexity.chromePath": {
           "type": "string",
           "default": "",
-          "description": "Optional absolute path to Google Chrome. When empty the extension falls back to auto-detection."
+          "description": "Optional absolute path to Google Chrome. When empty the extension falls back to auto-detection. Superseded by Perplexity.browserChoice for new installs."
+        },
+        "Perplexity.browserChoice": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "default": null,
+          "description": "Selected browser runtime. Managed by the dashboard Browser Settings picker; edit directly at your own risk.",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "auto",
+                "custom"
+              ]
+            },
+            "channel": {
+              "type": "string",
+              "enum": [
+                "chrome",
+                "msedge",
+                "chromium"
+              ]
+            },
+            "executablePath": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            }
+          }
         },
         "Perplexity.debugMode": {
           "type": "boolean",
@@ -297,7 +328,12 @@
           "default": {},
           "additionalProperties": {
             "type": "string",
-            "enum": ["stdio-in-process", "stdio-daemon-proxy", "http-loopback", "http-tunnel"]
+            "enum": [
+              "stdio-in-process",
+              "stdio-daemon-proxy",
+              "http-loopback",
+              "http-tunnel"
+            ]
           },
           "description": "Per-IDE MCP transport selection. Keys are IDE target names (e.g., 'cursor', 'claudeDesktop'); missing keys resolve to 'stdio-daemon-proxy'."
         },
@@ -311,7 +347,9 @@
         "Perplexity.syncFolderPatterns": {
           "type": "array",
           "default": [],
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Extra regex patterns used to detect cloud-sync folders when generating http-loopback configs. Matches against the target path or any ancestor directory. Well-known patterns (iCloud, OneDrive, Dropbox, Google Drive, Syncthing, pCloud) are always detected - this setting adds user-specific ones."
         },
         "Perplexity.autoRegenerateStaleConfigs": {

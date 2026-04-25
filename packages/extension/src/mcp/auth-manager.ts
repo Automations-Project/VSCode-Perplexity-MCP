@@ -2,6 +2,16 @@ import { fork, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 import * as vscode from "vscode";
 import { softLogout, hardLogout } from "perplexity-user-mcp/logout";
+import type {
+  BrowserInfo as SharedBrowserInfo,
+  BrowserChoice,
+  BrowserDownloadState,
+} from "@perplexity-user-mcp/shared";
+import {
+  detectAllBrowsers,
+  type BrowserProbe,
+} from "../browser/browser-detect.js";
+import type { BrowserDownloadManager } from "../browser/browser-download.js";
 
 export type AuthStatus =
   | "unknown" | "checking" | "valid" | "expired" | "error"
@@ -18,6 +28,14 @@ export interface AuthState {
    * crashed with a recoverable message. Not redacted beyond what the runner
    * already did. */
   errorDetail?: string;
+  /** Currently-selected browser runtime (from auto-detect or user pick). */
+  browser?: SharedBrowserInfo;
+  /** Every detected browser runtime, in preferred order. */
+  availableBrowsers?: SharedBrowserInfo[];
+  /** Live bundled-Chromium download state. */
+  browserDownload?: BrowserDownloadState;
+  /** Persisted user pick. */
+  browserChoice?: BrowserChoice;
 }
 
 export interface AuthLoginResult {
@@ -68,6 +86,22 @@ const ERROR_UI_MAX = 400;
 function truncate(s: string | undefined, max = ERROR_UI_MAX): string | undefined {
   if (!s) return s;
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
+/**
+ * Map an internal BrowserProbe (used in the extension runtime) to the
+ * wire-format BrowserInfo shared with the webview. The shapes are nearly
+ * identical but we drop the runtime `kind` field which the UI doesn't need
+ * and strip any fields that are undefined to keep the postMessage payload
+ * minimal.
+ */
+function toShared(probe: BrowserProbe): SharedBrowserInfo {
+  const out: SharedBrowserInfo = { found: probe.found };
+  if (probe.channel) out.channel = probe.channel;
+  if (probe.executablePath) out.executablePath = probe.executablePath;
+  if (probe.label) out.label = probe.label;
+  if (probe.downloaded) out.downloaded = probe.downloaded;
+  return out;
 }
 
 /**
@@ -136,13 +170,157 @@ export class AuthManager implements vscode.Disposable {
    *  Perplexity output channel alongside activation/daemon logs. */
   private logger?: (line: string) => void;
 
+  /**
+   * Cached result of the most recent browser probe. Auto-detected unless the
+   * user pinned a specific channel via `setBrowserChoice`. Consumed by
+   * `_browserEnv()` to tell runners + the MCP server which browser to use.
+   */
+  private _browser: BrowserProbe = { found: false };
+  private _availableBrowsers: BrowserProbe[] = [];
+  private _downloadManager?: BrowserDownloadManager;
+  private _downloadListener?: vscode.Disposable;
+
   constructor(opts: AuthManagerOptions) {
     this.extensionUri = opts.extensionUri;
   }
 
   get state(): AuthState { return this._state; }
 
+  get browser(): BrowserProbe { return this._browser; }
+
+  /**
+   * Attach a BrowserDownloadManager so AuthManager can:
+   *   - include any downloaded Chromium in browser probes
+   *   - forward download state into AuthState for the dashboard
+   */
+  attachDownloadManager(mgr: BrowserDownloadManager): void {
+    this._downloadManager = mgr;
+    this._downloadListener?.dispose();
+    this._downloadListener = mgr.onDidChange((state) => {
+      this.setState({ browserDownload: state });
+      // When a download finishes, re-probe so the UI flips from
+      // "chrome_missing" to the newly-bundled Chromium.
+      if (state.status === "done") {
+        this.refreshBrowserDetection();
+        if (this._state.status === "chrome_missing") {
+          this.setState({ status: "unknown", error: undefined });
+        }
+      }
+    });
+    this.setState({ browserDownload: mgr.state });
+  }
+
+  /** Download bundled Chromium on demand. */
+  async downloadBundledChromium(): Promise<BrowserDownloadState> {
+    if (!this._downloadManager) {
+      const err: BrowserDownloadState = { status: "error", error: "Download manager not attached" };
+      this.setState({ browserDownload: err });
+      return err;
+    }
+    return this._downloadManager.download();
+  }
+
+  /** Remove the downloaded bundled Chromium. */
+  async removeBundledChromium(): Promise<boolean> {
+    if (!this._downloadManager) return false;
+    const ok = await this._downloadManager.remove();
+    this.refreshBrowserDetection();
+    return ok;
+  }
+
+  /**
+   * Re-run browser detection and update cached state. Called at init, before
+   * login, before health checks, and after bundled-Chromium download
+   * transitions.
+   */
+  refreshBrowserDetection(): BrowserProbe {
+    const downloadedChromiumPath = this._downloadManager?.getExecutablePath();
+
+    const all = detectAllBrowsers({ downloadedChromiumPath });
+
+    const choice = this._state.browserChoice;
+    let selected: BrowserProbe;
+
+    if (choice?.mode === "custom" && choice.executablePath) {
+      selected = {
+        found: true,
+        channel: (choice.channel as BrowserProbe["channel"]) ?? "chromium",
+        executablePath: choice.executablePath,
+        label: choice.label ?? "Custom browser",
+        kind: "system",
+      };
+    } else if (choice?.mode === "auto" && choice.executablePath) {
+      // User pinned a specific entry from the detected list
+      const match = all.find((b) => b.executablePath === choice.executablePath);
+      selected = match ?? all[0] ?? { found: false };
+    } else {
+      selected = all[0] ?? { found: false };
+    }
+
+    this._browser = selected;
+    this._availableBrowsers = all;
+    this.setState({
+      browser: toShared(selected),
+      availableBrowsers: all.map(toShared),
+    });
+    this.syncProcessEnv();
+    return selected;
+  }
+
+  /**
+   * Persist the user's browser choice and re-run detection so downstream
+   * runners see the new selection. The choice is stored in AuthState only;
+   * persistence to VS Code's workspace settings is the extension.ts layer's
+   * job (see DashboardProvider message handlers).
+   */
+  setBrowserChoice(choice: BrowserChoice | undefined): void {
+    this.setState({ browserChoice: choice });
+    this.refreshBrowserDetection();
+  }
+
+  /**
+   * Sync the currently-selected browser onto `process.env` so any child
+   * process spawned by the extension host (most importantly the detached
+   * MCP daemon in `daemon/runtime.ts::spawnBundledDaemon`) inherits the
+   * same browser selection. The daemon reads `findBrowser()` from
+   * mcp-server's `config.ts`, which honors the env vars we set here.
+   *
+   * Called after each `refreshBrowserDetection()` so the extension host's
+   * env mirrors the active selection.
+   */
+  private syncProcessEnv(): void {
+    const b = this._browser;
+    if (b.channel) {
+      process.env.PERPLEXITY_BROWSER_CHANNEL = b.channel;
+    } else {
+      delete process.env.PERPLEXITY_BROWSER_CHANNEL;
+    }
+    if (b.executablePath) {
+      process.env.PERPLEXITY_BROWSER_PATH = b.executablePath;
+    } else {
+      delete process.env.PERPLEXITY_BROWSER_PATH;
+    }
+    // v0.8.5 cleanup: clear any stale PERPLEXITY_OBSCURA_ENDPOINT inherited
+    // from an older extension host that briefly supported the (removed)
+    // Obscura channel — leaves the env clean for child runners.
+    delete process.env.PERPLEXITY_OBSCURA_ENDPOINT;
+  }
+
+  /**
+   * Env vars forwarded to spawned runners and the MCP server so they launch
+   * with the selected browser.
+   */
+  private async resolveBrowserEnv(): Promise<Record<string, string>> {
+    if (!this._browser.found) this.refreshBrowserDetection();
+    const env: Record<string, string> = {};
+    const b = this._browser;
+    if (b.channel) env.PERPLEXITY_BROWSER_CHANNEL = b.channel;
+    if (b.executablePath) env.PERPLEXITY_BROWSER_PATH = b.executablePath;
+    return env;
+  }
+
   dispose(): void {
+    this._downloadListener?.dispose();
     this._onDidChange.dispose();
   }
 
@@ -178,7 +356,13 @@ export class AuthManager implements vscode.Disposable {
   private async runLogin(opts: LoginOptions): Promise<AuthLoginResult> {
     this.setState({ profile: opts.profile, status: "logging-in", error: undefined, errorDetail: undefined });
     const runnerPath = opts.runnerPath ?? this.defaultRunnerPath(opts.mode);
-    const env: Record<string, string> = { PERPLEXITY_PROFILE: opts.profile };
+
+    // Forward the detected browser to the runner so the spawned login
+    // process inherits the same browser selection (Chrome > Edge > Brave >
+    // bundled). Custom-path picks pass through via PERPLEXITY_BROWSER_PATH.
+    const browserEnv = await this.resolveBrowserEnv();
+
+    const env: Record<string, string> = { ...browserEnv, PERPLEXITY_PROFILE: opts.profile };
     if (opts.mode === "auto") env.PERPLEXITY_EMAIL = opts.email ?? "";
 
     // v0.8.6: resolve a vault passphrase BEFORE spawning the runner. On
@@ -290,8 +474,11 @@ export class AuthManager implements vscode.Disposable {
     const promise = (async () => {
       this.setState({ profile: opts.profile, status: "checking" });
       const runnerPath = this.defaultRunnerPath("health");
+      // Forward the full browser selection so health-check launches with the
+      // same Chrome-family runtime AuthManager resolved.
+      const browserEnv = await this.resolveBrowserEnv();
       try {
-        const result = await spawnRunner(runnerPath, { PERPLEXITY_PROFILE: opts.profile }, { timeoutMs: 20_000 });
+        const result = await spawnRunner(runnerPath, { ...browserEnv, PERPLEXITY_PROFILE: opts.profile }, { timeoutMs: 20_000 });
         if (result.valid) {
           this.setState({
             status: "valid",

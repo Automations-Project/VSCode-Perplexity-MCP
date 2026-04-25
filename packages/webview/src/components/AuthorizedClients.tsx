@@ -32,7 +32,7 @@ function formatDate(iso?: string): string {
 export function AuthorizedClients({ clients, onRevoke, onRevokeAll }: AuthorizedClientsProps) {
   return (
     <div className="glass-panel section-panel" aria-labelledby="authorized-clients-heading">
-      <div className="section-header" style={{ marginBottom: 10 }}>
+      <div className="section-header authorized-section-header">
         <div className="eyebrow">Security</div>
         <div className="title" id="authorized-clients-heading">Authorized OAuth clients</div>
       </div>
@@ -40,17 +40,17 @@ export function AuthorizedClients({ clients, onRevoke, onRevokeAll }: Authorized
       {clients.length === 0 ? (
         <div className="empty-state">No external MCP clients have registered yet.</div>
       ) : (
-        <div className="flex flex-col gap-2">
+        <div className="authorized-client-list">
           {clients.map((c) => (
-            <div key={c.clientId} className="list-row" style={{ alignItems: "flex-start" }}>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: "0.75rem", fontWeight: 600 }} className="text-[var(--text-primary)]">
+            <div key={c.clientId} className="list-row authorized-client-row">
+              <div className="authorized-client-body">
+                <div className="authorized-client-name">
                   {c.clientName ?? "(unnamed)"}
                 </div>
-                <div style={{ fontSize: "0.66rem", marginTop: 2, fontFamily: "var(--font-mono)", overflowWrap: "anywhere" }} className="text-[var(--text-muted)]">
+                <div className="authorized-client-id">
                   <code title={c.clientId}>{truncate(c.clientId)}</code>
                 </div>
-                <div style={{ fontSize: "0.62rem", marginTop: 2 }} className="text-[var(--text-muted)]">
+                <div className="authorized-client-meta">
                   Last used {formatDate(c.lastUsedAt)} · Consent {formatDate(c.consentLastApprovedAt)} · {c.activeTokens} active token{c.activeTokens === 1 ? "" : "s"}
                 </div>
               </div>
@@ -65,8 +65,8 @@ export function AuthorizedClients({ clients, onRevoke, onRevokeAll }: Authorized
             </div>
           ))}
           <div className="daemon-section-divider" aria-hidden="true" />
-          <div className="flex items-center gap-2" style={{ justifyContent: "flex-end" }}>
-            <span style={{ fontSize: "0.66rem" }} className="text-[var(--text-muted)]">
+          <div className="authorized-client-footer">
+            <span className="authorized-client-count">
               {clients.length} client{clients.length === 1 ? "" : "s"}
             </span>
             <button className="danger-button btn-sm" onClick={onRevokeAll}>

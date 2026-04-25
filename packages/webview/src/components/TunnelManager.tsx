@@ -118,22 +118,21 @@ function FullTunnelManager({
   return (
     <>
       {tunnelProviders ? (
-        <div className="list-row" style={{ marginTop: 10, alignItems: "flex-start" }}>
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <div style={{ fontSize: "0.72rem", fontWeight: 600 }} className="text-[var(--text-primary)]">
+        <div className="list-row daemon-list-row">
+          <div className="daemon-row-main">
+            <div className="daemon-row-title">
               Tunnel provider
             </div>
-            <div style={{ fontSize: "0.66rem", marginTop: 3 }} className="text-[var(--text-muted)]">
+            <div className="daemon-row-detail">
               {tunnelProviders.providers.find((p) => p.id === activeProvider)?.description}
             </div>
           </div>
-          <div className="flex items-center gap-1 flex-wrap" style={{ justifyContent: "flex-end" }}>
+          <div className="daemon-button-row daemon-actions-end tunnel-provider-actions">
             {pendingProviderSwitch ? (
               <RefreshCcw size={11} className="refresh-spin text-[var(--text-muted)]" />
             ) : null}
             <select
-              className="setting-select"
-              style={{ padding: "4px 8px", fontSize: "0.7rem", width: "auto", minWidth: 120 }}
+              className="setting-select tunnel-provider-select"
               value={pendingProvider ?? activeProvider}
               disabled={pendingProviderSwitch}
               onChange={(event) => {
@@ -175,8 +174,8 @@ function FullTunnelManager({
           data-testid="cf-named-waf-warning"
           role="note"
         >
-          <ShieldAlert size={14} aria-hidden="true" style={{ flex: "0 0 auto", marginTop: 1 }} />
-          <div style={{ minWidth: 0, flex: 1 }}>
+          <ShieldAlert size={14} aria-hidden="true" className="cf-named-waf-icon" />
+          <div className="cf-named-waf-body">
             <div>
               <strong>Cloudflare challenge may block MCP clients.</strong>{" "}
               Before connecting any MCP client to <code>{tunnelUrl}/mcp</code>, exempt that path
@@ -185,7 +184,7 @@ function FullTunnelManager({
               hostname. Without this, MCP requests get served the Cloudflare Challenge page
               instead of reaching the daemon.
             </div>
-            <div style={{ marginTop: 4 }}>
+            <div className="cf-named-waf-link-row">
               <a
                 href="https://developers.cloudflare.com/waf/custom-rules/skip/"
                 target="_blank"
@@ -201,23 +200,23 @@ function FullTunnelManager({
 
       <div className="daemon-section-divider" aria-hidden="true" />
 
-      <div className="list-row" style={{ marginTop: 10, alignItems: "flex-start" }}>
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontSize: "0.72rem", fontWeight: 600 }} className="text-[var(--text-primary)]">
+      <div className="list-row daemon-list-row">
+        <div className="daemon-row-main">
+          <div className="daemon-row-title">
             {activeProvider === "ngrok"
               ? "ngrok tunnel"
               : activeProvider === "cf-named"
                 ? "Cloudflare Named Tunnel"
                 : "Cloudflare Quick Tunnel"}
           </div>
-          <div style={{ fontSize: "0.7rem", marginTop: 3, overflowWrap: "anywhere" }} className="text-[var(--text-muted)]">
+          <div className="daemon-row-detail-md daemon-row-wrap">
             {tunnelUrl ? (revealed ? tunnelUrl : maskTunnelUrl(tunnelUrl)) : "No public tunnel URL."}
           </div>
           {tunnel.error ? (
-            <div style={{ fontSize: "0.68rem", marginTop: 4 }} className="text-[#fca5a5]">{tunnel.error}</div>
+            <div className="daemon-row-error">{tunnel.error}</div>
           ) : null}
           {tunnel.error && /ERR_NGROK_334/.test(tunnel.error) ? (
-            <div className="flex items-center gap-1 flex-wrap" style={{ marginTop: 6 }}>
+            <div className="daemon-button-row daemon-button-row-compact">
               <button
                 className="primary-button btn-sm"
                 disabled={tunnelBusy}
@@ -234,14 +233,13 @@ function FullTunnelManager({
                 href="https://dashboard.ngrok.com/endpoints"
                 target="_blank"
                 rel="noreferrer"
-                style={{ textDecoration: "none" }}
               >
                 Open ngrok endpoints page
               </a>
             </div>
           ) : null}
           {(tunnel.status === "crashed" || (tunnel.error && !/ERR_NGROK_334/.test(tunnel.error))) ? (
-            <div className="flex items-center gap-1 flex-wrap" style={{ marginTop: 6 }}>
+            <div className="daemon-button-row daemon-button-row-compact">
               <button
                 className="primary-button btn-sm"
                 disabled={tunnelBusy}
@@ -259,7 +257,7 @@ function FullTunnelManager({
             </div>
           ) : null}
         </div>
-        <div className="flex items-center gap-1 flex-wrap" style={{ justifyContent: "flex-end" }}>
+        <div className="daemon-button-row daemon-actions-end tunnel-url-actions">
           {tunnelUrl ? (
             <>
               <button className="ghost-button btn-sm" onClick={() => setRevealed((value) => !value)}>
@@ -294,7 +292,7 @@ function FullTunnelManager({
             onClick={() => send({ type: "daemon:tunnel-probe", payload: { targets: ["/", "/mcp"], timeoutMs: 5000 } })}
           />
           {tunnelFeedback ? (
-            <span style={{ fontSize: "0.66rem", width: "100%", textAlign: "right" }} className="text-[var(--text-muted)]">
+            <span className="tunnel-feedback">
               {tunnelFeedback}
             </span>
           ) : null}
@@ -303,10 +301,7 @@ function FullTunnelManager({
 
       <TunnelPerformance />
 
-      <div
-        className="remote-access-disable-row"
-        style={{ marginTop: 8, textAlign: "right" }}
-      >
+      <div className="remote-access-disable-row">
         <button
           className="ghost-button btn-sm"
           data-testid="remote-access-optin-disable"
@@ -326,23 +321,23 @@ function FullTunnelManager({
       </div>
 
       {tunnelProbe ? (
-        <div className="daemon-inset-panel" style={{ marginTop: 8 }} data-testid="tunnel-probe-result">
-          <div style={{ fontSize: "0.72rem", fontWeight: 600 }} className="text-[var(--text-primary)]">
+        <div className="daemon-inset-panel tunnel-probe-panel" data-testid="tunnel-probe-result">
+          <div className="daemon-row-title">
             Tunnel probe
           </div>
           {tunnelProbe.error ? (
-            <div style={{ fontSize: "0.66rem", marginTop: 3 }} className="text-[#fca5a5]">
+            <div className="daemon-row-error-sm tunnel-probe-error">
               {tunnelProbe.error}
             </div>
           ) : null}
-          <div className="flex flex-col gap-1" style={{ marginTop: 6 }}>
+          <div className="tunnel-probe-list">
             {tunnelProbe.results.map((result) => (
-              <div key={result.target} className="list-row" style={{ padding: 6 }}>
+              <div key={result.target} className="list-row tunnel-probe-row">
                 <div>
-                  <div style={{ fontSize: "0.7rem", fontWeight: 600 }} className="text-[var(--text-primary)]">
+                  <div className="daemon-row-title-sm">
                     {result.target}
                   </div>
-                  <div style={{ fontSize: "0.64rem" }} className="text-[var(--text-muted)]">
+                  <div className="daemon-row-detail-compact">
                     status {result.status ?? result.error ?? "n/a"}
                     {result.cfMitigated ? " / cf-mitigated challenge" : ""}
                   </div>

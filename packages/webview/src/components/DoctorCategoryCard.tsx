@@ -32,35 +32,33 @@ export function DoctorCategoryCard({
 }) {
   const [open, setOpen] = useState(status === "fail" || status === "warn");
   return (
-    <section className="doctor-card" style={{ border: "1px solid var(--border-muted)", borderRadius: 8, marginBottom: 8 }}>
+    <section className="doctor-card">
       <button
-        className="ghost-button"
+        className="ghost-button doctor-category-header"
         onClick={() => setOpen((o) => !o)}
-        style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "8px 12px" }}
       >
         <StatusDot variant={STATUS_TO_VARIANT[status]} />
-        <span style={{ fontWeight: 600, textTransform: "capitalize" }}>{category}</span>
-        <span style={{ marginLeft: "auto", fontSize: "0.72rem" }}>{STATUS_LABEL[status]}</span>
+        <span className="doctor-category-name">{category}</span>
+        <span className="doctor-category-status">{STATUS_LABEL[status]}</span>
         {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
       </button>
       {open && (
-        <ul style={{ padding: "4px 12px 12px", margin: 0, listStyle: "none" }}>
+        <ul className="doctor-check-list">
           {checks.map((c) => (
-            <li key={c.name} style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 6 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <li key={c.name} className="doctor-check-item">
+              <div className="doctor-check-row">
                 <StatusDot variant={STATUS_TO_VARIANT[c.status]} />
-                <code style={{ fontSize: "0.7rem" }}>{c.name}</code>
-                <span style={{ fontSize: "0.75rem" }}>{c.message}</span>
+                <code className="doctor-check-code">{c.name}</code>
+                <span className="doctor-check-message">{c.message}</span>
               </div>
               {c.hint && (
-                <p style={{ margin: "2px 0 0 18px", fontSize: "0.7rem", color: "var(--text-muted)" }}>
+                <p className="doctor-check-hint">
                   Hint: {c.hint}
                 </p>
               )}
               {c.action && send && (
                 <button
-                  className="ghost-button"
-                  style={{ marginLeft: 18, marginTop: 4, alignSelf: "flex-start", padding: "4px 10px", fontSize: "0.72rem" }}
+                  className="ghost-button doctor-check-action"
                   onClick={() =>
                     send({ type: "doctor:action", payload: { commandId: c.action!.commandId, args: c.action!.args } })
                   }

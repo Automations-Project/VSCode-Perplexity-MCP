@@ -7,6 +7,10 @@ import { writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { chromium } from "patchright";
 import { Vault } from "./vault.js";
 import { getProfilePaths, getActiveName } from "./profiles.js";
+import {
+  findBrowser,
+  getOrCreateContext,
+} from "./config.js";
 import { redact } from "./redact.js";
 import { collectSessionMetadata } from "./session-metadata.js";
 
@@ -15,6 +19,22 @@ const LOGIN_PATH = process.env.PERPLEXITY_LOGIN_PATH || "/account";
 
 function resolveProfile() {
   return process.env.PERPLEXITY_PROFILE || getActiveName() || "default";
+}
+
+/**
+ * Launch a browser suitable for the health check. Respects
+ * PERPLEXITY_BROWSER_CHANNEL / PERPLEXITY_BROWSER_PATH overrides from the
+ * extension's AuthManager.
+ */
+async function launchHealthBrowser() {
+  const probe = findBrowser();
+  return chromium.launch({
+    headless: true,
+    ...(probe ? { executablePath: probe.path } : {}),
+    ...(probe && ["chrome", "msedge", "chromium"].includes(probe.channel)
+      ? { channel: probe.channel }
+      : {}),
+  });
 }
 
 async function main() {
@@ -31,10 +51,10 @@ async function main() {
     process.exit(2);
   }
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await launchHealthBrowser();
   let result;
   try {
-    const ctx = await browser.newContext();
+    const ctx = await getOrCreateContext(browser);
     // Patchright's addCookies wants EITHER url OR (domain+path), not both.
     // Pass cookies with domain/url already set through untouched; only
     // synthesize a url from ORIGIN when neither is present. Additionally,

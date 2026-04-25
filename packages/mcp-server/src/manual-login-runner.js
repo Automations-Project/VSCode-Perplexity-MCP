@@ -30,10 +30,12 @@ function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\n"); }
 
 async function main() {
   const PROFILE = resolveProfile();
+
   let executablePath;
+  let channel;
   if (!isTest) {
     try {
-      ({ path: executablePath } = await resolveBrowserExecutable());
+      ({ path: executablePath, channel } = await resolveBrowserExecutable());
     } catch (err) {
       emit({ ok: false, reason: "chrome_missing", error: redact(String(err?.message ?? err)) });
       process.exit(4);
@@ -43,6 +45,7 @@ async function main() {
   const browser = await chromium.launch({
     headless: isTest,
     ...(executablePath ? { executablePath } : {}),
+    ...(channel && ["chrome", "msedge", "chromium"].includes(channel) ? { channel } : {}),
   });  // isTest = headless in CI; humans see headed.
   const ctx = await browser.newContext({ ignoreHTTPSErrors: true });
   const page = await ctx.newPage();

@@ -48,22 +48,37 @@ export const COOKIES_FILE = getCookiesFile();
 export const STORAGE_STATE_FILE = join(CONFIG_DIR, "storage-state.json");
 export const BROWSER_DATA_DIR = getBrowserDataDir();
 
+export type BrowserChannel = "chrome" | "msedge" | "chromium" | "bundled";
+
 export interface BrowserInfo {
+  /** Absolute path to a browser executable. */
   path: string;
-  channel: "chrome" | "msedge" | "chromium" | "bundled";
+  /** Channel passed to Patchright's launch APIs. */
+  channel: BrowserChannel;
 }
 
 /**
- * Find a suitable Chromium-based browser on the system.
- * Searches Chrome > Edge > Chromium with platform-specific paths.
- * Returns browser path and channel, or null if not found.
+ * Find a suitable Chromium-based browser on the system. Searches Chrome >
+ * Edge > Chromium > Brave with platform-specific paths, covering Windows,
+ * macOS (Intel+ARM), and Linux. Returns null if nothing usable is found.
+ *
+ * Env var overrides (evaluated at call time):
+ *   PERPLEXITY_BROWSER_PATH    — absolute path to an executable
+ *   PERPLEXITY_BROWSER_CHANNEL — chrome | msedge | chromium (defaults to "chrome")
+ *   PERPLEXITY_CHROME_PATH     — legacy alias for PERPLEXITY_BROWSER_PATH
  */
 export function findBrowser(): BrowserInfo | null {
-  if (process.env.PERPLEXITY_CHROME_PATH && existsSync(process.env.PERPLEXITY_CHROME_PATH)) {
-    return { path: process.env.PERPLEXITY_CHROME_PATH, channel: "chrome" };
+  // Explicit overrides win. Channel defaults to "chrome" when only path is set.
+  const overridePath = process.env.PERPLEXITY_BROWSER_PATH || process.env.PERPLEXITY_CHROME_PATH;
+  if (overridePath && existsSync(overridePath)) {
+    const overrideChannel = process.env.PERPLEXITY_BROWSER_CHANNEL as BrowserChannel | undefined;
+    const channel: BrowserChannel = overrideChannel && ["chrome", "msedge", "chromium"].includes(overrideChannel)
+      ? overrideChannel
+      : "chrome";
+    return { path: overridePath, channel };
   }
 
-  // Chrome
+  // Chrome — highest-fidelity Cloudflare fingerprint
   const chromeCandidates = process.platform === "win32"
     ? [
         join(process.env.PROGRAMFILES || "", "Google", "Chrome", "Application", "chrome.exe"),
@@ -71,24 +86,79 @@ export function findBrowser(): BrowserInfo | null {
         join(process.env.LOCALAPPDATA || "", "Google", "Chrome", "Application", "chrome.exe"),
       ]
     : process.platform === "darwin"
-    ? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
-    : ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable"];
+    ? [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      ]
+    : [
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/local/bin/google-chrome",
+        "/snap/bin/google-chrome",
+        "/opt/google/chrome/chrome",
+      ];
   for (const p of chromeCandidates) if (p && existsSync(p)) return { path: p, channel: "chrome" };
 
-  // Edge (Windows/Linux fallback)
+  // Microsoft Edge (now on all three platforms, preinstalled on Win10/11)
   const edgeCandidates = process.platform === "win32"
-    ? [join(process.env.PROGRAMFILES || "", "Microsoft", "Edge", "Application", "msedge.exe"),
-       join(process.env["PROGRAMFILES(X86)"] || "", "Microsoft", "Edge", "Application", "msedge.exe")]
-    : ["/usr/bin/microsoft-edge", "/usr/bin/microsoft-edge-stable"];
+    ? [
+        join(process.env.PROGRAMFILES || "", "Microsoft", "Edge", "Application", "msedge.exe"),
+        join(process.env["PROGRAMFILES(X86)"] || "", "Microsoft", "Edge", "Application", "msedge.exe"),
+      ]
+    : process.platform === "darwin"
+    ? [
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+      ]
+    : [
+        "/usr/bin/microsoft-edge",
+        "/usr/bin/microsoft-edge-stable",
+        "/opt/microsoft/msedge/msedge",
+      ];
   for (const p of edgeCandidates) if (p && existsSync(p)) return { path: p, channel: "msedge" };
 
-  // Chromium (Linux)
-  if (process.platform === "linux") {
-    const chromiumCandidates = ["/usr/bin/chromium-browser", "/usr/bin/chromium", "/snap/bin/chromium"];
+  // System Chromium (mainly Linux)
+  if (process.platform !== "win32") {
+    const chromiumCandidates = process.platform === "darwin"
+      ? ["/Applications/Chromium.app/Contents/MacOS/Chromium"]
+      : ["/usr/bin/chromium-browser", "/usr/bin/chromium", "/snap/bin/chromium"];
     for (const p of chromiumCandidates) if (existsSync(p)) return { path: p, channel: "chromium" };
   }
 
+  // Brave — Chromium-based, identical DOM, works unchanged with channel "chromium"
+  const braveCandidates = process.platform === "win32"
+    ? [
+        join(process.env.PROGRAMFILES || "", "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+        join(process.env["PROGRAMFILES(X86)"] || "", "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+        join(process.env.LOCALAPPDATA || "", "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+      ]
+    : process.platform === "darwin"
+    ? [
+        "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+      ]
+    : [
+        "/usr/bin/brave-browser",
+        "/usr/bin/brave",
+        "/snap/bin/brave",
+        "/opt/brave.com/brave/brave-browser",
+      ];
+  for (const p of braveCandidates) if (p && existsSync(p)) return { path: p, channel: "chromium" };
+
   return null;
+}
+
+/**
+ * Pick a usable BrowserContext from a Patchright Browser. Kept as a small
+ * helper for any future CDP-connect path (e.g. attaching to a remote Chrome
+ * via `--remote-debugging-port`). For freshly launched browsers `contexts()`
+ * is empty until we call `newContext`, which then runs unchanged with the
+ * caller's options (viewport, userAgent, etc).
+ */
+export async function getOrCreateContext(
+  browser: import("patchright").Browser,
+  options: Parameters<import("patchright").Browser["newContext"]>[0] = {},
+): Promise<import("patchright").BrowserContext> {
+  const existing = browser.contexts()[0];
+  if (existing) return existing;
+  return browser.newContext(options);
 }
 
 /**
@@ -102,15 +172,31 @@ export function findChromeExecutable(): string | null {
 /**
  * Resolve a browser executable the client can launch.
  *
- * Prefers system Chrome for Cloudflare-friendly fingerprints. Falls back to
- * patchright's bundled Chromium when the user ran `npx patchright install chromium`.
- * Throws a descriptive error when neither is available so the CLI doesn't crash
- * with Playwright's opaque "Executable doesn't exist at ..." message.
+ * Prefers a system browser (Chrome > Edge > Chromium > Brave) for best
+ * Cloudflare compatibility. Falls back to patchright's bundled Chromium when
+ * the user ran `npx patchright install chromium`. Throws a descriptive error
+ * when neither is available so the CLI doesn't crash with Playwright's
+ * opaque "Executable doesn't exist at ..." message.
+ *
+ * The returned `channel` field is additive and safe to ignore by legacy
+ * callers that only destructure `{ path }`.
  */
-export async function resolveBrowserExecutable(): Promise<{ path: string; source: "system-chrome" | "bundled-chromium" }> {
-  const systemChrome = findChromeExecutable();
-  if (systemChrome) {
-    return { path: systemChrome, source: "system-chrome" };
+export async function resolveBrowserExecutable(): Promise<{
+  path: string;
+  channel: BrowserChannel;
+  source: "system-chrome" | "system-edge" | "system-chromium" | "system-brave" | "bundled-chromium";
+}> {
+  const systemBrowser = findBrowser();
+  if (systemBrowser) {
+    // Distinguish Brave from generic Chromium using the filename (Brave uses
+    // channel "chromium" internally, but we want the more specific source
+    // label for logs + diagnostics).
+    const isBrave = /brave/i.test(systemBrowser.path);
+    const source = systemBrowser.channel === "chrome" ? "system-chrome"
+      : systemBrowser.channel === "msedge" ? "system-edge"
+      : isBrave ? "system-brave"
+      : "system-chromium";
+    return { path: systemBrowser.path, channel: systemBrowser.channel, source };
   }
 
   let bundledPath: string | null = null;
@@ -122,7 +208,7 @@ export async function resolveBrowserExecutable(): Promise<{ path: string; source
   }
 
   if (bundledPath && existsSync(bundledPath)) {
-    return { path: bundledPath, source: "bundled-chromium" };
+    return { path: bundledPath, channel: "chromium", source: "bundled-chromium" };
   }
 
   const lines = [
@@ -131,10 +217,12 @@ export async function resolveBrowserExecutable(): Promise<{ path: string; source
     "Pick one of the following:",
     "  1. Install Google Chrome (recommended for best Cloudflare compatibility):",
     "     https://www.google.com/chrome/",
-    "  2. Download patchright's bundled Chromium:",
+    "  2. Install Microsoft Edge, Brave, or Chromium — all are supported.",
+    "  3. Download patchright's bundled Chromium:",
     "     npx patchright install chromium",
     "",
-    "You can also set PERPLEXITY_CHROME_PATH to an explicit executable.",
+    "You can also set PERPLEXITY_BROWSER_PATH + PERPLEXITY_BROWSER_CHANNEL",
+    "(or the legacy PERPLEXITY_CHROME_PATH) to an explicit executable.",
   ];
   throw new Error(lines.join("\n"));
 }

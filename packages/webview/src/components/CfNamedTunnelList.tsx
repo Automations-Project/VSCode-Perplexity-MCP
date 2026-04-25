@@ -55,16 +55,16 @@ export function CfNamedTunnelList({
   ]);
 
   return (
-    <div className="cf-named-tunnel-list" style={{ marginTop: 10 }}>
+    <div className="cf-named-tunnel-list">
       {cfNamed?.lastDeleted?.hostname ? (
-        <div className="daemon-inset-panel dns-cleanup-callout" style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: "0.72rem", fontWeight: 600 }} className="text-[var(--text-primary)]">
+        <div className="daemon-inset-panel dns-cleanup-callout">
+          <div className="daemon-row-title">
             DNS cleanup needed
           </div>
-          <div style={{ fontSize: "0.66rem", marginTop: 4 }} className="text-[var(--text-muted)]">
+          <div className="daemon-row-detail">
             The CNAME for <code>{cfNamed.lastDeleted.hostname}</code> now points at a dead tunnel.
           </div>
-          <div className="flex items-center gap-1 flex-wrap" style={{ marginTop: 6 }}>
+          <div className="daemon-button-row daemon-button-row-compact">
             <button
               className="ghost-button btn-sm"
               onClick={() => void copyText(cfNamed.lastDeleted?.hostname ?? "")}
@@ -77,7 +77,6 @@ export function CfNamedTunnelList({
               href={cfNamed.lastDeleted.dnsCleanupUrl}
               target="_blank"
               rel="noreferrer"
-              style={{ textDecoration: "none" }}
             >
               Open Cloudflare DNS
             </a>
@@ -85,13 +84,13 @@ export function CfNamedTunnelList({
         </div>
       ) : null}
 
-      <div className="flex items-center gap-1 flex-wrap" style={{ marginBottom: rows.length ? 8 : 0 }}>
+      <div className={`cf-named-list-toolbar${rows.length ? " has-rows" : ""}`}>
         <input
           type="text"
           value={bindHostname}
           onChange={(event) => setBindHostname(event.target.value)}
           placeholder={currentHostname ?? "hostname for Bind"}
-          style={{ flex: "1 1 180px", minWidth: 160, fontSize: "0.7rem", padding: "4px 8px", borderRadius: 4 }}
+          className="daemon-compact-input daemon-input-lg"
         />
         <DaemonActionButton
           type="daemon:cf-named-list"
@@ -103,7 +102,7 @@ export function CfNamedTunnelList({
       </div>
 
       {cfNamed?.lastListError ? (
-        <div style={{ fontSize: "0.66rem", marginBottom: 8 }} className="text-[#fca5a5]">
+        <div className="cf-named-list-error">
           {cfNamed.lastListError}
         </div>
       ) : null}
@@ -167,7 +166,7 @@ export function CfNamedTunnelList({
                     <td><code>{shortUuid(tunnel.uuid)}</code></td>
                     <td>{typeof tunnel.connections === "number" ? tunnel.connections : "n/a"}</td>
                     <td>
-                      <div className="flex items-center gap-1 flex-wrap">
+                      <div className="cf-named-table-actions">
                         <button className="ghost-button btn-sm" onClick={() => void copyText(tunnel.uuid)}>
                           <Copy size={11} />
                           {copiedValue === tunnel.uuid ? "Copied" : "Copy UUID"}
@@ -191,7 +190,7 @@ export function CfNamedTunnelList({
                           value={deleteConfirm}
                           onChange={(event) => setConfirm(tunnel.uuid, event.target.value)}
                           placeholder="name or full UUID"
-                          style={{ width: 140, fontSize: "0.7rem", padding: "4px 8px", borderRadius: 4 }}
+                          className="cf-named-table-confirm-input"
                         />
                         <DaemonActionButton
                           type="daemon:cf-named-delete-remote"
@@ -248,22 +247,22 @@ function TunnelCard({
   const deleteReady = confirmValue === tunnel.name || confirmValue === tunnel.uuid;
   return (
     <div className="daemon-inset-panel cf-named-tunnel-card">
-      <div className="flex items-center gap-2" style={{ justifyContent: "space-between" }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: "0.72rem", fontWeight: 600, overflowWrap: "anywhere" }} className="text-[var(--text-primary)]">
+      <div className="cf-named-tunnel-card-top">
+        <div className="cf-named-tunnel-card-main">
+          <div className="cf-named-tunnel-card-title">
             {tunnel.name}
           </div>
-          <div style={{ fontSize: "0.64rem", fontFamily: "var(--font-mono)", marginTop: 2 }} className="text-[var(--text-muted)]">
+          <div className="cf-named-tunnel-card-uuid">
             {shortUuid(tunnel.uuid)}
           </div>
         </div>
         {current ? <span className="chip chip-pro">current</span> : null}
       </div>
-      <div style={{ fontSize: "0.64rem", marginTop: 6 }} className="text-[var(--text-muted)]">
+      <div className="cf-named-tunnel-card-meta">
         Connections {typeof tunnel.connections === "number" ? tunnel.connections : "n/a"}
         {hostname ? <> · Hostname {hostname}</> : null}
       </div>
-      <div className="flex items-center gap-1 flex-wrap" style={{ marginTop: 8 }}>
+      <div className="daemon-button-row daemon-button-row-spaced">
         <button className="ghost-button btn-sm" onClick={onCopy}>
           <Copy size={11} />
           {copied ? "Copied" : "Copy UUID"}
@@ -277,13 +276,13 @@ function TunnelCard({
           onClick={onBind}
         />
       </div>
-      <div className="flex items-center gap-1 flex-wrap" style={{ marginTop: 8 }}>
+      <div className="daemon-button-row daemon-button-row-spaced">
         <input
           type="text"
           value={confirmValue}
           onChange={(event) => onConfirmChange(event.target.value)}
           placeholder="exact name or full UUID"
-          style={{ flex: "1 1 170px", minWidth: 150, fontSize: "0.7rem", padding: "4px 8px", borderRadius: 4 }}
+          className="daemon-compact-input daemon-input-confirm"
         />
         <DaemonActionButton
           type="daemon:cf-named-delete-remote"
