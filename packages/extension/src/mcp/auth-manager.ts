@@ -300,10 +300,6 @@ export class AuthManager implements vscode.Disposable {
     } else {
       delete process.env.PERPLEXITY_BROWSER_PATH;
     }
-    // v0.8.5 cleanup: clear any stale PERPLEXITY_OBSCURA_ENDPOINT inherited
-    // from an older extension host that briefly supported the (removed)
-    // Obscura channel — leaves the env clean for child runners.
-    delete process.env.PERPLEXITY_OBSCURA_ENDPOINT;
   }
 
   /**

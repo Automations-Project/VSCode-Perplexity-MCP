@@ -33,6 +33,7 @@ import { exportThread as exportEntry } from "./export.js";
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from "fs";
 import { dirname, join } from "path";
 import { getActiveName, getConfigDir, getProfilePaths } from "./profiles.js";
+import { clearStaleSingletonLocks } from "./fs-utils.js";
 
 function getActiveProfileName(): string {
   return process.env.PERPLEXITY_PROFILE || getActiveName() || "default";
@@ -190,7 +191,9 @@ export class PerplexityClient {
 
     let ctx: BrowserContext | null = null;
     try {
-      ctx = await chromium.launchPersistentContext(getActivePaths().browserData, buildLaunchOptions(false));
+      const browserData = getActivePaths().browserData;
+      clearStaleSingletonLocks(browserData);
+      ctx = await chromium.launchPersistentContext(browserData, buildLaunchOptions(false));
 
       const page = ctx.pages()[0] || await ctx.newPage();
       await page.goto(PERPLEXITY_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
@@ -227,9 +230,14 @@ export class PerplexityClient {
       }
 
       // Check auth while headed
-      const authData: any = await page.evaluate(
-        `fetch("${AUTH_SESSION_ENDPOINT}", { credentials: "include" }).then(r => r.json()).catch(() => null)`
-      );
+      const authData: any = await page.evaluate(async (url: string) => {
+        try {
+          const r = await fetch(url, { credentials: "include" });
+          return await r.json();
+        } catch {
+          return null;
+        }
+      }, AUTH_SESSION_ENDPOINT);
       this.userId = authData?.user?.id ?? null;
       this.authenticated = !!this.userId;
       if (this.authenticated) {
@@ -238,20 +246,20 @@ export class PerplexityClient {
         console.error("[perplexity-mcp] Not authenticated (anonymous mode).");
       }
 
-      // Fetch all account info while CF isn't blocking (string-based evaluates for tsx compat)
+      // Fetch all account info while CF isn't blocking
       if (this.authenticated) {
-        const modelsData = await page.evaluate(
-          `fetch("${MODELS_CONFIG_ENDPOINT}", { credentials: "include" }).then(r => r.ok ? r.json() : null).catch(() => null)`
-        );
-        const asiData = await page.evaluate(
-          `fetch("${ASI_ACCESS_ENDPOINT}", { credentials: "include" }).then(r => r.ok ? r.json() : null).catch(() => null)`
-        );
-        const rateLimitData = await page.evaluate(
-          `fetch("${RATE_LIMIT_ENDPOINT}", { credentials: "include" }).then(r => r.ok ? r.json() : null).catch(() => null)`
-        );
-        const experimentsData: any = await page.evaluate(
-          `fetch("${EXPERIMENTS_ENDPOINT}", { credentials: "include" }).then(r => r.ok ? r.json() : null).catch(() => null)`
-        );
+        const fetchOk = async (url: string) => {
+          try {
+            const r = await fetch(url, { credentials: "include" });
+            return r.ok ? await r.json() : null;
+          } catch {
+            return null;
+          }
+        };
+        const modelsData = await page.evaluate(fetchOk, MODELS_CONFIG_ENDPOINT);
+        const asiData = await page.evaluate(fetchOk, ASI_ACCESS_ENDPOINT);
+        const rateLimitData = await page.evaluate(fetchOk, RATE_LIMIT_ENDPOINT);
+        const experimentsData: any = await page.evaluate(fetchOk, EXPERIMENTS_ENDPOINT);
 
         if (modelsData) {
           this.accountInfo.modelsConfig = modelsData as ModelsConfigResponse;

@@ -1,8 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getConfigDir } from "../profiles.js";
+import { safeAtomicWriteFileSync } from "../safe-write.js";
 
 export interface DaemonTokenRecord {
   bearerToken: string;
@@ -69,10 +70,7 @@ function writeToken(record: DaemonTokenRecord, options: TokenOptions = {}): void
   const normalized = normalizeRecord(record);
   mkdirSync(dirname(tokenPath), { recursive: true });
 
-  const tempPath = `${tokenPath}.tmp`;
-  writeFileSync(tempPath, JSON.stringify(normalized, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
-  rmSync(tokenPath, { force: true });
-  renameSync(tempPath, tokenPath);
+  safeAtomicWriteFileSync(tokenPath, JSON.stringify(normalized, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
   applyPrivatePermissions(tokenPath);
 }
 

@@ -24,10 +24,11 @@
  * tokens. Phase 8.2's dashboard panel composes these two.
  */
 
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { getConfigDir } from "../profiles.js";
+import { safeAtomicWriteFileSync } from "../safe-write.js";
 
 export interface ConsentEntry {
   clientId: string;
@@ -102,10 +103,7 @@ function keyMatches(entry: ConsentEntry, clientId: string, redirectUri: string, 
 
 function persist(cachePath: string, entries: ConsentEntry[]): void {
   mkdirSync(dirname(cachePath), { recursive: true });
-  const tempPath = `${cachePath}.tmp`;
-  writeFileSync(tempPath, JSON.stringify(entries, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
-  rmSync(cachePath, { force: true });
-  renameSync(tempPath, cachePath);
+  safeAtomicWriteFileSync(cachePath, JSON.stringify(entries, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
   applyPrivatePermissions(cachePath);
 }
 

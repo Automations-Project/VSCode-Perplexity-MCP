@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { safeAtomicWriteFileSync } from "../../safe-write.js";
 
 import { cloudflaredQuickProvider } from "./cloudflared-quick.js";
 import { cloudflaredNamedProvider, createCloudflaredNamedProvider } from "./cloudflared-named.js";
@@ -100,10 +101,7 @@ export function writeTunnelSettings(configDir: string, patch: Partial<TunnelSett
     updatedAt: new Date().toISOString(),
   };
   mkdirSync(dirname(path), { recursive: true });
-  const tempPath = `${path}.tmp`;
-  writeFileSync(tempPath, JSON.stringify(next, null, 2) + "\n", "utf8");
-  rmSync(path, { force: true });
-  renameSync(tempPath, path);
+  safeAtomicWriteFileSync(path, JSON.stringify(next, null, 2) + "\n", "utf8");
   return next;
 }
 

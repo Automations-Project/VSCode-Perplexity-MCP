@@ -215,10 +215,7 @@ export type BrowserChannel = "chrome" | "msedge" | "chromium";
 
 /**
  * Snapshot of a launchable Chromium-family browser runtime available to the
- * extension. (v0.8.5 also exposed an "obscura" channel for the
- * h4ckf0r0day/obscura CDP server, but its CDP implementation didn't support
- * the Target.createTarget / frame-attachment domains Patchright relies on,
- * so it was removed — see CHANGELOG entry for v0.8.5.)
+ * extension.
  */
 export interface BrowserInfo {
   /** True when a runtime is actually usable. */

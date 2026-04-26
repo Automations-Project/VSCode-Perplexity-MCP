@@ -172,7 +172,18 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
       client = options.createClient ? options.createClient() : new PerplexityClient();
     }
     if (!clientInitPromise) {
-      clientInitPromise = client.init();
+      const pending = client.init();
+      // On rejection, drop the cached client + promise so the NEXT getClient()
+      // call constructs a fresh client and retries init(). In-flight awaiters
+      // still see the original rejection (we await `pending`, not the catch).
+      // Without this, a single transient init failure (e.g. browser launch)
+      // poisons the daemon for its lifetime — every subsequent tool call
+      // re-awaits the same rejected promise.
+      pending.catch(() => {
+        client = undefined;
+        clientInitPromise = null;
+      });
+      clientInitPromise = pending;
     }
     await clientInitPromise;
     return client;

@@ -15,10 +15,9 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  renameSync,
   rmSync,
-  writeFileSync,
 } from "node:fs";
+import { safeAtomicWriteFileSync } from "../../safe-write.js";
 import { spawn as nodeSpawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -512,10 +511,7 @@ export function writeTunnelConfig(options: {
     credentialsPath: options.credentialsPath,
   });
 
-  const tempPath = `${configPath}.tmp`;
-  writeFileSync(tempPath, yaml, { encoding: "utf8", mode: 0o600 });
-  rmSync(configPath, { force: true });
-  renameSync(tempPath, configPath);
+  safeAtomicWriteFileSync(configPath, yaml, { encoding: "utf8", mode: 0o600 });
   applyPrivatePermissions(configPath);
 
   return {

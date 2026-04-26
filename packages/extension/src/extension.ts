@@ -488,7 +488,8 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
 
   const bundledServerPath = getBundledServerPath(context);
   const { launcherPath, configDir } = ensureLauncher(bundledServerPath);
-  configureDaemonRuntime({ serverPath: bundledServerPath, configDir });
+  const bundledVersion = String((context.extension.packageJSON as { version?: string }).version ?? "0.0.0");
+  configureDaemonRuntime({ serverPath: bundledServerPath, configDir, bundledVersion, log });
   log("Stable launcher: " + launcherPath);
 
   async function promptEmailForAutoLogin(profile: string): Promise<string | undefined> {

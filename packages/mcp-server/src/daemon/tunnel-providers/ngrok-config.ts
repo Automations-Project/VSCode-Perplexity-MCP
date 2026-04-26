@@ -5,9 +5,10 @@
  * user-only ACL (Windows). Mirrors the token.ts safety pattern.
  */
 
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
+import { safeAtomicWriteFileSync } from "../../safe-write.js";
 
 export interface NgrokSettings {
   authtoken: string;
@@ -49,10 +50,7 @@ export function writeNgrokSettings(configDir: string, next: { authtoken?: string
     throw new Error("ngrok authtoken is required.");
   }
   mkdirSync(dirname(path), { recursive: true });
-  const tempPath = `${path}.tmp`;
-  writeFileSync(tempPath, JSON.stringify(merged, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
-  rmSync(path, { force: true });
-  renameSync(tempPath, path);
+  safeAtomicWriteFileSync(path, JSON.stringify(merged, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
   applyPrivatePermissions(path);
   return merged;
 }

@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, statSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { getSettingsSnapshot } from "../settings.js";
+import { isLockStale, killStaleDaemonPid, removeStaleLock } from "./stale-version.js";
 import {
   disableDaemonTunnel,
   enableDaemonTunnel,
@@ -9,12 +10,14 @@ import {
   exportHistoryViaDaemon,
   getDaemonStatus,
   getAuditLogPath,
+  getLockfilePath,
   getTunnelBinaryPath,
   hydrateCloudHistoryEntryViaDaemon,
   installCloudflared,
   listOAuthClients,
   listOAuthConsents,
   readAuditTail,
+  read as readDaemonLock,
   restartDaemon,
   revokeAllOAuthClients,
   revokeAllOAuthConsents,
@@ -65,6 +68,10 @@ const DAEMON_LOG_MAX_BYTES = 2 * 1024 * 1024;
 interface RuntimeConfig {
   configDir: string;
   serverPath: string;
+  /** Bundled mcp-server version (extension and mcp-server are versioned together). */
+  bundledVersion: string;
+  /** Optional logger; falls back to a no-op for tests / pre-init paths. */
+  log?: (line: string) => void;
 }
 
 let runtimeConfig: RuntimeConfig | null = null;
@@ -73,8 +80,33 @@ export function configureDaemonRuntime(config: RuntimeConfig): void {
   runtimeConfig = config;
 }
 
+/**
+ * If a daemon.lock exists with a `version` that doesn't match the bundled
+ * version, the running daemon was launched by a previous extension version
+ * and is pinned to chunk filenames that no longer exist on disk. SIGTERM the
+ * pid and remove the lock so the existing ensure-loop falls through to the
+ * spawn path. See [stale-version.ts] for the rule.
+ */
+function reapStaleVersionedDaemon(config: RuntimeConfig): void {
+  const lockPath = getLockfilePath(config.configDir);
+  let lock: { pid: number; version: string } | null = null;
+  try {
+    lock = readDaemonLock({ lockPath }) as { pid: number; version: string } | null;
+  } catch {
+    return; // corrupt JSON — existing flow handles it
+  }
+  if (!lock) return;
+  if (!isLockStale(lock, config.bundledVersion)) return;
+
+  const log = config.log ?? (() => undefined);
+  log(`[daemon] stale daemon detected (lock=v${lock.version ?? "unknown"}, bundled=v${config.bundledVersion}) — restarting`);
+  killStaleDaemonPid(lock.pid, log);
+  removeStaleLock(lockPath);
+}
+
 export async function ensureBundledDaemon() {
   const config = requireRuntimeConfig();
+  reapStaleVersionedDaemon(config);
   return ensureDaemon({
     configDir: config.configDir,
     spawnDaemon: spawnBundledDaemon,

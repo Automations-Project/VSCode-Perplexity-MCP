@@ -1,7 +1,8 @@
 import { createCipheriv, createDecipheriv, randomBytes, hkdfSync } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, renameSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { getProfilePaths } from "./profiles.js";
+import { safeAtomicWriteFileSync } from "./safe-write.js";
 
 const MAGIC = Buffer.from("PXVT");
 const VERSION = 1;
@@ -150,10 +151,7 @@ async function writeVaultObject(profileName, obj) {
   if (!existsSync(paths.dir)) mkdirSync(paths.dir, { recursive: true });
   const key = await getMasterKey();
   const blob = encryptBlob(Buffer.from(JSON.stringify(obj)), key);
-  writeFileSync(paths.vault + ".tmp", blob);
-  // Write to .tmp, then rename (atomic). On Windows, rmSync first because renameSync fails if target exists.
-  if (existsSync(paths.vault)) rmSync(paths.vault, { force: true });
-  renameSync(paths.vault + ".tmp", paths.vault);
+  safeAtomicWriteFileSync(paths.vault, blob);
 }
 
 export class Vault {

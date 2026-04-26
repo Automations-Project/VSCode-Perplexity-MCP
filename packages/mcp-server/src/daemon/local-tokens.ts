@@ -5,12 +5,10 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { getConfigDir } from "../profiles.js";
+import { safeAtomicWriteFileSync } from "../safe-write.js";
 
 export interface LocalTokenMetadata {
   id: string;
@@ -274,13 +272,10 @@ function writeRecords(records: LocalTokenRecord[], options: LocalTokenOptions): 
     return entry;
   });
 
-  const tempPath = `${tokenPath}.tmp`;
-  writeFileSync(tempPath, JSON.stringify(serializable, null, 2) + "\n", {
+  safeAtomicWriteFileSync(tokenPath, JSON.stringify(serializable, null, 2) + "\n", {
     encoding: "utf8",
     mode: 0o600,
   });
-  rmSync(tokenPath, { force: true });
-  renameSync(tempPath, tokenPath);
   applyPrivatePermissions(tokenPath);
 }
 
