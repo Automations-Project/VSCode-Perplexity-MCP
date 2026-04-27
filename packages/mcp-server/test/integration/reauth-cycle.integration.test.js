@@ -40,7 +40,10 @@ describe("end-to-end re-auth cycle", () => {
         stdio: ["pipe", "pipe", "pipe", "ipc"],
       });
       await new Promise((r) => child.on("close", r));
-      await new Promise((r) => setTimeout(r, 400));
+      const deadline = Date.now() + 5_000;
+      while (reinitFired < 1 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
       expect(reinitFired).toBeGreaterThanOrEqual(1);
       const cookies = JSON.parse(await new Vault().get("default", "cookies"));
       expect(cookies.some((c) => c.name === "__Secure-next-auth.session-token")).toBe(true);
