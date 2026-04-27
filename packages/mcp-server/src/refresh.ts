@@ -62,13 +62,21 @@ function getImpitRuntimeDirPath(): string {
 
 const STEALTH_ARGS = [
   "--disable-blink-features=AutomationControlled",
-  "--disable-features=IsolateOrigins,site-per-process",
-  "--disable-site-isolation-trials",
   // NOTE: `--disable-web-security` was removed (2026-04-27 public-hardening
   // audit). All in-page `fetch()` calls used by the cookie-refresh tier hit
   // the same Perplexity origin, so CORS is not a factor; keeping the flag
   // would needlessly weaken the browser's same-origin policy. The off-origin
   // ASI download path lives in client.ts and now uses APIRequestContext.
+  //
+  // NOTE: `--disable-features=IsolateOrigins,site-per-process` and
+  // `--disable-site-isolation-trials` were removed (2026-04-27 public-
+  // hardening audit). They disable Chromium's Site Isolation process model,
+  // which is a renderer-architecture feature invisible to JavaScript on the
+  // page (no documented fingerprint surface — Patchright's
+  // `chromiumSwitches.js` does not include them). The cookie-refresh path
+  // never enumerates frames or cross-origin iframes, so the only effect of
+  // keeping them was a silent reduction in the browser's Spectre/UXSS
+  // defense-in-depth.
   "--no-first-run",
   "--no-default-browser-check",
   "--disable-infobars",

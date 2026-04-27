@@ -49,14 +49,26 @@ function getModelsCacheFile(): string {
 
 const STEALTH_ARGS = [
   "--disable-blink-features=AutomationControlled",
-  "--disable-features=IsolateOrigins,site-per-process",
-  "--disable-site-isolation-trials",
   // NOTE: `--disable-web-security` was removed (2026-04-27 public-hardening
   // audit). All in-page `fetch()` calls in this file are same-origin
   // (perplexity.ai) — the only off-origin downloader (`downloadASIFiles`)
   // now uses Playwright's `APIRequestContext` (`context.request.get`) which
   // runs outside the page context and is not subject to CORS. Re-adding this
   // flag would re-introduce a meaningful XSS amplification risk for no gain.
+  //
+  // NOTE: `--disable-features=IsolateOrigins,site-per-process` and
+  // `--disable-site-isolation-trials` were removed (2026-04-27 public-
+  // hardening audit). They disable Chromium's Site Isolation process model,
+  // which is a renderer-architecture feature invisible to JavaScript on the
+  // page (no documented fingerprint surface — Patchright's
+  // `chromiumSwitches.js` does not include them; see
+  // node_modules/patchright-core/lib/server/chromium/chromiumSwitches.js).
+  // Their historical use in puppeteer-stealth recipes was to keep cross-
+  // origin iframes in the same renderer process so `page.frames()` /
+  // CDP-based interaction worked uniformly. This codebase does not touch
+  // iframes (no `page.frames`, `frameLocator`, `mainFrame`, or `postMessage`
+  // usage in packages/mcp-server/src), so the only effect of keeping them
+  // was a silent reduction in the browser's Spectre/UXSS defense-in-depth.
   "--no-first-run",
   "--no-default-browser-check",
   "--disable-infobars",
