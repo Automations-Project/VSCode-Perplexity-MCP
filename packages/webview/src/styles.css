@@ -99,8 +99,14 @@ a {
 
 .content-shell {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   align-content: start;
+}
+
+.content-shell > *,
+.content-shell .grid > * {
+  min-width: 0;
 }
 
 /* ── Glass Panels ─────────────────────────── */
@@ -1533,6 +1539,7 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
   padding: 0;
   overflow: visible;
   position: relative;
+  min-width: 0;
   z-index: 0;
   border-radius: 14px;
   transition:
@@ -1701,6 +1708,7 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
   color: var(--text-primary);
   line-height: 1.4;
   letter-spacing: -0.005em;
+  overflow-wrap: anywhere;
   /* Auto-isolate bidi so mixed LTR/RTL in a single title renders correctly
      without punctuation escaping the wrong end. dir="auto" sets direction;
      plaintext tells the bidi algorithm to honor that per-paragraph. */
@@ -1724,6 +1732,8 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
   line-height: 1.45;
   color: var(--text-secondary);
   overflow: hidden;
+  overflow-wrap: anywhere;
+  min-width: 0;
   unicode-bidi: plaintext;
   text-align: start;
 }
@@ -1769,6 +1779,8 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
   font-size: 0.76rem;
   line-height: 1.55;
   color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  min-width: 0;
   /* RTL support: per-paragraph direction from first strong char, start-aligned. */
   unicode-bidi: plaintext;
   text-align: start;
@@ -1895,6 +1907,7 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
   font-size: 0.8rem;
   font-weight: 500;
   color: var(--text-primary);
+  overflow-wrap: anywhere;
 }
 
 .hist-compact-preview {
@@ -2695,6 +2708,8 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
   font-size: 0.74rem;
   line-height: 1.5;
   color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  min-width: 0;
   /* Per-paragraph bidi: each block honors its own dir="auto". */
   unicode-bidi: plaintext;
   text-align: start;
@@ -2703,6 +2718,8 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
 .md-root p,
 .md-p {
   margin: 0 0 6px;
+  overflow-wrap: anywhere;
+  min-width: 0;
   /* Start-aligned so an Arabic paragraph flows right and English stays left. */
   text-align: start;
 }
@@ -2744,6 +2761,8 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
   padding: 8px 10px;
   margin: 6px 0;
   overflow-x: auto;
+  min-width: 0;
+  max-width: 100%;
   font-family: "Cascadia Code", "SFMono-Regular", monospace;
   font-size: 0.72rem;
   line-height: 1.5;
@@ -2787,6 +2806,7 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
   display: flex;
   gap: 6px;
   margin: 2px 0;
+  min-width: 0;
 }
 
 .md-bullet {
