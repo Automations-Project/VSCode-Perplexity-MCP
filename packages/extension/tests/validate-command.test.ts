@@ -148,6 +148,7 @@ describe("validateCommand", () => {
       ["C:\\Users\\me\\AppData\\Local\\Programs\\cursor\\Cursor.exe"],
       ["C:\\Users\\me\\AppData\\Local\\Programs\\Windsurf - Next\\Windsurf - Next.exe"],
       ["/usr/share/code/code"],
+      ["/usr/share/code-insiders/code-insiders"],
       ["/Applications/Cursor.app/Contents/MacOS/Cursor"],
     ])("flags %s as wrong-runtime", (cmd) => {
       // Existence shouldn't matter — blacklist wins regardless.

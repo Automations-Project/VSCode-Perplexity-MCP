@@ -57,6 +57,8 @@ const RUNTIME_BLACKLIST = new Set<string>([
   "code.exe",
   "code - insiders",
   "code - insiders.exe",
+  "code-insiders",
+  "code-insiders.exe",
   "cursor",
   "cursor.exe",
   "windsurf",
