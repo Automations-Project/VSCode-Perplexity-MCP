@@ -64,7 +64,11 @@ const STEALTH_ARGS = [
   "--disable-blink-features=AutomationControlled",
   "--disable-features=IsolateOrigins,site-per-process",
   "--disable-site-isolation-trials",
-  "--disable-web-security",
+  // NOTE: `--disable-web-security` was removed (2026-04-27 public-hardening
+  // audit). All in-page `fetch()` calls used by the cookie-refresh tier hit
+  // the same Perplexity origin, so CORS is not a factor; keeping the flag
+  // would needlessly weaken the browser's same-origin policy. The off-origin
+  // ASI download path lives in client.ts and now uses APIRequestContext.
   "--no-first-run",
   "--no-default-browser-check",
   "--disable-infobars",
