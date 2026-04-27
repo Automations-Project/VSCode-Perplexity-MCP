@@ -43,6 +43,15 @@ export async function start(opts = {}) {
     return res.status(503).type("html").send("<html><head><title>Just a moment...</title></head><body>cf</body></html>");
   }
 
+  // Root page so PerplexityClient.init()'s `page.goto(PERPLEXITY_URL)` lands
+  // on a 200, establishing a same-origin document context for subsequent
+  // credentialed `fetch()` calls. Without this, browsers in some Chromium
+  // builds throw "Failed to fetch" because the document origin is null.
+  app.get("/", (req, res) => {
+    if (req.query.force_cf) return renderCf(res);
+    res.type("html").send("<!doctype html><html><body><h1>mock perplexity root</h1></body></html>");
+  });
+
   app.get("/login", (req, res) => {
     if (req.query.force_cf) return renderCf(res);
     res.type("html").send(`<!doctype html><html><body>
@@ -199,6 +208,12 @@ export async function start(opts = {}) {
 
   const experimentsHandler = (req, res) => {
     if (!requireSession(req, res)) return;
+    // H2 hook: simulate the production payload that omits `server_is_pro` while
+    // still being authenticated. The client's tier-derivation lacks an
+    // inference fallback, so omitting the flag demotes a real Pro user.
+    if (req.query.force_no_pro_flag === "1") {
+      return res.json({ server_is_max: false, server_is_enterprise: false });
+    }
     res.json({ server_is_pro: true, server_is_max: false, server_is_enterprise: false });
   };
   app.get("/rest/user/experiments", experimentsHandler);
