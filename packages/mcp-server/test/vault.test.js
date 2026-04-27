@@ -26,8 +26,10 @@ describe("vault AES-GCM primitives", () => {
 
   it("rejects tampered ciphertext", () => {
     const enc = encryptBlob(Buffer.from("hello world payload"), KEY);
-    // flip a byte in the middle (ciphertext region is between iv and authtag)
-    enc[20] ^= 0x01;
+    // Flip a byte well inside the ciphertext region. v2 layout:
+    //   [0..3 magic][4 ver][5 saltlen][6..21 salt][22..33 iv][34..N-17 ct][N-16..N-1 tag]
+    // Offset 40 lands in ciphertext for any plaintext ≥ 7 bytes.
+    enc[40] ^= 0x01;
     expect(() => decryptBlob(enc, KEY)).toThrow(/decrypt/i);
   });
 
@@ -40,7 +42,8 @@ describe("vault AES-GCM primitives", () => {
   it("includes magic header PXVT", () => {
     const enc = encryptBlob(Buffer.from("x"), KEY);
     expect(enc.slice(0, 4).toString()).toBe("PXVT");
-    expect(enc[4]).toBe(1); // version
+    expect(enc[4]).toBe(2); // version: encryptBlob now always emits v2
+    expect(enc[5]).toBe(0x10); // SALT_LEN = 16
   });
 });
 
@@ -414,5 +417,397 @@ describe("Vault atomicity", () => {
     await v.set("work", "k", "v1");
     await v.set("work", "k", "v2");
     expect(await v.get("work", "k")).toBe("v2");
+  });
+});
+
+// -------------------------------------------------------------------------
+// v2 migration tests — see docs/superpowers/specs/2026-04-27-vault-hkdf-migration-design.md
+//
+// Format reference:
+//   v1: [MAGIC "PXVT" 4][VERSION 0x01 1][IV 12][CT n][TAG 16]
+//   v2: [MAGIC "PXVT" 4][VERSION 0x02 1][SALT_LEN 0x10 1][SALT 16][IV 12][CT n][TAG 16]
+// -------------------------------------------------------------------------
+import { createCipheriv, hkdfSync, randomBytes as randBytes } from "node:crypto";
+import { readFileSync as readBytes, writeFileSync as writeBytes, statSync } from "node:fs";
+
+const LEGACY_STATIC_SALT_TEST = Buffer.from("perplexity-user-mcp:v1:salt");
+const HKDF_INFO = Buffer.from("vault-master-key");
+
+function deriveLegacyKey(passphrase) {
+  return Buffer.from(hkdfSync("sha256", Buffer.from(passphrase, "utf8"), LEGACY_STATIC_SALT_TEST, HKDF_INFO, 32));
+}
+
+// Build a v1-format vault.enc blob using the legacy static salt (mirrors the
+// pre-migration vault.js encryptBlob behaviour exactly).
+function buildV1Blob(plaintext, passphrase) {
+  const key = deriveLegacyKey(passphrase);
+  const iv = randBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const ct = Buffer.concat([cipher.update(Buffer.from(plaintext)), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([Buffer.from("PXVT"), Buffer.from([0x01]), iv, ct, tag]);
+}
+
+describe("v2 migration", () => {
+  let MIG_TMP;
+  beforeEach(() => {
+    MIG_TMP = mkdtempSync(join2(tmp2(), "pplx-vault-mig-"));
+    process.env.PERPLEXITY_CONFIG_DIR = MIG_TMP;
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "migration-pass-A";
+    __resetKeyCache();
+    // Force the passphrase code path (no keychain) for migration scenarios.
+    vi.doMock("keytar", () => { throw new Error("unavailable"); });
+  });
+  afterEach(() => {
+    vi.doUnmock("keytar");
+    rm2(MIG_TMP, { recursive: true, force: true });
+    delete process.env.PERPLEXITY_CONFIG_DIR;
+    delete process.env.PERPLEXITY_VAULT_PASSPHRASE;
+    __resetKeyCache();
+  });
+
+  it("(1) v1 passphrase vault reads successfully after upgrade", async () => {
+    cp("work");
+    const { getProfilePaths } = await import("../src/profiles.js");
+    const vaultPath = getProfilePaths("work").vault;
+    // Vault.get returns obj[key] verbatim, so store cookies as a string (matches real callers in config.ts).
+    const payload = JSON.stringify({ cookies: JSON.stringify([{ name: "session", value: "v1secret" }]) });
+    writeBytes(vaultPath, buildV1Blob(payload, "migration-pass-A"));
+
+    const v = new Vault();
+    const got = await v.get("work", "cookies");
+    expect(JSON.parse(got)).toEqual([{ name: "session", value: "v1secret" }]);
+  });
+
+  it("(2) read-only v1 get does not mutate the file", async () => {
+    cp("work");
+    const { getProfilePaths } = await import("../src/profiles.js");
+    const vaultPath = getProfilePaths("work").vault;
+    const payload = JSON.stringify({ cookies: [{ name: "s", value: "x" }] });
+    writeBytes(vaultPath, buildV1Blob(payload, "migration-pass-A"));
+
+    const beforeBytes = readBytes(vaultPath);
+    const beforeMtime = statSync(vaultPath).mtimeMs;
+
+    const v = new Vault();
+    await v.get("work", "cookies");
+
+    const afterBytes = readBytes(vaultPath);
+    const afterMtime = statSync(vaultPath).mtimeMs;
+    expect(afterBytes.equals(beforeBytes)).toBe(true);
+    expect(afterMtime).toBe(beforeMtime);
+    // Header is still v1 — no eager rewrite.
+    expect(afterBytes[4]).toBe(0x01);
+  });
+
+  it("(3) first write after v1 read writes version 0x02 with salt length 0x10", async () => {
+    cp("work");
+    const { getProfilePaths } = await import("../src/profiles.js");
+    const vaultPath = getProfilePaths("work").vault;
+    const payload = JSON.stringify({ cookies: [{ name: "s", value: "x" }] });
+    writeBytes(vaultPath, buildV1Blob(payload, "migration-pass-A"));
+
+    const v = new Vault();
+    await v.set("work", "foo", "bar");
+
+    const after = readBytes(vaultPath);
+    expect(after.slice(0, 4).toString()).toBe("PXVT");
+    expect(after[4]).toBe(0x02); // VERSION
+    expect(after[5]).toBe(0x10); // SALT_LEN = 16
+  });
+
+  it("(4) second read of migrated v2 vault succeeds", async () => {
+    cp("work");
+    const { getProfilePaths } = await import("../src/profiles.js");
+    const vaultPath = getProfilePaths("work").vault;
+    const payload = JSON.stringify({ cookies: "original-cookie-string" });
+    writeBytes(vaultPath, buildV1Blob(payload, "migration-pass-A"));
+
+    const v = new Vault();
+    // Trigger migration via a write.
+    await v.set("work", "newkey", "newval");
+    // Read both keys back — the v1 cookies value AND the v2-set newkey.
+    expect(await v.get("work", "cookies")).toBe("original-cookie-string");
+    expect(await v.get("work", "newkey")).toBe("newval");
+    // Confirm we are reading v2 now.
+    expect(readBytes(vaultPath)[4]).toBe(0x02);
+  });
+
+  it("(5) v2 from scratch writes version 0x02 with 16-byte salt", async () => {
+    cp("work");
+    const { getProfilePaths } = await import("../src/profiles.js");
+    const vaultPath = getProfilePaths("work").vault;
+
+    const v = new Vault();
+    await v.set("work", "k", "v");
+
+    const blob = readBytes(vaultPath);
+    expect(blob.slice(0, 4).toString()).toBe("PXVT");
+    expect(blob[4]).toBe(0x02);
+    expect(blob[5]).toBe(0x10);
+    // Salt occupies bytes 6..22; assert it's not all zeros.
+    const salt = blob.slice(6, 22);
+    expect(salt.length).toBe(16);
+    expect(salt.equals(Buffer.alloc(16))).toBe(false);
+  });
+
+  it("(6) two profiles get different salts", async () => {
+    cp("alpha");
+    cp("beta");
+    const { getProfilePaths } = await import("../src/profiles.js");
+    const v = new Vault();
+    await v.set("alpha", "k", "v");
+    await v.set("beta", "k", "v");
+
+    const aBlob = readBytes(getProfilePaths("alpha").vault);
+    const bBlob = readBytes(getProfilePaths("beta").vault);
+    const aSalt = aBlob.slice(6, 22);
+    const bSalt = bBlob.slice(6, 22);
+    expect(aSalt.length).toBe(16);
+    expect(bSalt.length).toBe(16);
+    expect(aSalt.equals(bSalt)).toBe(false);
+  });
+
+  it("(7) wrong passphrase for v1 throws and leaves file unchanged", async () => {
+    cp("work");
+    const { getProfilePaths } = await import("../src/profiles.js");
+    const vaultPath = getProfilePaths("work").vault;
+    // Write v1 with passphrase A.
+    writeBytes(vaultPath, buildV1Blob(JSON.stringify({ x: 1 }), "migration-pass-A"));
+    const beforeBytes = readBytes(vaultPath);
+
+    // Switch passphrase to B.
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "different-pass-B";
+    __resetKeyCache();
+
+    const v = new Vault();
+    let caught;
+    try {
+      await v.get("work", "x");
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeDefined();
+    // Must NOT be a structural-error wording (truncated/magic/version/salt-length).
+    expect(caught.message).not.toMatch(/truncated|wrong magic|unsupported version|invalid salt length/i);
+    // Should suggest passphrase / decrypt failure.
+    expect(caught.message).toMatch(/decrypt|passphrase|wrong key|corrupted ciphertext/i);
+
+    const afterBytes = readBytes(vaultPath);
+    expect(afterBytes.equals(beforeBytes)).toBe(true);
+  });
+
+  it("(8) wrong passphrase for v2 throws and leaves file unchanged", async () => {
+    cp("work");
+    const { getProfilePaths } = await import("../src/profiles.js");
+    const vaultPath = getProfilePaths("work").vault;
+
+    const v = new Vault();
+    // Write v2 with passphrase A.
+    await v.set("work", "x", "1");
+    const beforeBytes = readBytes(vaultPath);
+
+    // Switch passphrase to B.
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "different-pass-B";
+    __resetKeyCache();
+
+    let caught;
+    try {
+      await v.get("work", "x");
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeDefined();
+    expect(caught.message).not.toMatch(/truncated|wrong magic|unsupported version|invalid salt length/i);
+    expect(caught.message).toMatch(/decrypt|passphrase|wrong key|corrupted ciphertext/i);
+
+    const afterBytes = readBytes(vaultPath);
+    expect(afterBytes.equals(beforeBytes)).toBe(true);
+  });
+
+  describe("(9) structural errors", () => {
+    it("truncated file → distinguishable error", async () => {
+      cp("work");
+      const { getProfilePaths } = await import("../src/profiles.js");
+      writeBytes(getProfilePaths("work").vault, Buffer.alloc(5));
+      const v = new Vault();
+      let caught;
+      try { await v.get("work", "x"); } catch (e) { caught = e; }
+      expect(caught).toBeDefined();
+      expect(caught.message).toMatch(/truncated|too short/i);
+      // Must NOT be the wrong-passphrase error.
+      expect(caught.message).not.toMatch(/wrong passphrase|corrupted ciphertext/i);
+    });
+
+    it("wrong magic header → distinguishable error", async () => {
+      cp("work");
+      const { getProfilePaths } = await import("../src/profiles.js");
+      const bad = Buffer.alloc(64);
+      bad.write("NOPE", 0);
+      writeBytes(getProfilePaths("work").vault, bad);
+      const v = new Vault();
+      let caught;
+      try { await v.get("work", "x"); } catch (e) { caught = e; }
+      expect(caught).toBeDefined();
+      expect(caught.message).toMatch(/magic/i);
+      expect(caught.message).not.toMatch(/wrong passphrase|corrupted ciphertext/i);
+    });
+
+    it("unsupported version byte → distinguishable error", async () => {
+      cp("work");
+      const { getProfilePaths } = await import("../src/profiles.js");
+      const bad = Buffer.alloc(64);
+      bad.write("PXVT", 0);
+      bad[4] = 0x99;
+      writeBytes(getProfilePaths("work").vault, bad);
+      const v = new Vault();
+      let caught;
+      try { await v.get("work", "x"); } catch (e) { caught = e; }
+      expect(caught).toBeDefined();
+      expect(caught.message).toMatch(/unsupported.*version|version.*unsupported|version.*99/i);
+      expect(caught.message).not.toMatch(/wrong passphrase|corrupted ciphertext/i);
+    });
+
+    it("invalid salt length → distinguishable error", async () => {
+      cp("work");
+      const { getProfilePaths } = await import("../src/profiles.js");
+      // Build a v2-shaped blob but with SALT_LEN=0x05 instead of 0x10.
+      const bad = Buffer.alloc(80);
+      bad.write("PXVT", 0);
+      bad[4] = 0x02;
+      bad[5] = 0x05; // wrong salt length
+      writeBytes(getProfilePaths("work").vault, bad);
+      const v = new Vault();
+      let caught;
+      try { await v.get("work", "x"); } catch (e) { caught = e; }
+      expect(caught).toBeDefined();
+      expect(caught.message).toMatch(/salt.*length|invalid salt/i);
+      expect(caught.message).not.toMatch(/wrong passphrase|corrupted ciphertext/i);
+    });
+
+    it("tampered ciphertext on v2 → wrong-passphrase-style decrypt error", async () => {
+      cp("work");
+      const { getProfilePaths } = await import("../src/profiles.js");
+      const vaultPath = getProfilePaths("work").vault;
+      const v = new Vault();
+      await v.set("work", "x", "y");
+      const blob = readBytes(vaultPath);
+      // Flip a byte well inside the ciphertext region (after header+salt+iv).
+      blob[40] ^= 0x01;
+      writeBytes(vaultPath, blob);
+      let caught;
+      try { await v.get("work", "x"); } catch (e) { caught = e; }
+      expect(caught).toBeDefined();
+      // Indistinguishable from wrong key — the AES-GCM tag failure.
+      expect(caught.message).toMatch(/decrypt|passphrase|wrong key|corrupted ciphertext/i);
+      // But MUST NOT misreport as structural.
+      expect(caught.message).not.toMatch(/truncated|wrong magic|unsupported version|invalid salt length/i);
+    });
+  });
+
+  it("(10) keychain path still works and ignores the salt", async () => {
+    // Reset to use a keychain key (32 bytes, hex).
+    vi.doUnmock("keytar");
+    delete process.env.PERPLEXITY_VAULT_PASSPHRASE;
+    __resetKeyCache();
+    vi.resetModules();
+    const fixedKey = "c".repeat(64);
+    vi.doMock("keytar", () => ({
+      default: {
+        getPassword: vi.fn(async () => fixedKey),
+        setPassword: vi.fn(),
+      },
+    }));
+    try {
+      const { Vault: V2, __resetKeyCache: reset2, getMasterKey: gmk } = await import("../src/vault.js");
+      reset2();
+      const { createProfile, getProfilePaths } = await import("../src/profiles.js");
+      createProfile("kc");
+
+      const v = new V2();
+      await v.set("kc", "cookies", JSON.stringify({ a: 1 }));
+      const got = await v.get("kc", "cookies");
+      expect(JSON.parse(got)).toEqual({ a: 1 });
+
+      const blob = readBytes(getProfilePaths("kc").vault);
+      // Format: still v2 (migration writes v2 unconditionally).
+      expect(blob[4]).toBe(0x02);
+      expect(blob[5]).toBe(0x10);
+
+      // Keychain key is format-independent: deriving the master key directly
+      // and asserting it round-trips without involving the on-disk salt.
+      const key = await gmk();
+      expect(key.length).toBe(32);
+      expect(key.toString("hex")).toBe(fixedKey);
+    } finally {
+      vi.doUnmock("keytar");
+    }
+  });
+
+  // --- Coverage-completion tests for parseVaultHeader's truncation branches ---
+  it("decryptBlob: null blob throws truncated (null-guard branch)", () => {
+    expect(() => decryptBlob(null, Buffer.alloc(32, 7))).toThrow(/too short|truncated/i);
+  });
+
+  it("decryptBlob: v1 blob with header but truncated tail throws truncated", () => {
+    // Valid PXVT magic + version 1, but only 17 bytes (no tag region).
+    const bad = Buffer.alloc(17);
+    bad.write("PXVT", 0);
+    bad[4] = 0x01;
+    expect(() => decryptBlob(bad, Buffer.alloc(32, 7))).toThrow(/too short|truncated/i);
+  });
+
+  it("decryptBlob: v2 blob 5 bytes long throws truncated v2 header", () => {
+    // Magic + version byte but no salt-len byte.
+    const bad = Buffer.alloc(5);
+    bad.write("PXVT", 0);
+    bad[4] = 0x02;
+    expect(() => decryptBlob(bad, Buffer.alloc(32, 7))).toThrow(/too short|truncated/i);
+  });
+
+  it("decryptBlob: v2 blob with valid salt-len but truncated tail throws truncated v2", () => {
+    // Magic + ver 2 + salt-len 16, but total length < V2_HEADER_LEN+TAG.
+    const bad = Buffer.alloc(40);
+    bad.write("PXVT", 0);
+    bad[4] = 0x02;
+    bad[5] = 0x10;
+    expect(() => decryptBlob(bad, Buffer.alloc(32, 7))).toThrow(/too short|truncated/i);
+  });
+
+  it("(11) atomic write failure during migration leaves v1 bytes intact", async () => {
+    // Use vi.doMock on safe-write to force the rename to throw on the first
+    // write call. This proves the v1 file survives a failed migration.
+    vi.resetModules();
+    vi.doMock("../src/safe-write.js", () => ({
+      safeAtomicWriteFileSync: () => { throw new Error("simulated disk full"); },
+    }));
+    try {
+      const { Vault: V2, __resetKeyCache: reset2 } = await import("../src/vault.js");
+      const { createProfile, getProfilePaths } = await import("../src/profiles.js");
+      reset2();
+      createProfile("work");
+      const vaultPath = getProfilePaths("work").vault;
+      const payload = JSON.stringify({ cookies: "original-v1" });
+      writeBytes(vaultPath, buildV1Blob(payload, "migration-pass-A"));
+      const before = readBytes(vaultPath);
+
+      const v = new V2();
+      // First confirm read works (v1).
+      expect(await v.get("work", "cookies")).toBe("original-v1");
+
+      // Now attempt a write — the mocked safeAtomicWriteFileSync throws.
+      let caught;
+      try { await v.set("work", "k", "new"); } catch (e) { caught = e; }
+      expect(caught).toBeDefined();
+      expect(caught.message).toMatch(/simulated disk full/);
+
+      // V1 file must be byte-identical.
+      const after = readBytes(vaultPath);
+      expect(after.equals(before)).toBe(true);
+      expect(after[4]).toBe(0x01);
+    } finally {
+      vi.doUnmock("../src/safe-write.js");
+      vi.resetModules();
+    }
   });
 });
