@@ -30,6 +30,19 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - run: npm ci
+      # Workaround for npm/cli#4828: optional native bindings sometimes don't
+      # install when `npm ci` runs from a lockfile generated on a different
+      # platform. Force-install the @tailwindcss/oxide native binding for the
+      # current runner so vite/postcss can find it.
+      - name: Install platform-specific tailwind oxide binding (npm/cli#4828)
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            npm install --no-save --workspaces=false @tailwindcss/oxide-linux-x64-gnu
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            npm install --no-save --workspaces=false @tailwindcss/oxide-win32-x64-msvc
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            npm install --no-save --workspaces=false @tailwindcss/oxide-darwin-arm64 @tailwindcss/oxide-darwin-x64
+          fi
       - run: npm run build
       - run: npm run typecheck
       - name: Test with coverage
