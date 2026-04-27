@@ -51,6 +51,14 @@ export interface RegenerateStaleIdesDeps {
     options: IdeConfigOptions,
     deps: ApplyIdeConfigDeps,
   ) => Promise<ApplyIdeConfigResult>;
+  /**
+   * Resolves a real Node.js binary for stdio transport `command` fields.
+   * Called once per batch (not per IDE) and forwarded into every applyIdeConfig
+   * call. Mirrors `configureTargets`'s nodePath defaulting so an auto-refresh
+   * cannot silently rewrite a fixed stdio config back to `process.execPath`
+   * (which inside the VS Code extension host is the Electron binary).
+   */
+  resolveNodePath: () => string;
   /** Debug trace sink (extension output channel in production). */
   debug: (line: string) => void;
   /** Called after the batch so the webview's staleness banner can re-render. */
@@ -98,6 +106,11 @@ export async function regenerateStaleIdes(
   );
 
   const applyDeps = await deps.buildDeps();
+  // Resolve the Node interpreter once per batch and forward it into every
+  // applyIdeConfig call. See the dep's JSDoc for the rationale; the same
+  // defaulting also happens inside configureTargets for the user-initiated
+  // "Regenerate all" path.
+  const nodePath = deps.resolveNodePath();
   const results: RegenerateStaleIdesOutcome["results"] = [];
 
   for (const entry of input.stale) {
@@ -119,6 +132,7 @@ export async function regenerateStaleIdes(
           target: entry.ideTag as IdeTarget,
           serverPath: input.serverPath,
           chromePath: input.chromePath,
+          nodePath,
           transportId,
         },
         applyDeps,

@@ -42,20 +42,27 @@ interface RecordedCall {
   deps: ApplyIdeConfigDeps;
 }
 
+// Default deterministic value so existing exact-match assertions can pin
+// `options.nodePath` without depending on the host's real Node binary.
+const DEFAULT_TEST_NODE_PATH = "/test/resolved-node";
+
 function makeDeps(overrides: {
   applyIdeConfig?: (options: IdeConfigOptions, deps: ApplyIdeConfigDeps) => Promise<ApplyIdeConfigResult>;
   debug?: (line: string) => void;
   refresh?: () => Promise<void>;
   buildDeps?: () => Promise<ApplyIdeConfigDeps>;
+  resolveNodePath?: () => string;
 } = {}): {
   deps: RegenerateStaleIdesDeps;
   calls: RecordedCall[];
   debugLines: string[];
   refreshCount: number;
+  resolveNodePathCount: number;
 } {
   const calls: RecordedCall[] = [];
   const debugLines: string[] = [];
   let refreshCount = 0;
+  let resolveNodePathCount = 0;
 
   const baseApply =
     overrides.applyIdeConfig
@@ -89,6 +96,10 @@ function makeDeps(overrides: {
         auditGenerated: () => {},
       })),
     applyIdeConfig: wrappedApply,
+    resolveNodePath: () => {
+      resolveNodePathCount += 1;
+      return overrides.resolveNodePath?.() ?? DEFAULT_TEST_NODE_PATH;
+    },
     debug: (line) => {
       debugLines.push(line);
       overrides.debug?.(line);
@@ -106,7 +117,16 @@ function makeDeps(overrides: {
     get refreshCount() {
       return refreshCount;
     },
-  } as { deps: RegenerateStaleIdesDeps; calls: RecordedCall[]; debugLines: string[]; refreshCount: number };
+    get resolveNodePathCount() {
+      return resolveNodePathCount;
+    },
+  } as {
+    deps: RegenerateStaleIdesDeps;
+    calls: RecordedCall[];
+    debugLines: string[];
+    refreshCount: number;
+    resolveNodePathCount: number;
+  };
 }
 
 describe("regenerateStaleIdes", () => {
@@ -167,6 +187,7 @@ describe("regenerateStaleIdes", () => {
       target: "cursor",
       serverPath: "/srv/launcher.mjs",
       chromePath: undefined,
+      nodePath: DEFAULT_TEST_NODE_PATH,
       transportId: "http-loopback",
     });
     expect(harness.calls[1].options.transportId).toBe("http-tunnel");
@@ -267,6 +288,41 @@ describe("regenerateStaleIdes", () => {
     await regenerateStaleIdes(makeInput({ stale }), harness.deps);
 
     expect(buildDeps).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards the resolved nodePath to every applyIdeConfig call", async () => {
+    const stale: StaleConfigEntry[] = [
+      { ideTag: "cursor", reason: "url" },
+      { ideTag: "claudeDesktop", reason: "url" },
+      { ideTag: "windsurf", reason: "url" },
+    ];
+    // A path that explicitly is NOT process.execPath so the assertion proves
+    // the wiring (and not coincidental equality through the Electron fallback
+    // in the stdio transport builder).
+    const fakeNode = "/fake/resolved/node-binary";
+    const harness = makeDeps({ resolveNodePath: () => fakeNode });
+
+    const outcome = await regenerateStaleIdes(makeInput({ stale }), harness.deps);
+
+    expect(outcome.ran).toBe(true);
+    expect(harness.calls).toHaveLength(3);
+    for (const call of harness.calls) {
+      expect(call.options.nodePath).toBe(fakeNode);
+      expect(call.options.nodePath).not.toBe(process.execPath);
+    }
+  });
+
+  it("calls resolveNodePath exactly once per batch (not per-IDE)", async () => {
+    const stale: StaleConfigEntry[] = [
+      { ideTag: "cursor", reason: "url" },
+      { ideTag: "claudeDesktop", reason: "url" },
+      { ideTag: "windsurf", reason: "url" },
+    ];
+    const harness = makeDeps();
+
+    await regenerateStaleIdes(makeInput({ stale }), harness.deps);
+
+    expect(harness.resolveNodePathCount).toBe(1);
   });
 });
 

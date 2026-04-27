@@ -163,8 +163,11 @@ export function getIdeConfigPath(target: IdeTarget, options?: { homeDir?: string
  * Resolve a working Node.js executable path.
  * In VSCode/Windsurf extension host, `process.execPath` returns the IDE binary
  * (e.g. "Windsurf - Next.exe"), NOT node. We need to find actual node.
+ *
+ * Exported so the staleness auto-regen path in `regenerateStaleIdes` can reuse
+ * the same resolution rules without duplicating the candidate ladder.
  */
-function resolveNodePath(): string {
+export function resolveNodePath(): string {
   const log = (msg: string) => { try { console.error(`[resolveNodePath] ${msg}`); } catch {} };
 
   log(`process.execPath = ${process.execPath}`);

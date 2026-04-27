@@ -10,7 +10,7 @@ import { redactMessage } from "./redact.js";
 import { OutputRingBuffer } from "./diagnostics/output-buffer.js";
 import { captureDiagnostics } from "./diagnostics/capture.js";
 import { runDiagnosticsCaptureFlow } from "./diagnostics/flow.js";
-import { applyIdeConfig, configureTargets, getIdeStatuses, type ApplyIdeConfigDeps } from "./auto-config/index.js";
+import { applyIdeConfig, configureTargets, getIdeStatuses, resolveNodePath, type ApplyIdeConfigDeps } from "./auto-config/index.js";
 import { wrapDepsForAutoRegen } from "./webview/staleness-auto-regen.js";
 import { spawnSync } from "node:child_process";
 import { hasStoredLogin } from "./auth/session.js";
@@ -482,6 +482,7 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
       return wrapDepsForAutoRegen(liveDeps, (line) => log(line));
     },
     applyIdeConfig,
+    resolveNodePath,
     debug: (line) => debug(line),
     refresh: async () => { await dashboard.refresh(); },
   });
