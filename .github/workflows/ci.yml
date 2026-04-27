@@ -69,7 +69,17 @@ jobs:
           cd packages/extension
           npm run prepare:package-deps || true
           npx @vscode/vsce ls --no-dependencies 2>&1 | tee /tmp/vsix.txt
-          if grep -qE "\.ts$|dev-tools" /tmp/vsix.txt; then
-            echo "ERROR: Source files would leak into VSIX!"
+          # Match true source .ts files (foo.ts) but NOT type declarations
+          # (foo.d.ts). Bundled npm packages legitimately ship .d.ts files
+          # alongside their .js — those must not trigger this check.
+          # Also ban dev-tools paths.
+          if grep -E "\.ts$" /tmp/vsix.txt | grep -vE "\.d\.ts$" | head -1 | grep -q .; then
+            echo "ERROR: Source .ts files would leak into VSIX!"
+            grep -E "\.ts$" /tmp/vsix.txt | grep -vE "\.d\.ts$" | head -10
+            exit 1
+          fi
+          if grep -qE "dev-tools" /tmp/vsix.txt; then
+            echo "ERROR: dev-tools path would leak into VSIX!"
+            grep -E "dev-tools" /tmp/vsix.txt | head -10
             exit 1
           fi

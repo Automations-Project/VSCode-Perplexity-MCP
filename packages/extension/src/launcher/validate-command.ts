@@ -1,5 +1,17 @@
 import { existsSync } from "node:fs";
-import { basename, isAbsolute } from "node:path";
+import { basename, isAbsolute, posix, win32 } from "node:path";
+
+/**
+ * Pick a path-module variant matching a synthetic platform. When `deps.platform`
+ * is unset, fall back to the host's path module. This lets test fixtures pass
+ * Windows-shaped command paths and assert classification regardless of which
+ * OS the test suite happens to be running on (Linux CI vs Windows dev).
+ */
+function pickPathLib(platform: NodeJS.Platform | undefined) {
+  if (platform === "win32") return win32;
+  if (platform) return posix;
+  return { isAbsolute, basename };
+}
 
 /**
  * Health classification for the `command` field of a stored IDE MCP config.
@@ -172,12 +184,13 @@ export function validateCommand(
   const trimmed = command.trim();
   const platform = deps.platform ?? process.platform;
   const exists = deps.existsSync ?? existsSync;
+  const pathLib = pickPathLib(deps.platform);
 
   // Normalize basename for case-insensitive comparison on Windows. On POSIX
   // we still lowercase for blacklist/Node-name matching because the
   // blacklist entries themselves are lowercase by convention; the IDE host
   // executables compare cleanly that way.
-  const baseRaw = basename(trimmed);
+  const baseRaw = pathLib.basename(trimmed);
   const base = baseRaw.toLowerCase();
 
   // Bare "node" / "node.exe" — try to resolve via PATH.
@@ -188,8 +201,13 @@ export function validateCommand(
   }
 
   // Anything else that isn't an absolute path: we can't classify safely
-  // without executing it. Treat as unknown.
-  if (!isAbsolute(trimmed)) {
+  // without executing it. Treat as unknown. Use the platform-aware path
+  // module so a test fixture with Windows-shaped paths (e.g.,
+  // "C:\\Program Files\\...\\Code.exe") still reports as absolute when
+  // the test injects deps.platform = "win32" — the host's posix.isAbsolute
+  // would otherwise return false on Linux CI and falsely classify as
+  // unknown.
+  if (!pathLib.isAbsolute(trimmed)) {
     return "unknown";
   }
 
