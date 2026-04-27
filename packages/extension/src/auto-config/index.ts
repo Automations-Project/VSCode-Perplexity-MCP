@@ -1087,6 +1087,7 @@ const AUTO_CONFIGURABLE_IDES: IdeTarget[] = [
 export interface ConfigureTargetsOptions {
   transportByIde?: Partial<Record<IdeTarget, McpTransportId>>;
   deps?: ApplyIdeConfigDeps;
+  nodePath?: string;
 }
 
 export async function configureTargets(
@@ -1104,6 +1105,13 @@ export async function configureTargets(
 
   const transportByIde = options?.transportByIde ?? {};
   const deps = options?.deps;
+  // Resolve a real Node binary once. The stdio transport builders fall back to
+  // `process.execPath` when no nodePath is supplied, but inside the VS Code
+  // extension host that's the Electron binary (e.g. `/usr/share/code/code`),
+  // which produces a non-functional `command` field. An explicit caller-supplied
+  // `options.nodePath` still wins so future code paths can pin a specific
+  // interpreter (e.g. native-deps detection).
+  const nodePath = options?.nodePath ?? resolveNodePath();
   const results: Array<{ target: IdeTarget; result: ApplyIdeConfigResult }> = [];
 
   for (const item of targets) {
@@ -1116,6 +1124,7 @@ export async function configureTargets(
           target: item,
           serverPath,
           ...(chromePath !== undefined ? { chromePath } : {}),
+          nodePath,
           transportId,
         },
         deps
