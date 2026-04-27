@@ -1573,6 +1573,9 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
     await this.postHistoryList(100);
     await this.postViewersList();
     await this.postDaemonState({ ensure: true });
+    if (this.authManager) {
+      await this.postAuthState(this.authManager.state);
+    }
   }
 
   async refreshModels(): Promise<void> {
