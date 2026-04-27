@@ -96,11 +96,15 @@ Claude Desktop (`claude_desktop_config.json`) uses the same shape.
 - `perplexity_reason` — step-by-step reasoning (Pro tier)
 - `perplexity_research` — deep multi-section reports (Pro tier)
 - `perplexity_ask` — flexible queries with explicit model/mode/follow-up control
-- `perplexity_compute` — Computer mode / ASI (Max tier)
+- `perplexity_compute` — Computer mode / ASI (requires Computer-mode access — typically Max)
 - `perplexity_models` — list models, account tier, rate limits
 - `perplexity_retrieve` — poll a pending research/compute task
+- `perplexity_export` — export a saved history entry as PDF, Markdown, or DOCX (uses Perplexity's native export endpoint with a local Markdown fallback)
+- `perplexity_sync_cloud` — sync Perplexity cloud thread history into the local history store
+- `perplexity_hydrate_cloud_entry` — hydrate a single cloud-backed history entry on demand
 - `perplexity_list_researches` / `perplexity_get_research` — saved research history
 - `perplexity_login` — open a browser for Perplexity authentication
+- `perplexity_doctor` — run diagnostic checks across browser, profile, auth, and network and return a Markdown report (pass `probe:true` for a live search probe)
 
 ## Library use
 
@@ -120,4 +124,4 @@ import { readHistory } from "perplexity-user-mcp";
 
 ## License
 
-UNLICENSED — private project.
+MIT — see [LICENSE](../../LICENSE).

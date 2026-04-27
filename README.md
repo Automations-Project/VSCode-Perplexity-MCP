@@ -2,7 +2,7 @@
 
 A monorepo that ships a Perplexity MCP server two ways:
 
-- **`perplexity-vscode`** — a native VS Code extension (currently **0.8.5**, see [CHANGELOG.md](CHANGELOG.md)) with an embedded daemon, webview dashboard, and auto-config for 15+ MCP-capable IDEs.
+- **`perplexity-vscode`** — a native VS Code extension (currently **0.8.10**, see [CHANGELOG.md](CHANGELOG.md)) with an embedded daemon, webview dashboard, and auto-config for 15+ MCP-capable IDEs.
 - **`perplexity-user-mcp`** — the same server as a standalone npm package, for Cursor, Claude Desktop, Claude Code, Windsurf, Cline, Amp, Codex CLI, and anything else that speaks MCP over stdio.
 
 Both wrap a long-lived patchright browser session against your existing Perplexity account, so the MCP tools consume your logged-in plan (Pro, Max, etc.) rather than a paid API key.
@@ -86,7 +86,7 @@ This is a **pre-public repo** — the conventions below reflect that and will ti
 
 - **Commit directly to `main`.** No feature branches, no PRs against this repo yet. `main` is the default and (by intent) protected branch.
 - **VSIX smoke-test before tagging.** Every versioned release must pass the manual checklists in [docs/smoke-tests.md](docs/smoke-tests.md) on Windows 11, macOS 14+, and Ubuntu 22+ before being tagged. Integration tests alone don't catch login / packaging bugs — skipping smoke has already caused regressions that made it to a shipped VSIX.
-- **Version `packages/extension` and `packages/mcp-server` together.** They share a version (both are currently `0.8.5`). When bumping, update both `package.json` files and add a [CHANGELOG.md](CHANGELOG.md) entry. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and SemVer — see the 0.8.x entries for the expected level of rationale (Added / Changed / Security / Tests / Release gate).
+- **Version `packages/extension` and `packages/mcp-server` together.** They share a version (both are currently `0.8.10`). When bumping, update both `package.json` files and add a [CHANGELOG.md](CHANGELOG.md) entry. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and SemVer — see the 0.8.x entries for the expected level of rationale (Added / Changed / Security / Tests / Release gate).
 - **Windows-first shell.** Prefer forward slashes and `/dev/null` in examples rather than `\` and `NUL`.
 - **Don't touch auto-managed blocks.** Files like [CLAUDE.md](CLAUDE.md) contain a block between `PERPLEXITY-MCP-START` / `PERPLEXITY-MCP-END` that the extension regenerates; edit the hand-written sections above it instead.
 
