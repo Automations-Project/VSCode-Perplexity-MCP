@@ -7,6 +7,10 @@ on:
 
 env:
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+  # tsup's --dts worker hits Node's default ~2GB heap during the mcp-server
+  # build (70+ entry points + DTS emission). Lift the cap to 4GB; both
+  # ubuntu-latest and windows-latest runners have ~7GB RAM available.
+  NODE_OPTIONS: "--max-old-space-size=4096"
 
 jobs:
   build-and-test:
