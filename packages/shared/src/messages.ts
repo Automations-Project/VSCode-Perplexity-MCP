@@ -7,6 +7,32 @@ export type IdeTarget =
   | "continueDev" | "copilot" | "zed" | "geminiCli"
   | "aider" | "augment";
 
+/**
+ * Classification of the `command` field on a stored IDE MCP config entry.
+ *
+ *   - `ok`            — node-shaped binary that exists / resolves via PATH.
+ *   - `missing`       — absolute path that no longer exists on disk.
+ *   - `wrong-runtime` — basename matches a known IDE host / Electron binary
+ *                       (Code, Cursor, Windsurf, Electron, Claude desktop)
+ *                       or sits inside a `*.app/Contents/MacOS/` bundle with
+ *                       a non-node basename.
+ *   - `unresolved`    — bare `"node"` / `"node.exe"` not found via PATH.
+ *   - `unknown`       — exists, but basename isn't node-shaped and isn't on
+ *                       the blacklist; surface a light warning so the user
+ *                       can verify it's actually a Node-compatible runtime.
+ *
+ * Mirrors `CommandHealth` in
+ * `packages/extension/src/launcher/validate-command.ts` — kept in sync so
+ * MCP-server-side consumers (the doctor formatter) don't need to import
+ * extension-only modules.
+ */
+export type IdeCommandHealth =
+  | "ok"
+  | "missing"
+  | "wrong-runtime"
+  | "unresolved"
+  | "unknown";
+
 export interface IdeStatus {
   detected: boolean;
   configured: boolean;
@@ -16,6 +42,17 @@ export interface IdeStatus {
   displayName: string;
   autoConfigurable: boolean;
   configFormat: "json" | "toml" | "yaml" | "ui-only";
+  /**
+   * Raw `command` field extracted from the config (for diagnostics surfacing).
+   * `undefined` when `configured === false` or the format wasn't parseable.
+   */
+  command?: string;
+  /**
+   * Classification of `command`. `undefined` when `configured === false`.
+   * The doctor demotes a "configured" IDE to `warn` whenever this is set
+   * to anything other than `"ok"`. See `IdeCommandHealth`.
+   */
+  commandHealth?: IdeCommandHealth;
 }
 
 export interface ExtensionSettingsSnapshot {

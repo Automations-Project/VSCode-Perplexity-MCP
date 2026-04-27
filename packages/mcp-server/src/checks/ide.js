@@ -30,6 +30,10 @@ export async function run(opts = {}) {
       });
       continue;
     }
+    // Order of evaluation: stale-args (the launcher path no longer exists)
+    // wins over a bad-command warning. A stale launcher is the higher-impact
+    // breakage — the IDE will fail to spawn anything at all — so the doctor
+    // surfaces that first and elides the command-health note for the same row.
     if (s.health === "stale") {
       results.push({
         category: CATEGORY,
@@ -37,6 +41,17 @@ export async function run(opts = {}) {
         status: "warn",
         message: `${s.displayName} config is stale.`,
         hint: "Click Configure to refresh.",
+        action: { label: "Refresh config", commandId: "Perplexity.generateConfigs", args: [id] },
+      });
+      continue;
+    }
+    if (s.commandHealth && s.commandHealth !== "ok") {
+      results.push({
+        category: CATEGORY,
+        name: id,
+        status: "warn",
+        message: `${s.displayName} configured but command path is ${s.commandHealth} — re-run 'Configure for All' to refresh.`,
+        hint: "The MCP config's `command` field doesn't look like a Node.js binary. Re-running Configure rewrites it with a resolved Node path.",
         action: { label: "Refresh config", commandId: "Perplexity.generateConfigs", args: [id] },
       });
       continue;

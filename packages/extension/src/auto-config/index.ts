@@ -24,6 +24,7 @@ import {
   type RulesStatus
 } from "@perplexity-user-mcp/shared";
 import { checkLauncherHealth } from "../launcher/write-launcher.js";
+import { validateCommand } from "../launcher/validate-command.js";
 import {
   getTransportBuilder,
   StabilityGateError,
@@ -1032,17 +1033,36 @@ export function detectIdeStatus(
   try {
     let configured = false;
     let configuredArgs: string[] = [];
+    let configuredCommand: string | undefined;
 
     if (meta.configFormat === "toml") {
       const toml = readFileSync(configPath, "utf8");
       configured = tomlHasMcpServer(toml, serverName);
       if (configured) {
         // Extract args from TOML: args = ["path/to/server"]
+        // NOTE: this regex (and the sibling `command` regex below) is
+        // intentionally loose — it grabs the FIRST `args = […]` / first
+        // `command = "…"` anywhere in the file, not necessarily inside the
+        // `[mcp_servers.<serverName>]` table. The two extractors mirror
+        // each other's scoping behavior so that any future hardening pass
+        // (a real TOML parse) can fix both at once. See docstring on
+        // `detectIdeStatus` and the read-only review note 0.8.x.
         const argsMatch = toml.match(/args\s*=\s*\[([^\]]*)\]/);
         if (argsMatch) {
           const argsStr = argsMatch[1];
           const argValues = [...argsStr.matchAll(/"([^"]*)"/g)].map(m => m[1]);
           configuredArgs = argValues;
+        }
+        const commandMatch = toml.match(/command\s*=\s*"((?:[^"\\]|\\.)*)"/);
+        if (commandMatch) {
+          // Unescape the simple JSON-style escapes our `buildTomlMcpBlock`
+          // emits via JSON.stringify (\\, \", \n, \t etc.). `JSON.parse`
+          // gives us back the literal string the file holds.
+          try {
+            configuredCommand = JSON.parse(`"${commandMatch[1]}"`) as string;
+          } catch {
+            configuredCommand = commandMatch[1];
+          }
         }
       }
     } else if (meta.configFormat === "json") {
@@ -1053,21 +1073,36 @@ export function detectIdeStatus(
         !Array.isArray(config.mcpServers) &&
         Object.prototype.hasOwnProperty.call(config.mcpServers, serverName);
       if (configured && config.mcpServers) {
-        const serverEntry = config.mcpServers[serverName] as { args?: string[] } | undefined;
+        const serverEntry = config.mcpServers[serverName] as
+          | { args?: string[]; command?: string }
+          | undefined;
         if (serverEntry?.args && Array.isArray(serverEntry.args)) {
           configuredArgs = serverEntry.args;
+        }
+        if (typeof serverEntry?.command === "string") {
+          configuredCommand = serverEntry.command;
         }
       }
     }
 
+    // Order of evaluation (docs/release-process note): a stale-args path
+    // (the launcher script doesn't exist) is more urgent than a bad-command
+    // warning (the runtime path is wrong). Stale wins so the doctor message
+    // surfaces the higher-impact problem first.
     const health: IdeStatus["health"] = configured
       ? checkLauncherHealth(configuredArgs)
       : "missing";
+
+    const commandHealth = configured
+      ? validateCommand(configuredCommand)
+      : undefined;
 
     return {
       ...base,
       configured,
       health,
+      ...(configuredCommand !== undefined ? { command: configuredCommand } : {}),
+      ...(commandHealth !== undefined ? { commandHealth } : {}),
       lastConfiguredAt: statSync(configPath).mtime.toISOString()
     };
   } catch {
