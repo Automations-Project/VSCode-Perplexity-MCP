@@ -29,7 +29,7 @@ describe("stdioDaemonProxyBuilder", () => {
     const result = stdioDaemonProxyBuilder.build(baseInput());
 
     expect(result).toEqual({
-      command: process.execPath,
+      command: "node",
       args: ["/home/user/.perplexity-mcp/launcher.cjs"],
       env: { PERPLEXITY_HEADLESS_ONLY: "1" },
     });
@@ -48,13 +48,14 @@ describe("stdioDaemonProxyBuilder", () => {
     ]);
   });
 
-  it("falls back to process.execPath when nodePath is an empty string", () => {
+  it("falls back to bare node when nodePath is an empty string", () => {
     // Regression: mirrors stdio-in-process. `??` would leak the empty string
-    // through as `command: ""`; `||` correctly falls back.
+    // through as `command: ""`; fallback must not leak an IDE host execPath.
     const result = stdioDaemonProxyBuilder.build(baseInput({ nodePath: "" }));
     const command = "command" in result ? result.command : null;
-    expect(command).toBe(process.execPath);
+    expect(command).toBe("node");
     expect(command).not.toBe("");
+    expect(command).not.toBe(process.execPath);
   });
 
   it("propagates chromePath into env when provided", () => {
@@ -105,7 +106,7 @@ describe("stdioDaemonProxyBuilder", () => {
 
     // The stdio proxy transport never speaks HTTP, so bearer material must be dropped.
     expect(result).toEqual({
-      command: process.execPath,
+      command: "node",
       args: ["/home/user/.perplexity-mcp/launcher.cjs"],
       env: { PERPLEXITY_HEADLESS_ONLY: "1" },
     });

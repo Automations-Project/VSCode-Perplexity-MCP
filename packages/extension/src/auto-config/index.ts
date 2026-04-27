@@ -299,12 +299,55 @@ function readTomlFile(configPath: string): string {
 }
 
 function tomlHasMcpServer(toml: string, serverName: string): boolean {
-  return toml.includes(`[mcp_servers.${serverName}]`);
+  return extractTomlMcpServerBlock(toml, serverName) !== null;
+}
+
+function extractTomlMcpServerBlock(toml: string, serverName: string): string | null {
+  const sectionHeader = `[mcp_servers.${serverName}]`;
+  const startIdx = toml.indexOf(sectionHeader);
+  if (startIdx === -1) return null;
+
+  const afterHeader = startIdx + sectionHeader.length;
+  const remaining = toml.slice(afterHeader);
+  const lines = remaining.split("\n");
+  let endOffset = remaining.length;
+  let offset = 0;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (
+      trimmed.startsWith("[") &&
+      trimmed.endsWith("]") &&
+      !trimmed.startsWith(`[mcp_servers.${serverName}.`)
+    ) {
+      endOffset = offset;
+      break;
+    }
+    offset += line.length + 1;
+  }
+
+  return remaining.slice(0, endOffset);
 }
 
 function buildTomlMcpBlock(serverName: string, serverConfig: Record<string, unknown>): string {
   const lines: string[] = [];
   lines.push(`[mcp_servers.${serverName}]`);
+
+  if (typeof serverConfig.url === "string") {
+    lines.push(`url = ${JSON.stringify(serverConfig.url)}`);
+    const bearer = extractBearerToken(serverConfig.headers);
+    const envVarName = `${serverName.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_MCP_BEARER`;
+    if (bearer) {
+      lines.push(`bearer_token_env_var = ${JSON.stringify(envVarName)}`);
+    }
+    lines.push(`enabled = true`);
+    if (bearer) {
+      lines.push("");
+      lines.push(`[mcp_servers.${serverName}.env_http_headers]`);
+      lines.push(`${envVarName} = ${JSON.stringify(bearer)}`);
+    }
+    return lines.join("\n");
+  }
+
   lines.push(`command = ${JSON.stringify(serverConfig.command)}`);
 
   const args = serverConfig.args as string[] | undefined;
@@ -324,6 +367,18 @@ function buildTomlMcpBlock(serverName: string, serverConfig: Record<string, unkn
   }
 
   return lines.join("\n");
+}
+
+function extractBearerToken(headers: unknown): string | null {
+  if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
+    return null;
+  }
+  const authorization = (headers as Record<string, unknown>).Authorization;
+  if (typeof authorization !== "string") {
+    return null;
+  }
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  return match?.[1] ?? null;
 }
 
 function mergeTomlMcpServer(
@@ -489,8 +544,8 @@ export async function applyIdeConfig(
     return { ok: false, reason: "unsupported", message, transportId };
   }
 
-  // Format gate. TOML-only clients (Codex CLI) can't ingest http transports
-  // whose builders only emit JSON { url, headers }.
+  // Format gate. Builders declare which native config formats they can emit;
+  // http-loopback supports JSON clients and Codex's streamable-HTTP TOML shape.
   const builder = getTransportBuilder(transportId);
   const configFormat = meta.configFormat;
   if (configFormat !== "json" && configFormat !== "toml") {
@@ -1034,26 +1089,23 @@ export function detectIdeStatus(
     let configured = false;
     let configuredArgs: string[] = [];
     let configuredCommand: string | undefined;
+    let configuredUrl: string | undefined;
 
     if (meta.configFormat === "toml") {
       const toml = readFileSync(configPath, "utf8");
       configured = tomlHasMcpServer(toml, serverName);
       if (configured) {
-        // Extract args from TOML: args = ["path/to/server"]
-        // NOTE: this regex (and the sibling `command` regex below) is
-        // intentionally loose — it grabs the FIRST `args = […]` / first
-        // `command = "…"` anywhere in the file, not necessarily inside the
-        // `[mcp_servers.<serverName>]` table. The two extractors mirror
-        // each other's scoping behavior so that any future hardening pass
-        // (a real TOML parse) can fix both at once. See docstring on
-        // `detectIdeStatus` and the read-only review note 0.8.x.
-        const argsMatch = toml.match(/args\s*=\s*\[([^\]]*)\]/);
+        // Extract args/command/url only from this server's TOML table. A URL
+        // transport has no command field and must not inherit another server's
+        // command when the config contains multiple MCP entries.
+        const serverBlock = extractTomlMcpServerBlock(toml, serverName) ?? "";
+        const argsMatch = serverBlock.match(/args\s*=\s*\[([^\]]*)\]/);
         if (argsMatch) {
           const argsStr = argsMatch[1];
           const argValues = [...argsStr.matchAll(/"([^"]*)"/g)].map(m => m[1]);
           configuredArgs = argValues;
         }
-        const commandMatch = toml.match(/command\s*=\s*"((?:[^"\\]|\\.)*)"/);
+        const commandMatch = serverBlock.match(/command\s*=\s*"((?:[^"\\]|\\.)*)"/);
         if (commandMatch) {
           // Unescape the simple JSON-style escapes our `buildTomlMcpBlock`
           // emits via JSON.stringify (\\, \", \n, \t etc.). `JSON.parse`
@@ -1062,6 +1114,14 @@ export function detectIdeStatus(
             configuredCommand = JSON.parse(`"${commandMatch[1]}"`) as string;
           } catch {
             configuredCommand = commandMatch[1];
+          }
+        }
+        const urlMatch = serverBlock.match(/url\s*=\s*"((?:[^"\\]|\\.)*)"/);
+        if (urlMatch) {
+          try {
+            configuredUrl = JSON.parse(`"${urlMatch[1]}"`) as string;
+          } catch {
+            configuredUrl = urlMatch[1];
           }
         }
       }
@@ -1082,6 +1142,9 @@ export function detectIdeStatus(
         if (typeof serverEntry?.command === "string") {
           configuredCommand = serverEntry.command;
         }
+        if (typeof (serverEntry as { url?: unknown } | undefined)?.url === "string") {
+          configuredUrl = (serverEntry as { url: string }).url;
+        }
       }
     }
 
@@ -1090,11 +1153,15 @@ export function detectIdeStatus(
     // warning (the runtime path is wrong). Stale wins so the doctor message
     // surfaces the higher-impact problem first.
     const health: IdeStatus["health"] = configured
-      ? checkLauncherHealth(configuredArgs)
+      ? configuredUrl
+        ? "configured"
+        : checkLauncherHealth(configuredArgs)
       : "missing";
 
     const commandHealth = configured
-      ? validateCommand(configuredCommand)
+      ? configuredUrl
+        ? undefined
+        : validateCommand(configuredCommand)
       : undefined;
 
     return {

@@ -59,6 +59,6 @@ function build(input: TransportBuildInput): McpServerEntry {
 
 export const httpLoopbackBuilder: TransportBuilder = {
   id: "http-loopback",
-  supportedFormats: ["json"] as const,
+  supportedFormats: ["json", "toml"] as const,
   build,
 };

@@ -50,7 +50,7 @@ describe("stdioInProcessBuilder", () => {
     );
     assertCommandEntry(entry);
     expect(entry).toEqual({
-      command: process.execPath,
+      command: "node",
       args: ["/home/user/.perplexity-mcp/start.mjs"],
       env: {
         PERPLEXITY_HEADLESS_ONLY: "1",
@@ -70,15 +70,16 @@ describe("stdioInProcessBuilder", () => {
     expect(entry.command).not.toBe(process.execPath);
   });
 
-  it("falls back to process.execPath when nodePath is an empty string", () => {
+  it("falls back to bare node when nodePath is an empty string", () => {
     // Regression: earlier code used `input.nodePath ?? process.execPath`,
     // which only falls back on `undefined`/`null`. An empty string would leak
     // through as `command: ""` and the IDE's MCP client would fail to spawn
-    // with an opaque error. Fix switched to `||`.
+    // with an opaque error. Fallback must not leak an IDE host execPath.
     const entry = stdioInProcessBuilder.build(makeInput({ nodePath: "" }));
     assertCommandEntry(entry);
-    expect(entry.command).toBe(process.execPath);
+    expect(entry.command).toBe("node");
     expect(entry.command).not.toBe("");
+    expect(entry.command).not.toBe(process.execPath);
   });
 
   it("adds PERPLEXITY_CHROME_PATH to env when chromePath is set", () => {

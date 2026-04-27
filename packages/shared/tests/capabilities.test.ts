@@ -84,6 +84,15 @@ describe("IDE_METADATA capabilities matrix", () => {
     }
   });
 
+  it("Codex CLI exposes http-loopback because current Codex supports streamable HTTP URLs", () => {
+    const codex = IDE_METADATA.codexCli;
+    expect(codex.configFormat).toBe("toml");
+    expect(codex.capabilities.httpBearerLoopback).toBe(true);
+    expect(codex.capabilities.evidence?.httpBearerLoopback).toBe(
+      "docs/smoke-evidence/2026-04-24-http-loopback-static-bearer.md"
+    );
+  });
+
   it("any evidence object present is non-empty (no vestigial {} entries)", () => {
     for (const [key, meta] of entries) {
       const evidence = meta.capabilities.evidence;

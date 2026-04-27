@@ -142,6 +142,32 @@ describe("detectIdeStatus — command-field validation", () => {
     expect(status.commandHealth).toBe("wrong-runtime");
   });
 
+  it("treats a TOML URL config as configured without reading another server's command", () => {
+    const root = makeTempRoot();
+    const configPath = join(root, ".codex", "config.toml");
+    mkdirSync(join(root, ".codex"), { recursive: true });
+    const toml = [
+      `[mcp_servers.other]`,
+      `command = "C:\\\\Users\\\\admin\\\\AppData\\\\Local\\\\Programs\\\\Windsurf Next\\\\Windsurf - Next.exe"`,
+      `args = ["C:\\\\other\\\\server.mjs"]`,
+      ``,
+      `[mcp_servers.Perplexity]`,
+      `url = "http://127.0.0.1:12177/mcp"`,
+      `bearer_token_env_var = "PERPLEXITY_MCP_BEARER"`,
+      ``,
+      `[mcp_servers.Perplexity.env_http_headers]`,
+      `PERPLEXITY_MCP_BEARER = "daemon-static-bearer-uuid-v4"`,
+      ``,
+    ].join("\n");
+    writeFileSync(configPath, toml);
+
+    const status = detectIdeStatus("codexCli", { configPath });
+    expect(status.configured).toBe(true);
+    expect(status.health).toBe("configured");
+    expect(status.command).toBeUndefined();
+    expect(status.commandHealth).toBeUndefined();
+  });
+
   it("returns commandHealth=undefined when the config is not configured", () => {
     const root = makeTempRoot();
     const configPath = join(root, ".cursor", "mcp.json");

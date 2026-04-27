@@ -200,9 +200,12 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     rulesPath: "AGENTS.md",
     capabilities: {
       stdio: true,
-      httpBearerLoopback: false,
+      httpBearerLoopback: true,
       httpOAuthLoopback: false,
       httpOAuthTunnel: false,
+      evidence: {
+        httpBearerLoopback: "docs/smoke-evidence/2026-04-24-http-loopback-static-bearer.md",
+      },
     },
   },
   continueDev: {

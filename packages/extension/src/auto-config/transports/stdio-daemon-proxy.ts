@@ -26,9 +26,9 @@ export const stdioDaemonProxyBuilder: TransportBuilder = {
     }
 
     return {
-      // Use logical OR (not `??`) so an empty-string nodePath also falls back
-      // to `process.execPath`. Mirrors stdio-in-process for consistency.
-      command: input.nodePath || process.execPath,
+      // Use a bare Node fallback instead of process.execPath: extension hosts
+      // often set execPath to the IDE/Electron binary, not a child-safe Node.
+      command: input.nodePath || "node",
       args: [input.launcherPath],
       env,
     };

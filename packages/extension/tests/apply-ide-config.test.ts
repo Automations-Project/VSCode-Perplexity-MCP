@@ -142,27 +142,38 @@ describe("applyIdeConfig — Phase 8.6.4 dispatch", () => {
     expect(audit[0]?.bearerKind).toBe("none");
   });
 
-  it("rejects when the config format does not match the builder's supported formats", async () => {
+  it("writes Codex CLI http-loopback as streamable HTTP TOML with bearer env header", async () => {
     const root = makeTempRoot();
     const configPath = join(root, ".codex", "config.toml");
     const { deps, audit } = makeDeps();
 
     const result = await applyIdeConfig(
       {
-        // codexCli is toml-only; http-loopback builder only supports json.
         target: "codexCli",
         serverPath: "C:/bundle/server.mjs",
         configPath,
         transportId: "http-loopback",
       },
-      deps
+      {
+        ...deps,
+        getDaemonBearer: async () => "daemon-static-bearer-uuid-v4",
+      }
     );
 
-    expect(result.ok).toBe(false);
-    if (result.ok === false) {
-      expect(result.reason).toBe("unsupported");
+    expect(result.ok).toBe(true);
+    if (result.ok === true) {
+      expect(result.bearerKind).toBe("static");
     }
-    expect(audit[0]?.resultCode).toBe("rejected-unsupported");
+    expect(audit.at(-1)?.resultCode).toBe("ok");
+
+    const toml = readFileSync(configPath, "utf8");
+    expect(toml).toContain("[mcp_servers.Perplexity]");
+    expect(toml).toContain('url = "http://127.0.0.1:12345/mcp"');
+    expect(toml).toContain('bearer_token_env_var = "PERPLEXITY_MCP_BEARER"');
+    expect(toml).toContain("[mcp_servers.Perplexity.env_http_headers]");
+    expect(toml).toContain('PERPLEXITY_MCP_BEARER = "daemon-static-bearer-uuid-v4"');
+    expect(toml).not.toContain("command =");
+    expect(toml).not.toContain("args =");
   });
 
   it("calls warnSyncFolder for http-loopback static-bearer baseline and cancels on user decline", async () => {
@@ -826,14 +837,14 @@ describe("applyIdeConfig — Phase 8.6.4 dispatch", () => {
 describe("configureTargets outcome shape — failure cases surface reason + message", () => {
   it("applyIdeConfig returns { ok: false, reason, message, transportId } when the capability gate fails", async () => {
     const root = makeTempRoot();
-    const configPath = join(root, ".codex", "config.toml");
+    const configPath = join(root, ".gemini", "settings.json");
     const { deps } = makeDeps();
-    // codexCli is TOML-only + httpBearerLoopback=false. Requesting http-loopback
-    // hits the format/capability gate — precisely what configureTargets collects
+    // Gemini CLI is stdio-only. Requesting http-loopback hits the capability
+    // gate — precisely what configureTargets collects
     // into the `outcome.results` array the extension host renders as a modal.
     const result = await applyIdeConfig(
       {
-        target: "codexCli",
+        target: "geminiCli",
         serverPath: "C:/bundle/server.mjs",
         configPath,
         transportId: "http-loopback",

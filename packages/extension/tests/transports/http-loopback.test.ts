@@ -19,8 +19,8 @@ describe("httpLoopbackBuilder — identity", () => {
     expect(httpLoopbackBuilder.id).toBe("http-loopback");
   });
 
-  it("supports only the json format", () => {
-    expect(httpLoopbackBuilder.supportedFormats).toEqual(["json"]);
+  it("supports json and toml formats", () => {
+    expect(httpLoopbackBuilder.supportedFormats).toEqual(["json", "toml"]);
   });
 });
 

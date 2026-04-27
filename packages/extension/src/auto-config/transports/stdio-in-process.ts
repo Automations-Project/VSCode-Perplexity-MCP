@@ -40,11 +40,9 @@ export const stdioInProcessBuilder: TransportBuilder = {
     }
 
     return {
-      // Use logical OR (not `??`) so an empty-string nodePath also falls back
-      // to `process.execPath`. A caller that passes `nodePath: ""` would
-      // otherwise produce `command: ""`, which the IDE's MCP client spawns
-      // with an opaque error.
-      command: input.nodePath || process.execPath,
+      // Use a bare Node fallback instead of process.execPath: extension hosts
+      // often set execPath to the IDE/Electron binary, not a child-safe Node.
+      command: input.nodePath || "node",
       args: [input.launcherPath],
       env,
     };
