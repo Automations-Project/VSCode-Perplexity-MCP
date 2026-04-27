@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   mkdtempSync,
+  mkdirSync,
   rmSync,
   writeFileSync,
   readFileSync,
@@ -86,5 +87,21 @@ describe("safeAtomicWriteFileSync", () => {
     }
     expect(caught).toBeDefined();
     expect(caught.code).toMatch(/ENOTDIR|EISDIR|EACCES|ENOENT/);
+  });
+
+  it("cleans up the .tmp file when renameSync fails (target is an existing directory)", () => {
+    // writeFileSync(tmp) succeeds, but renameSync(tmp, target) must fail because
+    // target is a directory — you cannot rename a regular file onto a directory
+    // on either Windows (EPERM/EISDIR/EEXIST) or POSIX (EISDIR/ENOTEMPTY).
+    const target = join(TMP, "is-a-dir");
+    mkdirSync(target);
+
+    expect(() => safeAtomicWriteFileSync(target, "data")).toThrow();
+
+    // The original target (the directory) must still exist and still be a dir.
+    expect(existsSync(target)).toBe(true);
+    expect(statSync(target).isDirectory()).toBe(true);
+    // The .tmp staging file must have been cleaned up by the helper.
+    expect(existsSync(`${target}.tmp`)).toBe(false);
   });
 });
