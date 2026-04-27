@@ -60,14 +60,11 @@ const SUPPORTED_NGROK_VARIANTS = [
  * Explicit source map for daemon runtime deps. We resolve these from
  * `packages/mcp-server/node_modules` FIRST, then fall back to the repo root.
  *
- * Why: @modelcontextprotocol/sdk hoists `express@5.x` to the repo-root
- * node_modules, but the bundled MCP server code (daemon/server.ts etc.) is
- * written against express 4.x route/error-handler semantics and `req.path`
- * behaviour. A blind repo-root-first resolution (the 0.8.5 behaviour) ships
- * express 5 in the VSIX and breaks the daemon on end-user machines. Same
- * risk exists for any dep shared between mcp-server and the SDK's transitive
- * graph (got, helmet, keytar, …), so we funnel all daemon-runtime deps
- * through the mcp-server workspace first.
+ * Why: keep all daemon-runtime deps resolving from the mcp-server workspace
+ * first so the version mcp-server pins wins over any hoisted repo-root copy
+ * (got, helmet, keytar, express, …). Daemon code is written against and
+ * tested with the express version mcp-server pins; shipping a different
+ * major from the VSIX would silently break the daemon on end-user machines.
  */
 const rootPackages = [
   { name: "patchright", preferMcpServer: true },
@@ -400,10 +397,10 @@ for (const { name: variantName } of SUPPORTED_NGROK_VARIANTS) {
   fetchVariantViaNpmPack(variantName, version);
 }
 
-// Programmatic assertion: the bundled daemon code is written against express 4
-// (route signatures, 4-arity error handlers, req.path semantics). If the
-// hoist-order in the workspace ever changes and express 5 slips into the VSIX,
-// the daemon will fail at runtime on end-user machines. Fail the build here.
+// Programmatic assertion: the bundled daemon expects the express major
+// declared by packages/mcp-server/package.json. If the hoist-order in the
+// workspace ever changes and a different major slips into the VSIX, the
+// daemon will fail at runtime on end-user machines. Fail the build here.
 const expressManifestPath = join(extensionNodeModules, "express", "package.json");
 if (!existsSync(expressManifestPath)) {
   throw new Error(
@@ -411,14 +408,25 @@ if (!existsSync(expressManifestPath)) {
       `Expected express to be copied into dist/node_modules. Check rootPackages in this file.`
   );
 }
+const mcpServerManifest = JSON.parse(
+  readFileSync(join(mcpServerRoot, "package.json"), "utf8"),
+);
+const expectedExpressRange = mcpServerManifest.dependencies?.express ?? "";
+const expectedExpressMajor = expectedExpressRange.replace(/^[\^~>=<\s]+/, "").split(".")[0];
 const expressVersion = JSON.parse(readFileSync(expressManifestPath, "utf8")).version ?? "";
 const expressMajor = expressVersion.split(".")[0];
-if (expressMajor !== "4") {
+if (!expectedExpressMajor) {
   throw new Error(
-    `[prepare-package-deps] express major version mismatch: got ${expressVersion}, expected ^4. ` +
-      `The bundled MCP daemon is written against express 4.x semantics. ` +
+    `[prepare-package-deps] could not parse express dependency from ${join(mcpServerRoot, "package.json")}. ` +
+      `Expected packages/mcp-server/package.json to declare "express" in dependencies.`
+  );
+}
+if (expressMajor !== expectedExpressMajor) {
+  throw new Error(
+    `[prepare-package-deps] express major version mismatch: got ${expressVersion}, expected ^${expectedExpressMajor}. ` +
+      `The bundled MCP daemon is pinned to the version declared in packages/mcp-server/package.json. ` +
       `Check rootPackages resolution order in ${fileURLToPath(import.meta.url)} — ` +
-      `express must resolve from packages/mcp-server/node_modules, not the repo root (SDK hoists express 5).`
+      `express must resolve from packages/mcp-server/node_modules, not the repo root.`
   );
 }
 console.log(`[prepare-package-deps] express ${expressVersion} OK`);
