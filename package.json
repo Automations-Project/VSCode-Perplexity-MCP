@@ -2,7 +2,7 @@
   "name": "perplexity-mcp-workspace",
   "version": "1.0.0",
   "private": true,
-  "description": "Perplexity Internal MCP workspace with a native VS Code extension, embedded MCP server, and React webview UI",
+  "description": "Perplexity MCP workspace with a native VS Code extension, embedded MCP server, and React webview UI",
   "workspaces": [
     "packages/shared",
     "packages/mcp-server",
@@ -17,12 +17,6 @@
     "dev:webview": "npm run build -w @perplexity-user-mcp/shared && npm run dev -w @perplexity-user-mcp/webview",
     "dev:extension": "npm run build -w @perplexity-user-mcp/shared && npm run watch -w perplexity-vscode",
     "package:vsix": "npm run bump && npm run package:vsix -w perplexity-vscode",
-    "capture": "node packages/mcp-server/dev-tools/capture.js",
-    "capture:mutations": "node packages/mcp-server/dev-tools/capture.js --mutations-only",
-    "capture:all": "node packages/mcp-server/dev-tools/capture.js --all",
-    "capture:cdp": "node packages/mcp-server/dev-tools/capture.js --cdp",
-    "capture:cdp:mutations": "node packages/mcp-server/dev-tools/capture.js --cdp --mutations-only",
-    "analyze": "node packages/mcp-server/dev-tools/analyze.js",
     "test:coverage": "npm run build -w @perplexity-user-mcp/shared && vitest run --coverage",
     "bump": "node scripts/bump-version.mjs",
     "bump:dry": "node scripts/bump-version.mjs --dry-run"

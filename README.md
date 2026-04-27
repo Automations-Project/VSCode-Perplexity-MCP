@@ -2,7 +2,7 @@
 
 A monorepo that ships a Perplexity MCP server two ways:
 
-- **`perplexity-vscode`** — a native VS Code extension (currently **0.8.10**, see [CHANGELOG.md](CHANGELOG.md)) with an embedded daemon, webview dashboard, and auto-config for 15+ MCP-capable IDEs.
+- **`perplexity-vscode`** — a native VS Code extension (currently **0.8.12**, see [CHANGELOG.md](CHANGELOG.md)) with an embedded daemon, webview dashboard, and auto-config for 15+ MCP-capable IDEs.
 - **`perplexity-user-mcp`** — the same server as a standalone npm package, for Cursor, Claude Desktop, Claude Code, Windsurf, Cline, Amp, Codex CLI, and anything else that speaks MCP over stdio.
 
 Both wrap a long-lived patchright browser session against your existing Perplexity account, so the MCP tools consume your logged-in plan (Pro, Max, etc.) rather than a paid API key.
@@ -49,14 +49,6 @@ npm run dev:extension  # tsup --watch on the extension
 npm run clean          # rm dist + media/webview across packages
 ```
 
-Capture / analyze helpers for recording Perplexity's network protocol (used when extending the client):
-
-```bash
-npm run capture        # patchright-based capture (default)
-npm run capture:cdp    # Chrome DevTools Protocol variant
-npm run analyze        # post-process captures into docs
-```
-
 Single-test runs use `vitest` directly from the root — [vitest.config.ts](vitest.config.ts) globs all three test roots:
 
 ```bash
@@ -82,13 +74,13 @@ A few things that take more than a single file to see:
 
 ## Contributing
 
-This is a **pre-public repo** — the conventions below reflect that and will tighten once the public remote is set up.
+Contributions are welcome! Please follow these conventions:
 
-- **Commit directly to `main`.** No feature branches, no PRs against this repo yet. `main` is the default and (by intent) protected branch.
-- **VSIX smoke-test before tagging.** Every versioned release must pass the manual checklists in [docs/smoke-tests.md](docs/smoke-tests.md) on Windows 11, macOS 14+, and Ubuntu 22+ before being tagged. Integration tests alone don't catch login / packaging bugs — skipping smoke has already caused regressions that made it to a shipped VSIX.
-- **Version `packages/extension` and `packages/mcp-server` together.** They share a version (both are currently `0.8.10`). When bumping, update both `package.json` files and add a [CHANGELOG.md](CHANGELOG.md) entry. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and SemVer — see the 0.8.x entries for the expected level of rationale (Added / Changed / Security / Tests / Release gate).
+- **Branch from `main` and open a PR.** `main` is the default and protected branch.
+- **VSIX smoke-test before tagging.** Every versioned release must pass the manual checklists in [docs/smoke-tests.md](docs/smoke-tests.md) on Windows 11, macOS 14+, and Ubuntu 22+ before being tagged. Integration tests alone don't catch login / packaging bugs.
+- **Version `packages/extension` and `packages/mcp-server` together.** They share a version (both are currently `0.8.12`). When bumping, update both `package.json` files and add a [CHANGELOG.md](CHANGELOG.md) entry. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and SemVer — see the 0.8.x entries for the expected level of rationale.
 - **Windows-first shell.** Prefer forward slashes and `/dev/null` in examples rather than `\` and `NUL`.
-- **Don't touch auto-managed blocks.** Files like [CLAUDE.md](CLAUDE.md) contain a block between `PERPLEXITY-MCP-START` / `PERPLEXITY-MCP-END` that the extension regenerates; edit the hand-written sections above it instead.
+- **Don't touch auto-managed blocks.** Files like `CLAUDE.md` contain a block between `PERPLEXITY-MCP-START` / `PERPLEXITY-MCP-END` that the extension regenerates; edit the hand-written sections above it instead.
 
 ## Release process
 
@@ -96,4 +88,4 @@ A separate walkthrough of the tag / smoke / publish flow lives in [docs/release-
 
 ## License
 
-The repository is licensed under the **MIT License** — see [LICENSE](LICENSE). Note that [packages/extension/package.json](packages/extension/package.json) currently declares `"license": "UNLICENSED"` because the extension isn't published to the VS Code Marketplace yet; the intent is to align it with the repository's MIT license when the extension goes public. The `perplexity-user-mcp` npm package follows the repository license.
+The repository is licensed under the **MIT License** — see [LICENSE](LICENSE).

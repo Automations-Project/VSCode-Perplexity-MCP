@@ -1,6 +1,6 @@
 # Release process
 
-The gate between "code is merged on main" and "`vX.Y.Z` tag exists". Pre-public repo, direct-to-main applies; once the public remote is set up this flips to PR-based.
+The gate between "code is merged on main" and "`vX.Y.Z` tag exists".
 
 ## Prerequisites — all must be true before starting
 
@@ -84,9 +84,7 @@ git push origin main
 git push origin vX.Y.Z
 ```
 
-Pre-public repo: direct-to-main, no PR, no review gate beyond the owner's own smoke + CHANGELOG + evidence files.
-
-Once the public remote is configured, this flips: feature branches + PRs + squash-merge, with the release commit + tag driven from the PR landing.
+Standard workflow: feature branches + PRs + squash-merge, with the release commit + tag driven from the PR landing.
 
 ## Post-release
 

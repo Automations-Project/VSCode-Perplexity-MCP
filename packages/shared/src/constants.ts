@@ -1,6 +1,6 @@
 export const EXTENSION_ID = "Perplexity";
 export const MCP_PROVIDER_ID = "Perplexity.server";
-export const MCP_SERVER_LABEL = "Perplexity Internal MCP";
+export const MCP_SERVER_LABEL = "Perplexity MCP";
 
 export const MCP_TOOL_NAMES = [
   "perplexity_search",

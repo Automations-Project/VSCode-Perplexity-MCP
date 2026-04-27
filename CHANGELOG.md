@@ -6,6 +6,34 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.12] — 2026-04-27 — Open-source readiness + vault v2 + responsive webview
+
+### Added
+- **HTTP-loopback transport for Codex CLI** with TOML bearer env headers in auto-config.
+- **Vault v2 (salted format).** Passphrase-based vaults now use per-vault random salts for PBKDF2 key derivation; existing v1 vaults are migrated transparently on first unlock.
+
+### Fixed
+- **Browser Runtime card now populates on initial dashboard load.** `DashboardProvider.refresh()` was missing the `postAuthState()` call, so the BrowserSettings card stayed empty until an auth-state change event fired.
+- **History tab cards resize with the sidebar** instead of clipping. Added `min-width: 0` to grid items, `overflow-wrap: anywhere` to text content, and constrained markdown code blocks to scroll within cards.
+- **Pro tier inferred from ASI computer access** when Perplexity omits explicit tier data in login metadata.
+- **Doctor now flags `code-insiders` command paths** and warns on non-node stdio command paths in IDE config audits.
+- **Resolved node path passed to stdio config writers** and stale config regen to prevent path-mismatch issues.
+- **Express alignment with SDK.** Daemon express setup aligned with `@modelcontextprotocol/sdk` internal expectations.
+- **ASI workflow blocks** typed via discriminated union (refactor, no behavior change).
+
+### Changed
+- `packages/mcp-server` + `packages/extension` bump to `0.8.12`.
+- Extension license aligned to MIT; publisher set to `Automations-Project`; "Internal" removed from display name and descriptions.
+- NOTICE expanded to cover all significant runtime dependencies.
+- README updated for public contributing workflow (PRs welcome, branch from main).
+
+### Tests
+- `audit-log-path`, `oauth-rate-limit`, `security-helpers` daemon tests.
+- `login-tier-end-to-end` integration test for tier-inference fix.
+- `vault.test.js` covers v1→v2 migration and salted-format round-trip.
+- `validate-command`, `detect-ide-status-command`, `configure-targets-node-path` extension tests.
+- `capabilities.test.ts` in shared package.
+
 ## [0.8.10] — 2026-04-26 — Hygiene cycle: Obscura revert + safe-write + page.evaluate + Windows CI + Express 5 alignment
 
 > **Versioning note:** 0.8.6–0.8.9 were local pre-release iterations and were never tagged or published. The cumulative work was rolled into 0.8.10.
@@ -15,7 +43,7 @@ Broadens browser support from "Chrome or bundled Chromium, Windows/Linux-centric
 ### Added
 - **Brave Browser detection** on Windows, macOS, and Linux. Treated as `channel: 'chromium'` with an explicit `executablePath`, which is how Patchright handles Chromium forks natively. Wired into both [mcp-server/config.ts::findBrowser](packages/mcp-server/src/config.ts) and the new [extension/browser/browser-detect.ts](packages/extension/src/browser/browser-detect.ts).
 - **Microsoft Edge on macOS.** Previously only probed on Windows and Linux; the macOS `/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge` path is now in the candidate list.
-- **`BrowserDownloadManager`** at [packages/extension/src/browser/browser-download.ts](packages/extension/src/browser/browser-download.ts). Ported from the Airtable-Formula extension's proven pattern: drives `patchright-core install chromium` with `PLAYWRIGHT_BROWSERS_PATH` pointed at VS Code's per-extension globalStorage, parses progress from stderr, fires `onDidChange` events the dashboard can consume, supports clean removal, and SIGKILL-escalates on timeout so Windows never leaks a stuck download process.
+- **`BrowserDownloadManager`** at [packages/extension/src/browser/browser-download.ts](packages/extension/src/browser/browser-download.ts). Drives `patchright-core install chromium` with `PLAYWRIGHT_BROWSERS_PATH` pointed at VS Code's per-extension globalStorage, parses progress from stderr, fires `onDidChange` events the dashboard can consume, supports clean removal, and SIGKILL-escalates on timeout so Windows never leaks a stuck download process.
 - **Two new `PERPLEXITY_*` env vars** read by [mcp-server/config.ts](packages/mcp-server/src/config.ts):
   - `PERPLEXITY_BROWSER_PATH` — absolute path to any browser executable (supersedes legacy `PERPLEXITY_CHROME_PATH`, which still works).
   - `PERPLEXITY_BROWSER_CHANNEL` — `chrome` / `msedge` / `chromium`.
@@ -43,10 +71,10 @@ Broadens browser support from "Chrome or bundled Chromium, Windows/Linux-centric
 - **`getClient()` init-rejection retry** in [packages/mcp-server/src/daemon/server.ts](packages/mcp-server/src/daemon/server.ts). When a cached client's `init()` promise rejects, the cache is now invalidated so the next `getClient()` call constructs a fresh client instead of returning the rejected promise forever.
 
 ### Removed
-- **Obscura runtime support** (briefly attempted on this branch). The h4ckf0r0day/obscura CDP server didn't expose the `Target.createTarget` / frame-attachment domains Patchright relies on, so the connect-over-CDP path could never bootstrap a usable session against it. All Obscura plumbing — `ObscuraManager`, `connectOverCDP` branches in client.ts / refresh.ts / health-check.js, the `obscura` channel in `BrowserChannel`, the `PERPLEXITY_OBSCURA_ENDPOINT` env var, and the `obscura` browser-icon — was ripped out. The migration shim that downgraded a saved `browserChoice.channel === "obscura"` to `mode: "auto"` was also removed since the repo is pre-public and no released build ever shipped that channel.
+- **Obscura runtime support** (briefly attempted on this branch). The h4ckf0r0day/obscura CDP server didn't expose the `Target.createTarget` / frame-attachment domains Patchright relies on, so the connect-over-CDP path could never bootstrap a usable session against it. All Obscura plumbing — `ObscuraManager`, `connectOverCDP` branches in client.ts / refresh.ts / health-check.js, the `obscura` channel in `BrowserChannel`, the `PERPLEXITY_OBSCURA_ENDPOINT` env var, and the `obscura` browser-icon — was ripped out. The migration shim that downgraded a saved `browserChoice.channel === "obscura"` to `mode: "auto"` was also removed since no released build ever shipped that channel.
 
 ### Tests
-- New browser-detect / download-manager modules ship without dedicated tests in this commit — they're behavior-equivalent ports from the Airtable-Formula extension and gated on env vars the current tests don't set, so nothing breaks. Follow-up work: unit tests for `AuthManager.resolveBrowserEnv` (table-driven).
+- New browser-detect / download-manager modules ship without dedicated tests in this commit. Follow-up work: unit tests for `AuthManager.resolveBrowserEnv` (table-driven).
 - **`safe-write.test.js`** covers happy path, write-failure cleanup, AND a new rename-failure case where `writeFileSync(tmp)` succeeds but `renameSync(tmp, target)` fails because target is an existing directory — asserts the original target is preserved and the `.tmp` staging file is cleaned up.
 - **`fs-utils.test.js`** covers `clearStaleSingletonLocks` happy / partial / missing-dir paths.
 - **`getClient-retry.test.js`** in `packages/mcp-server/test/daemon/` covers the init-rejection re-creation path — first `getClient()` gets a rejected client, second call returns a fresh one.
@@ -64,8 +92,6 @@ Broadens browser support from "Chrome or bundled Chromium, Windows/Linux-centric
 - Typecheck: green across all 4 packages.
 - Full suite: **109 files / 942 pass + 2 skip** (no failures); per-file coverage thresholds clear after `recordLoginSuccess` coverage was restored.
 - `npm audit --audit-level=high`: exit 0 (5 moderate remain in the postcss + uuid-via-vsce chain, out of scope).
-- Manual smoke: **deferred — no public remote yet.**
-- Browser picker UI in the dashboard: deferred to a follow-up release. Env-var plumbing is complete, but the webview still has no picker component — Brave selection works through env vars today.
 
 ## [0.8.5] — 2026-04-24 — UX polish: auto-regen + tunnel switching safety + perf dashboard + loopback-default
 
@@ -101,7 +127,6 @@ v0.8.4's smoke surfaced three UX gaps and two user-preference shifts: staleness 
 - Typecheck: green across all 4 packages.
 - Full suite: 805 passed / 94 files.
 - Secret-leak gate: clean on `.test-artifacts/vitest.log`.
-- Manual smoke against this release: deferred to owner's re-smoke. If regressions surface they ship as v0.8.6.
 
 ## [0.8.4] — 2026-04-24 — Phase 8.6 hotfix: picker actually works
 
@@ -131,7 +156,6 @@ v0.8.3 shipped the transport picker UI + dispatcher but the wire between the two
 - Typecheck: green across all 4 packages.
 - Full suite: 742 passed / 86 files.
 - Secret-leak gate: clean on `.test-artifacts/vitest.log`.
-- Manual smoke: **consolidated final-smoke pass still pending against this VSIX.** If this release's smoke surfaces further regressions, they ship as `v0.8.5` patch commits (same pattern as v0.6.0 → v0.6.1).
 
 ## [0.8.3] — 2026-04-24 — Phase 8.6: MCP transport picker
 
@@ -166,7 +190,6 @@ Per-IDE choice between four MCP transports — `stdio-in-process`, `stdio-daemon
 - Typecheck: green across all 4 packages.
 - Full suite: 705 passed / 83 files.
 - Secret-leak gate: clean on `.test-artifacts/vitest.log`.
-- Manual smoke: **DEFERRED to the consolidated final-smoke pass** immediately after this release, per execution strategy `docs/superpowers/specs/2026-04-24-phase-8-completion-execution-design.md`. Phase 8.6 closes Phase 8 completeness.
 
 ## [0.8.2] — 2026-04-24 — Phase 8.5: unified diagnostics + legacy debug cleanup
 
@@ -194,7 +217,6 @@ Per-IDE choice between four MCP transports — `stdio-in-process`, `stdio-daemon
 ### Release gate
 - Typecheck: green across all 4 packages.
 - Full suite: 581 passed / 71 files.
-- Manual smoke: **DEFERRED to the consolidated final-smoke pass** after `v0.8.3` (per execution strategy `docs/superpowers/specs/2026-04-24-phase-8-completion-execution-design.md`).
 
 ## [0.8.1] — 2026-04-24 — Phase 8.4: cloudflared named-tunnel provider
 
@@ -217,7 +239,6 @@ Per-IDE choice between four MCP transports — `stdio-in-process`, `stdio-daemon
 ### Release gate
 - Typecheck: green across all 4 packages.
 - Full suite: 539 passed / 65 files (32.88s).
-- Manual smoke: **DEFERRED to consolidated final-smoke pass** after `v0.8.3` (per execution strategy `docs/superpowers/specs/2026-04-24-phase-8-completion-execution-design.md`). Phase 8.4 smoke checklist pre-seeded at `docs/smoke-tests.md` § Phase 8.4 (cf-named provider).
 
 ## [0.8.0] — 2026-04-23 — Phase 8.3: stdio launcher → daemon-proxy
 
@@ -238,7 +259,6 @@ Per-IDE choice between four MCP transports — `stdio-in-process`, `stdio-daemon
 - Typecheck: green across all 4 packages.
 - Full suite: 433 passed / 60 files.
 - VSIX: `packages/extension/perplexity-vscode-0.8.0.vsix`, ~11.7 MB (12,252,644 bytes), 3419 files. `grep -c "attachToDaemon" dist/mcp/server.mjs` = 2 (confirms the re-export reached the bundle).
-- **Manual 3-client smoke: waived by owner due to time constraints.** Release proceeds on automated gates + rebuilt VSIX + checklist documentation in `docs/smoke-tests.md` only. The Phase 8.3 smoke checklist is tracked at `docs/smoke-tests.md` § Phase 8.3; a pre-seeded evidence stub lives locally at `docs/smoke-evidence/2026-04-23-phase-8-3-3-client-smoke.md` (git-ignored per repo policy).
 
 ## [0.7.4] — 2026-04-23 — Phase 8.2: security hardening + authorized clients panel
 
@@ -596,7 +616,7 @@ Per-IDE choice between four MCP transports — `stdio-in-process`, `stdio-daemon
 - `keytar` as optional runtime dependency
 
 ### Changed
-- Package renamed from `airtable-user-mcp` to `perplexity-user-mcp`
+- Initial release as `perplexity-user-mcp`.
 - License: UNLICENSED → MIT
 - `packages/mcp-server/package.json` `bin` now points at `cli.mjs`
 

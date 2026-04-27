@@ -45,7 +45,6 @@
 !packages/mcp-server/tsconfig.json
 !packages/mcp-server/tsup.config.ts
 !packages/mcp-server/README.md
-!packages/mcp-server/dev-tools/
 
 !packages/webview/
 !packages/webview/**
@@ -62,8 +61,6 @@
 *.debug.json
 **/PLAN.md
 .env*
-packages/mcp-server/dev-tools/*
-!packages/mcp-server/dev-tools/capture.js
 packages/extension/media/webview/
 packages/extension/dist/node_modules/
 docs

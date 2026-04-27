@@ -374,7 +374,7 @@ async function maybePromptAutoConfiguration(
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  outputChannel = vscode.window.createOutputChannel("Perplexity Internal MCP");
+  outputChannel = vscode.window.createOutputChannel("Perplexity MCP");
   outputBuffer = new OutputRingBuffer(5000);
   context.subscriptions.push(outputChannel);
   // v0.8.5: one-time migration. Users with a pre-existing tunnel-settings.json

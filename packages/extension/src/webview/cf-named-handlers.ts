@@ -44,7 +44,7 @@ export interface CfNamedDeps {
   /**
    * Optional debug trace sink. Production wires this to the extension's
    * `debug()` output channel so each step of the cf-named flow is visible in
-   * the Perplexity Internal MCP log — critical for diagnosing why a login
+   * the Perplexity MCP log — critical for diagnosing why a login
    * call stalls (pre-modal vs mid-modal vs mid-spawn). Tests omit this.
    */
   log?: (message: string) => void;

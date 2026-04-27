@@ -1,11 +1,11 @@
 {
   "name": "perplexity-vscode",
-  "displayName": "Perplexity Internal MCP",
-  "version": "0.8.11",
-  "publisher": "private",
+  "displayName": "Perplexity MCP",
+  "version": "0.8.12",
+  "publisher": "Automations-Project",
   "private": true,
-  "description": "Native VS Code extension for the Perplexity Internal MCP server with dashboard, auth, and multi-IDE config generation",
-  "license": "UNLICENSED",
+  "description": "Native VS Code extension for the Perplexity MCP server with dashboard, auth, and multi-IDE config generation",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.100.0"
   },
@@ -201,7 +201,7 @@
       ]
     },
     "configuration": {
-      "title": "Perplexity Internal MCP",
+      "title": "Perplexity MCP",
       "properties": {
         "Perplexity.defaultSearchModel": {
           "type": "string",
@@ -262,7 +262,7 @@
         "Perplexity.debugMode": {
           "type": "boolean",
           "default": false,
-          "description": "Enable verbose debug logging in the Perplexity Internal MCP output channel."
+          "description": "Enable verbose debug logging in the Perplexity MCP output channel."
         },
         "Perplexity.autoConfigureCursor": {
           "type": "boolean",
@@ -367,7 +367,7 @@
     "mcpServerDefinitionProviders": [
       {
         "id": "Perplexity.server",
-        "label": "Perplexity Internal MCP"
+        "label": "Perplexity MCP"
       }
     ]
   },

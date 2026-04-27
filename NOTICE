@@ -1,5 +1,5 @@
 perplexity-user-mcp
-Copyright (c) 2026 A.R. and contributors
+Copyright (c) 2026 Nskha and contributors
 
 This product includes software developed as derivative / optional
 dependencies of the following third-party projects:
@@ -8,10 +8,34 @@ dependencies of the following third-party projects:
    https://github.com/Kaliiiiiiiiii-Vinyzu/patchright
    Used for stealth browser automation against Perplexity's web frontend.
 
-2. otpauth (MIT License)
+2. @modelcontextprotocol/sdk (MIT License)
+   https://github.com/modelcontextprotocol/typescript-sdk
+   MCP protocol implementation — server, auth, and transport layers.
+
+3. express (MIT License)
+   https://github.com/expressjs/express
+   HTTP framework for the embedded daemon server.
+
+4. got-scraping (MIT License)
+   https://github.com/apify/got-scraping
+   HTTP client with TLS fingerprint impersonation for the fast-path tier.
+
+5. @ngrok/ngrok (MIT / Apache-2.0)
+   https://github.com/ngrok/ngrok-javascript
+   Optional — NAPI tunnel binding for remote MCP access via ngrok.
+
+6. helmet (MIT License)
+   https://github.com/helmetjs/helmet
+   Security headers middleware for the daemon HTTP surface.
+
+7. gray-matter (MIT License)
+   https://github.com/jonschlinkert/gray-matter
+   YAML frontmatter parser for the Markdown history store.
+
+8. otpauth (MIT License)
    https://github.com/hectorm/otpauth
    Optional — used when a profile needs TOTP-style secondary auth.
 
-3. keytar (MIT License)
+9. keytar (MIT License)
    https://github.com/atom/node-keytar
    Optional — used for storing the vault master key in the OS keychain.

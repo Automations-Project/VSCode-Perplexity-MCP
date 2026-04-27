@@ -221,7 +221,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
     } catch (err) {
       const msg = err instanceof Error ? err.stack ?? err.message : String(err);
       log(`resolveWebviewView ERROR: ${msg}`);
-      webviewView.webview.html = `<!DOCTYPE html><html><body style="padding:16px;font-family:sans-serif;color:#f8fafc;background:#0f172a"><h2>Perplexity Dashboard Error</h2><pre style="white-space:pre-wrap;color:#fca5a5">${msg.replace(/</g, "&lt;")}</pre><p>Check Output &gt; Perplexity Internal MCP for details.</p></body></html>`;
+      webviewView.webview.html = `<!DOCTYPE html><html><body style="padding:16px;font-family:sans-serif;color:#f8fafc;background:#0f172a"><h2>Perplexity Dashboard Error</h2><pre style="white-space:pre-wrap;color:#fca5a5">${msg.replace(/</g, "&lt;")}</pre><p>Check Output &gt; Perplexity MCP for details.</p></body></html>`;
     }
 
     const disposeHook = (webviewView as vscode.WebviewView & { onDidDispose?: (listener: () => void) => vscode.Disposable }).onDidDispose?.(() => {

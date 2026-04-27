@@ -1184,7 +1184,7 @@ export function SettingsView({
             onChange={(v) => send({ type: "settings:update", payload: { debugMode: v } })}
           />
           <div className="settings-debug-note">
-            Enable verbose logging in Output → Perplexity Internal MCP.
+            Enable verbose logging in Output → Perplexity MCP.
           </div>
         </div>
       </div>
