@@ -1260,23 +1260,48 @@ export function removeTarget(target: IdeTarget): void {
   removeIdeConfig(target);
 }
 
-function getPerplexityRulesContent(): string {
+/**
+ * Hardcoded tool catalog used to render the auto-managed `PERPLEXITY-MCP-START`
+ * block in CLAUDE.md / AGENTS.md / GEMINI.md and the per-IDE rules files.
+ *
+ * Source-of-truth for the actual MCP runtime is
+ * [packages/mcp-server/src/tools.ts](../../../mcp-server/src/tools.ts) — every
+ * `if (!enabledTools || enabledTools.has("perplexity_<name>"))` branch there
+ * MUST appear in this list, otherwise the rules block downstream agents read
+ * goes stale and they call tools they think don't exist (or skip ones that do).
+ *
+ * If you add or remove a tool in `tools.ts`, update this list in the same PR.
+ * The completeness is enforced by `auto-config.tool-catalog.test.ts`, which
+ * imports the source-of-truth tool names and fails if any are missing here.
+ */
+export const PERPLEXITY_TOOL_CATALOG: ReadonlyArray<{ name: string; summary: string }> = [
+  { name: "perplexity_search", summary: "Fast web search with source citations. Use for quick factual lookups. Works with or without authentication." },
+  { name: "perplexity_reason", summary: "Step-by-step reasoning with web context. Requires Pro account." },
+  { name: "perplexity_research", summary: "Deep multi-section research reports (30-120s). Requires Pro account." },
+  { name: "perplexity_ask", summary: "Flexible queries with explicit model/mode/follow-up control." },
+  { name: "perplexity_compute", summary: "ASI/Computer mode for complex multi-step tasks. Requires Max account." },
+  { name: "perplexity_models", summary: "List available models, account tier, and rate limits." },
+  { name: "perplexity_retrieve", summary: "Poll results from pending research/compute tasks." },
+  { name: "perplexity_export", summary: "Export a saved history entry as PDF, markdown, or DOCX. Uses Perplexity's native export when available." },
+  { name: "perplexity_sync_cloud", summary: "Sync Perplexity cloud history into the local history store." },
+  { name: "perplexity_hydrate_cloud_entry", summary: "Hydrate a single cloud-backed history entry by id." },
+  { name: "perplexity_list_researches", summary: "List saved research history with status." },
+  { name: "perplexity_get_research", summary: "Fetch full content of a saved research." },
+  { name: "perplexity_login", summary: "Open browser for Perplexity authentication." },
+  { name: "perplexity_doctor", summary: "Run diagnostic checks against your Perplexity MCP install. Returns a Markdown report; pass probe:true for a live search probe." },
+];
+
+export function getPerplexityRulesContent(): string {
+  const toolLines = PERPLEXITY_TOOL_CATALOG.map(
+    ({ name, summary }) => `- **${name}** — ${summary}`,
+  );
   return [
     PERPLEXITY_RULES_SECTION_START,
     "# Perplexity MCP Server",
     "",
     "## Available Tools",
     "",
-    "- **perplexity_search** — Fast web search with source citations. Use for quick factual lookups. Works with or without authentication.",
-    "- **perplexity_reason** — Step-by-step reasoning with web context. Requires Pro account.",
-    "- **perplexity_research** — Deep multi-section research reports (30-120s). Requires Pro account.",
-    "- **perplexity_ask** — Flexible queries with explicit model/mode/follow-up control.",
-    "- **perplexity_compute** — ASI/Computer mode for complex multi-step tasks. Requires Max account.",
-    "- **perplexity_models** — List available models, account tier, and rate limits.",
-    "- **perplexity_retrieve** — Poll results from pending research/compute tasks.",
-    "- **perplexity_list_researches** — List saved research history with status.",
-    "- **perplexity_get_research** — Fetch full content of a saved research.",
-    "- **perplexity_login** — Open browser for Perplexity authentication.",
+    ...toolLines,
     "",
     "## Usage Guidelines",
     "",
