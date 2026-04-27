@@ -235,9 +235,12 @@ export async function getUnsealMaterial() {
   // 4. Fail-fast.
   throw new Error(
     "Vault locked: no keychain, no env var, no TTY. " +
-    "Install OS keychain (libsecret on Linux) or set " +
-    "PERPLEXITY_VAULT_PASSPHRASE in your IDE's MCP config. " +
-    "See https://github.com/<OWNER>/perplexity-user-mcp/blob/main/docs/vault-unseal.md"
+    "Three unseal paths on Linux/headless: " +
+    "(a) install an OS keychain (libsecret + gnome-keyring) so the MCP process can read it, " +
+    "(b) set PERPLEXITY_VAULT_PASSPHRASE in your IDE's MCP server env block, or " +
+    "(c) run the VS Code extension's daemon and connect over HTTP transport instead of stdio. " +
+    "Codex CLI setup: docs/codex-cli-setup.md. " +
+    "Generic vault-unseal docs: docs/vault-unseal.md."
   );
 }
 
