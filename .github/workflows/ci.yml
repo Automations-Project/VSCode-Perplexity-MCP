@@ -69,15 +69,19 @@ jobs:
           cd packages/extension
           npm run prepare:package-deps || true
           npx @vscode/vsce ls --no-dependencies 2>&1 | tee /tmp/vsix.txt
-          # Match true source .ts files (foo.ts) but NOT type declarations
-          # (foo.d.ts). Bundled npm packages legitimately ship .d.ts files
-          # alongside their .js — those must not trigger this check.
-          # Also ban dev-tools paths.
-          if grep -E "\.ts$" /tmp/vsix.txt | grep -vE "\.d\.ts$" | head -1 | grep -q .; then
+          # Match true source .ts files (foo.ts) in OUR package directories
+          # but NOT (a) type declarations (foo.d.ts) bundled with their .js
+          # by npm packages, (b) any .ts under a node_modules/ path —
+          # vendored deps like patchright-core legitimately ship their own
+          # .ts source files alongside the compiled .js. The check is
+          # strictly about preventing OUR src/ from leaking, not vendored
+          # third-party content.
+          if grep -E "\.ts$" /tmp/vsix.txt | grep -vE "\.d\.ts$" | grep -vE "node_modules/" | head -1 | grep -q .; then
             echo "ERROR: Source .ts files would leak into VSIX!"
-            grep -E "\.ts$" /tmp/vsix.txt | grep -vE "\.d\.ts$" | head -10
+            grep -E "\.ts$" /tmp/vsix.txt | grep -vE "\.d\.ts$" | grep -vE "node_modules/" | head -10
             exit 1
           fi
+          # dev-tools is under our own packages; never legitimate.
           if grep -qE "dev-tools" /tmp/vsix.txt; then
             echo "ERROR: dev-tools path would leak into VSIX!"
             grep -E "dev-tools" /tmp/vsix.txt | head -10
