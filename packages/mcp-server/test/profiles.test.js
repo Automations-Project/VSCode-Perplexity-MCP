@@ -220,7 +220,7 @@ describe("suggestNextDefaultName", () => {
   });
 });
 
-import { renameProfile } from "../src/profiles.js";
+import { renameProfile, recordLoginSuccess } from "../src/profiles.js";
 
 describe("renameProfile", () => {
   it("moves dir + updates meta.name", () => {
@@ -243,5 +243,73 @@ describe("renameProfile", () => {
     createProfile("a");
     createProfile("b");
     expect(() => renameProfile("a", "b")).toThrow(/already exists/);
+  });
+});
+
+describe("recordLoginSuccess", () => {
+  it("creates the profile dir and writes meta when no prior meta exists", () => {
+    const lastLogin = "2026-04-26T12:00:00Z";
+    const meta = recordLoginSuccess("acct1", {
+      tier: "pro",
+      loginMode: "browser",
+      lastLogin,
+    });
+
+    // Profile dir should now exist
+    expect(existsSync(getProfilePaths("acct1").dir)).toBe(true);
+    expect(existsSync(getProfilePaths("acct1").meta)).toBe(true);
+
+    // Returned meta has expected shape
+    expect(meta.name).toBe("acct1");
+    expect(meta.displayName).toBe("acct1");
+    expect(meta.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(meta.tier).toBe("pro");
+    expect(meta.loginMode).toBe("browser");
+    expect(meta.lastLogin).toBe(lastLogin);
+
+    // On-disk meta.json round-trips identically
+    const onDisk = JSON.parse(
+      readFileSync(getProfilePaths("acct1").meta, "utf8"),
+    );
+    expect(onDisk).toEqual(meta);
+  });
+
+  it("updates existing meta in place and preserves name/displayName/createdAt", () => {
+    const created = createProfile("work", { displayName: "My Work" });
+    const originalCreatedAt = created.createdAt;
+
+    const lastLogin = "2026-04-26T13:30:00Z";
+    const meta = recordLoginSuccess("work", {
+      tier: "max",
+      loginMode: "manual",
+      lastLogin,
+    });
+
+    // Identity fields preserved
+    expect(meta.name).toBe("work");
+    expect(meta.displayName).toBe("My Work");
+    expect(meta.createdAt).toBe(originalCreatedAt);
+
+    // Login fields updated
+    expect(meta.tier).toBe("max");
+    expect(meta.loginMode).toBe("manual");
+    expect(meta.lastLogin).toBe(lastLogin);
+
+    // Disk reflects the same shape
+    const onDisk = JSON.parse(
+      readFileSync(getProfilePaths("work").meta, "utf8"),
+    );
+    expect(onDisk).toEqual(meta);
+  });
+
+  it("returns the merged meta object that callers can use directly", () => {
+    createProfile("acct2");
+    const returned = recordLoginSuccess("acct2", {
+      tier: "free",
+      loginMode: "browser",
+      lastLogin: "2026-04-26T14:00:00Z",
+    });
+    const fromDisk = getProfile("acct2");
+    expect(returned).toEqual(fromDisk);
   });
 });
