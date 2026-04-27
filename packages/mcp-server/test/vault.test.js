@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { randomBytes } from "node:crypto";
-import { encryptBlob, decryptBlob, getMasterKey, __resetKeyCache } from "../src/vault.js";
+import { encryptBlob, decryptBlob, getMasterKey, __resetKeyCache, __setKdfParamsForTest } from "../src/vault.js";
 
 describe("vault AES-GCM primitives", () => {
   const KEY = Buffer.alloc(32, 7); // deterministic test key
@@ -26,9 +26,10 @@ describe("vault AES-GCM primitives", () => {
 
   it("rejects tampered ciphertext", () => {
     const enc = encryptBlob(Buffer.from("hello world payload"), KEY);
-    // Flip a byte well inside the ciphertext region. v2 layout:
-    //   [0..3 magic][4 ver][5 saltlen][6..21 salt][22..33 iv][34..N-17 ct][N-16..N-1 tag]
-    // Offset 40 lands in ciphertext for any plaintext ≥ 7 bytes.
+    // Flip a byte well inside the ciphertext region. v3 layout:
+    //   [0..3 magic][4 ver][5 kdfid][6 kdfparamslen][7..9 kdfparams][10 saltlen]
+    //   [11..26 salt][27..38 iv][39..N-17 ct][N-16..N-1 tag]
+    // Offset 40 lands in ciphertext for any plaintext ≥ 2 bytes.
     enc[40] ^= 0x01;
     expect(() => decryptBlob(enc, KEY)).toThrow(/decrypt/i);
   });
@@ -42,8 +43,11 @@ describe("vault AES-GCM primitives", () => {
   it("includes magic header PXVT", () => {
     const enc = encryptBlob(Buffer.from("x"), KEY);
     expect(enc.slice(0, 4).toString()).toBe("PXVT");
-    expect(enc[4]).toBe(2); // version: encryptBlob now always emits v2
-    expect(enc[5]).toBe(0x10); // SALT_LEN = 16
+    expect(enc[4]).toBe(3); // version: encryptBlob now always emits v3
+    expect(enc[5]).toBe(0x01); // KDF_ID = scrypt
+    expect(enc[6]).toBe(0x03); // KDF_PARAMS_LEN = 3
+    // KDF params at 7..9, SALT_LEN at 10
+    expect(enc[10]).toBe(0x10); // SALT_LEN = 16
   });
 });
 
@@ -457,6 +461,8 @@ describe("v2 migration", () => {
     __resetKeyCache();
     // Force the passphrase code path (no keychain) for migration scenarios.
     vi.doMock("keytar", () => { throw new Error("unavailable"); });
+    // Drop scrypt cost — writes now emit v3 which invokes scrypt.
+    __setKdfParamsForTest({ logN: 12, r: 8, p: 1 });
   });
   afterEach(() => {
     vi.doUnmock("keytar");
@@ -500,7 +506,7 @@ describe("v2 migration", () => {
     expect(afterBytes[4]).toBe(0x01);
   });
 
-  it("(3) first write after v1 read writes version 0x02 with salt length 0x10", async () => {
+  it("(3) first write after v1 read writes the latest format (v3) with salt length 0x10", async () => {
     cp("work");
     const { getProfilePaths } = await import("../src/profiles.js");
     const vaultPath = getProfilePaths("work").vault;
@@ -512,11 +518,12 @@ describe("v2 migration", () => {
 
     const after = readBytes(vaultPath);
     expect(after.slice(0, 4).toString()).toBe("PXVT");
-    expect(after[4]).toBe(0x02); // VERSION
-    expect(after[5]).toBe(0x10); // SALT_LEN = 16
+    expect(after[4]).toBe(0x03); // VERSION_V3 — v3 is the current write format
+    // v3 layout: salt-len byte sits at offset 10 (after kdf_id, kdf_params_len, 3 params).
+    expect(after[10]).toBe(0x10); // SALT_LEN = 16
   });
 
-  it("(4) second read of migrated v2 vault succeeds", async () => {
+  it("(4) second read of migrated v3 vault succeeds", async () => {
     cp("work");
     const { getProfilePaths } = await import("../src/profiles.js");
     const vaultPath = getProfilePaths("work").vault;
@@ -526,14 +533,14 @@ describe("v2 migration", () => {
     const v = new Vault();
     // Trigger migration via a write.
     await v.set("work", "newkey", "newval");
-    // Read both keys back — the v1 cookies value AND the v2-set newkey.
+    // Read both keys back — the v1 cookies value AND the v3-set newkey.
     expect(await v.get("work", "cookies")).toBe("original-cookie-string");
     expect(await v.get("work", "newkey")).toBe("newval");
-    // Confirm we are reading v2 now.
-    expect(readBytes(vaultPath)[4]).toBe(0x02);
+    // Confirm we are reading v3 now.
+    expect(readBytes(vaultPath)[4]).toBe(0x03);
   });
 
-  it("(5) v2 from scratch writes version 0x02 with 16-byte salt", async () => {
+  it("(5) write from scratch emits v3 with 16-byte salt", async () => {
     cp("work");
     const { getProfilePaths } = await import("../src/profiles.js");
     const vaultPath = getProfilePaths("work").vault;
@@ -543,10 +550,11 @@ describe("v2 migration", () => {
 
     const blob = readBytes(vaultPath);
     expect(blob.slice(0, 4).toString()).toBe("PXVT");
-    expect(blob[4]).toBe(0x02);
-    expect(blob[5]).toBe(0x10);
-    // Salt occupies bytes 6..22; assert it's not all zeros.
-    const salt = blob.slice(6, 22);
+    expect(blob[4]).toBe(0x03);
+    expect(blob[5]).toBe(0x01); // KDF_ID = scrypt
+    expect(blob[10]).toBe(0x10); // SALT_LEN at offset 10 in v3
+    // Salt occupies bytes 11..27; assert it's not all zeros.
+    const salt = blob.slice(11, 11 + 16);
     expect(salt.length).toBe(16);
     expect(salt.equals(Buffer.alloc(16))).toBe(false);
   });
@@ -561,8 +569,9 @@ describe("v2 migration", () => {
 
     const aBlob = readBytes(getProfilePaths("alpha").vault);
     const bBlob = readBytes(getProfilePaths("beta").vault);
-    const aSalt = aBlob.slice(6, 22);
-    const bSalt = bBlob.slice(6, 22);
+    // v3 salt offset = 11 (4 magic + 1 ver + 1 kdf_id + 1 kdf_params_len + 3 params + 1 salt_len).
+    const aSalt = aBlob.slice(11, 11 + 16);
+    const bSalt = bBlob.slice(11, 11 + 16);
     expect(aSalt.length).toBe(16);
     expect(bSalt.length).toBe(16);
     expect(aSalt.equals(bSalt)).toBe(false);
@@ -597,19 +606,21 @@ describe("v2 migration", () => {
     expect(afterBytes.equals(beforeBytes)).toBe(true);
   });
 
-  it("(8) wrong passphrase for v2 throws and leaves file unchanged", async () => {
+  it("(8) wrong passphrase for current-format vault throws and leaves file unchanged", async () => {
     cp("work");
     const { getProfilePaths } = await import("../src/profiles.js");
     const vaultPath = getProfilePaths("work").vault;
 
     const v = new Vault();
-    // Write v2 with passphrase A.
+    // Write current format (v3) with passphrase A.
     await v.set("work", "x", "1");
     const beforeBytes = readBytes(vaultPath);
 
     // Switch passphrase to B.
     process.env.PERPLEXITY_VAULT_PASSPHRASE = "different-pass-B";
     __resetKeyCache();
+    // Re-arm the test seam since __resetKeyCache wipes it.
+    __setKdfParamsForTest({ logN: 12, r: 8, p: 1 });
 
     let caught;
     try {
@@ -730,9 +741,10 @@ describe("v2 migration", () => {
       expect(JSON.parse(got)).toEqual({ a: 1 });
 
       const blob = readBytes(getProfilePaths("kc").vault);
-      // Format: still v2 (migration writes v2 unconditionally).
-      expect(blob[4]).toBe(0x02);
-      expect(blob[5]).toBe(0x10);
+      // Format: v3 (writes always emit the latest format, even on the keychain path).
+      expect(blob[4]).toBe(0x03);
+      expect(blob[5]).toBe(0x01); // KDF_ID = scrypt (params still embedded for uniformity)
+      expect(blob[10]).toBe(0x10); // SALT_LEN at the v3 offset
 
       // Keychain key is format-independent: deriving the master key directly
       // and asserting it round-trips without involving the on-disk salt.
@@ -805,6 +817,443 @@ describe("v2 migration", () => {
       const after = readBytes(vaultPath);
       expect(after.equals(before)).toBe(true);
       expect(after[4]).toBe(0x01);
+    } finally {
+      vi.doUnmock("../src/safe-write.js");
+      vi.resetModules();
+    }
+  });
+});
+
+// -------------------------------------------------------------------------
+// v3 migration tests — see docs/superpowers/specs/2026-04-28-vault-v3-kdf-stretch-design.md
+//
+// Format reference:
+//   v1: [MAGIC "PXVT" 4][VERSION 0x01 1][IV 12][CT n][TAG 16]
+//   v2: [MAGIC "PXVT" 4][VERSION 0x02 1][SALT_LEN 0x10 1][SALT 16][IV 12][CT n][TAG 16]
+//   v3: [MAGIC "PXVT" 4][VERSION 0x03 1][KDF_ID 1][KDF_PARAMS_LEN 1][KDF_PARAMS n]
+//       [SALT_LEN 0x10 1][SALT 16][IV 12][CT n][TAG 16]
+//     KDF_ID = 0x01 (scrypt). KDF_PARAMS for scrypt = [logN 1][r 1][p 1] (3 bytes).
+//
+// All v3 tests force a low scrypt cost via __setKdfParamsForTest({logN: 12, r: 8, p: 1})
+// to keep test runtime tractable. The seam is reset by __resetKeyCache.
+// -------------------------------------------------------------------------
+
+function buildV2Blob(plaintext, passphrase) {
+  const salt = randBytes(16);
+  const key = Buffer.from(hkdfSync("sha256", Buffer.from(passphrase, "utf8"), salt, HKDF_INFO, 32));
+  const iv = randBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const ct = Buffer.concat([cipher.update(Buffer.from(plaintext)), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([
+    Buffer.from("PXVT"),
+    Buffer.from([0x02, 0x10]),
+    salt,
+    iv,
+    ct,
+    tag,
+  ]);
+}
+
+describe("v3 migration", () => {
+  let MIG_TMP;
+  beforeEach(() => {
+    MIG_TMP = mkdtempSync(join2(tmp2(), "pplx-vault-mig3-"));
+    process.env.PERPLEXITY_CONFIG_DIR = MIG_TMP;
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "migration-pass-A";
+    __resetKeyCache();
+    vi.doMock("keytar", () => { throw new Error("unavailable"); });
+    // Drop scrypt cost for the test suite — set logN=12 (~5ms) instead of 17.
+    __setKdfParamsForTest({ logN: 12, r: 8, p: 1 });
+  });
+  afterEach(() => {
+    vi.doUnmock("keytar");
+    rm2(MIG_TMP, { recursive: true, force: true });
+    delete process.env.PERPLEXITY_CONFIG_DIR;
+    delete process.env.PERPLEXITY_VAULT_PASSPHRASE;
+    __resetKeyCache();
+  });
+
+  it("(v3.1) v3 from scratch: writes version 0x03 with kdf_id 0x01 and round-trips", async () => {
+    cp("work");
+    const { getProfilePaths } = await import("../src/profiles.js");
+    const v = new Vault();
+    await v.set("work", "cookies", "[{\"name\":\"session\",\"value\":\"abc\"}]");
+    const blob = readBytes(getProfilePaths("work").vault);
+    expect(blob.slice(0, 4).toString()).toBe("PXVT");
+    expect(blob[4]).toBe(0x03); // VERSION_V3
+    expect(blob[5]).toBe(0x01); // KDF_ID = scrypt
+    expect(blob[6]).toBe(0x03); // KDF_PARAMS_LEN = 3 (scrypt: logN, r, p)
+    // KDF params: [logN 1][r 1][p 1] at offset 7..10
+    // SALT_LEN at offset 7 + KDF_PARAMS_LEN = 10
+    expect(blob[10]).toBe(0x10); // SALT_LEN = 16
+    // Round-trip
+    expect(await v.get("work", "cookies")).toBe("[{\"name\":\"session\",\"value\":\"abc\"}]");
+  });
+
+  it("(v3.2) v1 → v3 migration: read v1, write v3, both values round-trip", async () => {
+    cp("work");
+    const { getProfilePaths } = await import("../src/profiles.js");
+    const vaultPath = getProfilePaths("work").vault;
+    const payload = JSON.stringify({ cookies: "original-v1-string" });
+    writeBytes(vaultPath, buildV1Blob(payload, "migration-pass-A"));
+
+    const v = new Vault();
+    // Read still works (v1 path).
+    expect(await v.get("work", "cookies")).toBe("original-v1-string");
+    // The v1 file is unchanged on disk by the read.
+    expect(readBytes(vaultPath)[4]).toBe(0x01);
+
+    // Write triggers migration to v3.
+    await v.set("work", "newkey", "newval");
+    const after = readBytes(vaultPath);
+    expect(after[4]).toBe(0x03);
+    expect(after[5]).toBe(0x01); // scrypt
+    expect(after[6]).toBe(0x03); // params len
+
+    // Subsequent reads use v3 path.
+    expect(await v.get("work", "cookies")).toBe("original-v1-string");
+    expect(await v.get("work", "newkey")).toBe("newval");
+  });
+
+  it("(v3.3) v2 → v3 migration: read v2, write v3, both values round-trip", async () => {
+    cp("work");
+    const { getProfilePaths } = await import("../src/profiles.js");
+    const vaultPath = getProfilePaths("work").vault;
+    const payload = JSON.stringify({ cookies: "original-v2-string" });
+    writeBytes(vaultPath, buildV2Blob(payload, "migration-pass-A"));
+
+    const v = new Vault();
+    // Read still works (v2 path).
+    expect(await v.get("work", "cookies")).toBe("original-v2-string");
+    // The v2 file is unchanged on disk by the read.
+    expect(readBytes(vaultPath)[4]).toBe(0x02);
+
+    // Write triggers migration to v3.
+    await v.set("work", "newkey", "newval");
+    const after = readBytes(vaultPath);
+    expect(after[4]).toBe(0x03);
+    expect(after[5]).toBe(0x01);
+    expect(after[6]).toBe(0x03);
+
+    // Subsequent reads use v3 path.
+    expect(await v.get("work", "cookies")).toBe("original-v2-string");
+    expect(await v.get("work", "newkey")).toBe("newval");
+  });
+
+  it("(v3.4) v3 with corrupted KDF params: invalid kdf_params_len → structural error", async () => {
+    cp("work");
+    const { getProfilePaths } = await import("../src/profiles.js");
+    // v3 header but kdf_params_len = 0 → invalid for scrypt (need 3 bytes).
+    const bad = Buffer.alloc(80);
+    bad.write("PXVT", 0);
+    bad[4] = 0x03;
+    bad[5] = 0x01; // KDF_ID scrypt
+    bad[6] = 0x00; // KDF_PARAMS_LEN — invalid (must be 3 for scrypt)
+    bad[7] = 0x10; // SALT_LEN
+    writeBytes(getProfilePaths("work").vault, bad);
+
+    const v = new Vault();
+    let caught;
+    try { await v.get("work", "x"); } catch (e) { caught = e; }
+    expect(caught).toBeDefined();
+    expect(caught.message).toMatch(/kdf|params/i);
+    // Distinguishable from wrong passphrase / corrupted ciphertext.
+    expect(caught.message).not.toMatch(/wrong passphrase|corrupted ciphertext/i);
+  });
+
+  it("(v3.4c) v3 with r=0 → structural error, distinguishable from wrong passphrase", async () => {
+    cp("work");
+    const { getProfilePaths } = await import("../src/profiles.js");
+    // Valid v3 header layout but r=0 (invalid scrypt block size).
+    const bad = Buffer.alloc(11 + 16 + 12 + 16);
+    bad.write("PXVT", 0);
+    bad[4] = 0x03;
+    bad[5] = 0x01;
+    bad[6] = 0x03;
+    bad[7] = 17;   // logN — above floor
+    bad[8] = 0x00; // r = 0 (invalid)
+    bad[9] = 0x01; // p
+    bad[10] = 0x10; // SALT_LEN
+    writeBytes(getProfilePaths("work").vault, bad);
+
+    const v = new Vault();
+    let caught;
+    try { await v.get("work", "x"); } catch (e) { caught = e; }
+    expect(caught).toBeDefined();
+    expect(caught.message).toMatch(/scrypt|invalid|kdf/i);
+    expect(caught.message).not.toMatch(/wrong passphrase|corrupted ciphertext/i);
+  });
+
+  it("(v3.cov) v3 blob 5 bytes long throws truncated v3 preamble", () => {
+    // Magic + version 3 byte, but no kdf_id / kdf_params_len bytes.
+    const bad = Buffer.alloc(5);
+    bad.write("PXVT", 0);
+    bad[4] = 0x03;
+    expect(() => decryptBlob(bad, Buffer.alloc(32, 7))).toThrow(/too short|truncated/i);
+  });
+
+  it("(v3.cov) __setKdfParamsForTest throws when called without numbers", () => {
+    expect(() => __setKdfParamsForTest(null)).toThrow(/requires .*numbers/i);
+    expect(() => __setKdfParamsForTest({ logN: "x", r: 8, p: 1 })).toThrow(/requires .*numbers/i);
+    expect(() => __setKdfParamsForTest({ logN: 12, r: 8 })).toThrow(/requires .*numbers/i);
+  });
+
+  it("(v3.cov) v3 blob truncated mid-KDF-params throws structural error", () => {
+    // Magic + ver 3 + kdf_id 1 + kdf_params_len 3, but blob is only 7 bytes total:
+    // not enough room for the 3 params bytes + 1 salt-len byte. Must throw.
+    const bad = Buffer.alloc(7);
+    bad.write("PXVT", 0);
+    bad[4] = 0x03;
+    bad[5] = 0x01;
+    bad[6] = 0x03; // claims 3 bytes of params
+    expect(() => decryptBlob(bad, Buffer.alloc(32, 7))).toThrow(/too short|truncated/i);
+  });
+
+  it("(v3.cov) v3 blob with invalid salt length throws structural error", () => {
+    // Magic + ver 3 + kdf_id 1 + kdf_params_len 3 + (logN, r, p) + salt_len=5 (bad).
+    const bad = Buffer.alloc(11 + 16 + 12 + 16);
+    bad.write("PXVT", 0);
+    bad[4] = 0x03;
+    bad[5] = 0x01;
+    bad[6] = 0x03;
+    bad[7] = 17;
+    bad[8] = 8;
+    bad[9] = 1;
+    bad[10] = 0x05; // wrong salt-len
+    expect(() => decryptBlob(bad, Buffer.alloc(32, 7))).toThrow(/salt.*length|invalid salt/i);
+  });
+
+  it("(v3.cov) v3 blob with valid header but truncated tail throws structural error", () => {
+    // Full header (11 + 16 + 12 = 39 bytes) but no auth tag region.
+    const bad = Buffer.alloc(39);
+    bad.write("PXVT", 0);
+    bad[4] = 0x03;
+    bad[5] = 0x01;
+    bad[6] = 0x03;
+    bad[7] = 17;
+    bad[8] = 8;
+    bad[9] = 1;
+    bad[10] = 0x10;
+    expect(() => decryptBlob(bad, Buffer.alloc(32, 7))).toThrow(/too short|truncated/i);
+  });
+
+  it("(v3.4d) v3 with unsupported KDF id → structural error", async () => {
+    cp("work");
+    const { getProfilePaths } = await import("../src/profiles.js");
+    // Valid v3 layout but KDF_ID = 0x99 (unsupported).
+    const bad = Buffer.alloc(80);
+    bad.write("PXVT", 0);
+    bad[4] = 0x03;
+    bad[5] = 0x99; // unknown KDF
+    bad[6] = 0x03;
+    bad[7] = 17;
+    bad[8] = 8;
+    bad[9] = 1;
+    bad[10] = 0x10;
+    writeBytes(getProfilePaths("work").vault, bad);
+
+    const v = new Vault();
+    let caught;
+    try { await v.get("work", "x"); } catch (e) { caught = e; }
+    expect(caught).toBeDefined();
+    expect(caught.message).toMatch(/unsupported.*KDF|KDF.*unsupported/i);
+    expect(caught.message).not.toMatch(/wrong passphrase|corrupted ciphertext/i);
+  });
+
+  it("(v3.4b) v3 with logN below floor → structural error, distinguishable from wrong passphrase", async () => {
+    cp("work");
+    const { getProfilePaths } = await import("../src/profiles.js");
+    // Reset the test seam so the production floor check is enforced — that's
+    // the path under test. Re-derive happens lazily; we never actually call
+    // scrypt because the floor check fires first.
+    __resetKeyCache();
+    // Valid v3 header layout but logN = 8 (below the SCRYPT_LOGN_FLOOR of 16).
+    const bad = Buffer.alloc(11 + 16 + 12 + 16); // header + salt + iv + tag (no ct)
+    bad.write("PXVT", 0);
+    bad[4] = 0x03;
+    bad[5] = 0x01;
+    bad[6] = 0x03;
+    bad[7] = 0x08; // logN = 8 — below floor
+    bad[8] = 0x08; // r
+    bad[9] = 0x01; // p
+    bad[10] = 0x10; // SALT_LEN
+    writeBytes(getProfilePaths("work").vault, bad);
+
+    const v = new Vault();
+    let caught;
+    try { await v.get("work", "x"); } catch (e) { caught = e; }
+    expect(caught).toBeDefined();
+    expect(caught.message).toMatch(/scrypt|floor|logN|kdf/i);
+    expect(caught.message).not.toMatch(/wrong passphrase|corrupted ciphertext/i);
+  });
+
+  it("(v3.5) v3 with wrong passphrase → wrong-passphrase-style error, file unchanged", async () => {
+    cp("work");
+    const { getProfilePaths } = await import("../src/profiles.js");
+    const vaultPath = getProfilePaths("work").vault;
+    const v = new Vault();
+    await v.set("work", "x", "1");
+    const before = readBytes(vaultPath);
+
+    // Switch passphrase to B.
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "different-pass-B";
+    __resetKeyCache();
+    // Re-set the test seam since __resetKeyCache cleared it.
+    __setKdfParamsForTest({ logN: 12, r: 8, p: 1 });
+
+    let caught;
+    try { await v.get("work", "x"); } catch (e) { caught = e; }
+    expect(caught).toBeDefined();
+    expect(caught.message).toMatch(/wrong passphrase|corrupted ciphertext/i);
+    expect(caught.message).not.toMatch(/truncated|wrong magic|unsupported version|invalid salt length|kdf|scrypt/i);
+
+    const after = readBytes(vaultPath);
+    expect(after.equals(before)).toBe(true);
+  });
+
+  it("(v3.6) two profiles get different salts under v3", async () => {
+    cp("alpha");
+    cp("beta");
+    const { getProfilePaths } = await import("../src/profiles.js");
+    const v = new Vault();
+    await v.set("alpha", "k", "v");
+    await v.set("beta", "k", "v");
+
+    const aBlob = readBytes(getProfilePaths("alpha").vault);
+    const bBlob = readBytes(getProfilePaths("beta").vault);
+    expect(aBlob[4]).toBe(0x03);
+    expect(bBlob[4]).toBe(0x03);
+    // Salt at offset 11 (4 magic + 1 ver + 1 kdf_id + 1 kdf_params_len + 3 params + 1 salt_len) for 16 bytes.
+    const aSalt = aBlob.slice(11, 11 + 16);
+    const bSalt = bBlob.slice(11, 11 + 16);
+    expect(aSalt.length).toBe(16);
+    expect(bSalt.length).toBe(16);
+    expect(aSalt.equals(bSalt)).toBe(false);
+  });
+
+  it("(v3.7) keychain path bypasses scrypt — v3 blob round-trips without invoking KDF", async () => {
+    // Switch to keychain mode for this test.
+    vi.doUnmock("keytar");
+    delete process.env.PERPLEXITY_VAULT_PASSPHRASE;
+    __resetKeyCache();
+    vi.resetModules();
+
+    const fixedKey = "c".repeat(64);
+    vi.doMock("keytar", () => ({
+      default: {
+        getPassword: vi.fn(async () => fixedKey),
+        setPassword: vi.fn(),
+      },
+    }));
+
+    try {
+      const { Vault: V2, __resetKeyCache: reset2, getMasterKey: gmk, __setKdfParamsForTest: seam } =
+        await import("../src/vault.js");
+      reset2();
+      // Set the seam to a value BELOW the floor (logN=8). If the keychain
+      // path were to invoke scryptDerive, it would either throw (no override
+      // active for the in-blob params) or, if the override matched, run an
+      // ultra-cheap derivation. Since the keychain path skips scryptDerive
+      // entirely, the test seam value is irrelevant — write/read must succeed.
+      seam({ logN: 8, r: 8, p: 1 });
+      const { createProfile, getProfilePaths } = await import("../src/profiles.js");
+      createProfile("kc");
+
+      const v = new V2();
+      await v.set("kc", "cookies", JSON.stringify({ a: 1 }));
+      const got = await v.get("kc", "cookies");
+      expect(JSON.parse(got)).toEqual({ a: 1 });
+
+      // Confirm v3 format is on disk and embeds the (low) params for uniformity.
+      const blob = readBytes(getProfilePaths("kc").vault);
+      expect(blob[4]).toBe(0x03);
+      expect(blob[5]).toBe(0x01); // KDF_ID = scrypt
+      expect(blob[7]).toBe(8);    // logN echoed from override (params still embedded)
+
+      const key = await gmk();
+      expect(key.length).toBe(32);
+      expect(key.toString("hex")).toBe(fixedKey);
+    } finally {
+      vi.doUnmock("keytar");
+    }
+  });
+
+  it("(v3.8) re-tuning: blob written with logN=13 reads back fine even after override changes to logN=12", async () => {
+    cp("work");
+    const { getProfilePaths } = await import("../src/profiles.js");
+
+    // First write under logN=13.
+    __setKdfParamsForTest({ logN: 13, r: 8, p: 1 });
+    const v = new Vault();
+    await v.set("work", "k", "first");
+    const blob = readBytes(getProfilePaths("work").vault);
+    expect(blob[7]).toBe(13); // logN encoded into params
+
+    // Now switch the write-time params to logN=12 — but reads should still use the embedded params.
+    __setKdfParamsForTest({ logN: 12, r: 8, p: 1 });
+    expect(await v.get("work", "k")).toBe("first");
+
+    // Write a fresh value: emits a new blob with logN=12.
+    await v.set("work", "k2", "second");
+    const blob2 = readBytes(getProfilePaths("work").vault);
+    expect(blob2[7]).toBe(12);
+    // Both values still readable.
+    expect(await v.get("work", "k")).toBe("first");
+    expect(await v.get("work", "k2")).toBe("second");
+  });
+
+  it("(v3.9) read-only Vault.get on v3 blob does not mutate the file", async () => {
+    cp("work");
+    const { getProfilePaths } = await import("../src/profiles.js");
+    const vaultPath = getProfilePaths("work").vault;
+    const v = new Vault();
+    await v.set("work", "x", "y");
+    const before = readBytes(vaultPath);
+    const beforeMtime = statSync(vaultPath).mtimeMs;
+
+    // Several reads must not touch the file.
+    await v.get("work", "x");
+    await v.get("work", "x");
+    await v.get("work", "x");
+
+    const after = readBytes(vaultPath);
+    const afterMtime = statSync(vaultPath).mtimeMs;
+    expect(after.equals(before)).toBe(true);
+    expect(afterMtime).toBe(beforeMtime);
+    expect(after[4]).toBe(0x03);
+  });
+
+  it("(v3.10) atomic write failure during v2→v3 migration leaves v2 bytes intact", async () => {
+    vi.resetModules();
+    vi.doMock("../src/safe-write.js", () => ({
+      safeAtomicWriteFileSync: () => { throw new Error("simulated disk full"); },
+    }));
+    try {
+      const { Vault: V2, __resetKeyCache: reset2, __setKdfParamsForTest } = await import("../src/vault.js");
+      const { createProfile, getProfilePaths } = await import("../src/profiles.js");
+      reset2();
+      __setKdfParamsForTest({ logN: 12, r: 8, p: 1 });
+      createProfile("work");
+      const vaultPath = getProfilePaths("work").vault;
+      const payload = JSON.stringify({ cookies: "original-v2" });
+      writeBytes(vaultPath, buildV2Blob(payload, "migration-pass-A"));
+      const before = readBytes(vaultPath);
+
+      const v = new V2();
+      // Read still works (v2 path).
+      expect(await v.get("work", "cookies")).toBe("original-v2");
+
+      // Write — mocked safe-write throws.
+      let caught;
+      try { await v.set("work", "k", "new"); } catch (e) { caught = e; }
+      expect(caught).toBeDefined();
+      expect(caught.message).toMatch(/simulated disk full/);
+
+      // V2 file must be byte-identical.
+      const after = readBytes(vaultPath);
+      expect(after.equals(before)).toBe(true);
+      expect(after[4]).toBe(0x02);
     } finally {
       vi.doUnmock("../src/safe-write.js");
       vi.resetModules();
