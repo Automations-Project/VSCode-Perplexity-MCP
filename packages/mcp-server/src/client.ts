@@ -170,6 +170,33 @@ type WorkflowBlock =
   | PendingFollowupsBlock
   | OtherWorkflowBlock;
 
+interface ExperimentsResponse {
+  server_is_pro?: boolean;
+  server_is_max?: boolean;
+  server_is_enterprise?: boolean;
+}
+
+/**
+ * Derive tier flags from a /rest/experiments/attributes payload.
+ *
+ * Mirrors refresh.ts:616 and session-metadata.js:73-75: Computer mode is
+ * gated to paid tiers, so when the ASI access endpoint reports it as
+ * available but the experiments payload omits server_is_pro (which has
+ * been observed in production), infer Pro. Without this fallback, an
+ * authenticated Pro account silently demotes to Free whenever the
+ * experiments response drops the subscription bit.
+ */
+function deriveTierFlagsFromExperiments(
+  experiments: ExperimentsResponse | undefined | null,
+  canUseComputer: boolean,
+): { isPro: boolean; isMax: boolean; isEnterprise: boolean } {
+  const isProFromExp = experiments?.server_is_pro === true;
+  const isMax = experiments?.server_is_max === true;
+  const isEnterprise = experiments?.server_is_enterprise === true;
+  const isPro = isProFromExp || (canUseComputer && !isMax && !isEnterprise);
+  return { isPro, isMax, isEnterprise };
+}
+
 export class PerplexityClient {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
@@ -352,9 +379,13 @@ export class PerplexityClient {
           this.accountInfo.rateLimits = rateLimitData as RateLimitResponse;
         }
         if (experimentsData) {
-          this.accountInfo.isPro = !!experimentsData.server_is_pro;
-          this.accountInfo.isMax = !!experimentsData.server_is_max;
-          this.accountInfo.isEnterprise = !!experimentsData.server_is_enterprise;
+          const flags = deriveTierFlagsFromExperiments(
+            experimentsData as ExperimentsResponse,
+            this.accountInfo.canUseComputer,
+          );
+          this.accountInfo.isPro = flags.isPro;
+          this.accountInfo.isMax = flags.isMax;
+          this.accountInfo.isEnterprise = flags.isEnterprise;
           const tier = this.accountInfo.isMax ? "Max" : this.accountInfo.isPro ? "Pro" : this.accountInfo.isEnterprise ? "Enterprise" : "Free";
           console.error(`[perplexity-mcp] Account tier: ${tier}`);
         }
@@ -450,10 +481,13 @@ export class PerplexityClient {
       }
 
       if (experimentsData) {
-        const exp = experimentsData as Record<string, any>;
-        this.accountInfo.isPro = !!exp.server_is_pro;
-        this.accountInfo.isMax = !!exp.server_is_max;
-        this.accountInfo.isEnterprise = !!exp.server_is_enterprise;
+        const flags = deriveTierFlagsFromExperiments(
+          experimentsData as ExperimentsResponse,
+          this.accountInfo.canUseComputer,
+        );
+        this.accountInfo.isPro = flags.isPro;
+        this.accountInfo.isMax = flags.isMax;
+        this.accountInfo.isEnterprise = flags.isEnterprise;
         const tier = this.accountInfo.isMax ? "Max" : this.accountInfo.isPro ? "Pro" : this.accountInfo.isEnterprise ? "Enterprise" : "Free";
         console.error(`[perplexity-mcp] Account tier: ${tier}`);
         gotLiveData = true;

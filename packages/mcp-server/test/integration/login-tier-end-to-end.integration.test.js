@@ -3,35 +3,39 @@
  * vault cookies + .reinit sentinel through `PerplexityClient.init()` reading
  * back the session and computing `accountInfo.isPro`.
  *
- * Bug under investigation
- * -----------------------
+ * Regression coverage
+ * -------------------
  * After a successful manual login (vault populated, .reinit dropped), the
- * long-lived MCP server's reinit demotes the user to anonymous / isPro:false
- * even though the underlying account is Pro. Two leading hypotheses:
+ * long-lived MCP server's reinit had been demoting the user to
+ * anonymous / isPro:false even though the underlying account is Pro. Two
+ * causes were investigated:
  *
  *   H1 (cookie-handoff gap): `manual-login-runner.js` writes cookies to the
  *       vault but its ephemeral `browser.newContext()` never persists them to
  *       the on-disk profile. `client.ts:headedBootstrap` then launches
  *       `chromium.launchPersistentContext(browserData, …)` against an empty
- *       `browserData/` dir, fetches Perplexity anonymously, and caches
- *       `isPro:false` on top of any earlier good cache.
+ *       `browserData/` dir, fetches Perplexity anonymously. Empirically
+ *       refuted as the SOLE cause: client.ts has a built-in recovery —
+ *       when `accountInfo.modelsConfig` is still null after the headed
+ *       phase, `loadAccountInfo()` re-runs against the headless context
+ *       which does carry vault cookies. The "H1 control" test below locks
+ *       this recovery in.
  *
- *   H2 (missing inference fallback): `client.ts:354-358` and `:454-456` only
- *       read `experiments.server_is_pro` to derive `isPro`. When the
- *       experiments payload omits that flag (production-observed), a real Pro
- *       user is demoted because the client does not fall back on
- *       `asi.can_use_computer` the way `refresh.ts:603-619` does.
+ *   H2 (missing inference fallback): `client.ts` previously only read
+ *       `experiments.server_is_pro` to derive `isPro`. When the experiments
+ *       payload omitted that flag (production-observed), a real Pro user
+ *       was demoted because the client did not fall back on
+ *       `asi.can_use_computer` the way `refresh.ts:603-619` does. Fixed by
+ *       mirroring the inference into `client.ts:deriveTierFlagsFromExperiments`.
+ *       The "H2 regression" test below is the deterministic guard.
  *
  * Strategy
  * --------
- * Each `it()` is a falsifiable witness for one hypothesis. The wrong-tier
- * assertions are wrapped in `it.fails()` so the SUITE goes green today
- * (the harness exists, runs, and confirms the bug is present) but the
- * inverted assertion is locked in: once production code is fixed, those
- * tests will start passing — vitest will then report them as unexpected
- * passes and the future fixer must drop the `.fails` marker. A green-today
- * sanity test (PERPLEXITY_HEADLESS_ONLY=1, full payload) verifies the rest
- * of the harness wiring.
+ * Each `it()` exercises one observable property of the login → tier chain.
+ * All three are now positive (green) regression tests. Any future change
+ * that removes the inference fallback in client.ts, breaks the
+ * headless-recovery path in init(), or weakens the runner-side cache write
+ * will fail one of these tests deterministically.
  *
  * URL redirection
  * ---------------
@@ -180,13 +184,14 @@ describe("login -> reinit -> tier (integration harness)", () => {
    * skipped. The cookies in the vault ARE present and the headless phase DOES
    * authenticate. The mock returns experiments with no `server_is_pro` flag
    * but `asi.can_use_computer:true` (real-world payload shape that has been
-   * observed). The client's `loadAccountInfo` derives `isPro = false` because
-   * it lacks the inference fallback that `refresh.ts:616` and
-   * `session-metadata.js:73-75` both have. EXPECTED RED today; passes once
-   * the client gains the same `(canUseComputer && !isMax && !isEnterprise)`
-   * fallback.
+   * observed). The client's `loadAccountInfo` must infer `isPro = true` from
+   * `(canUseComputer && !isMax && !isEnterprise)` — the same fallback that
+   * `refresh.ts:616` and `session-metadata.js:73-75` already implement, now
+   * mirrored into `client.ts` via `deriveTierFlagsFromExperiments`. This test
+   * is the regression guard against the experiments payload silently
+   * demoting authenticated Pro accounts to Free.
    */
-  it.fails("[expected: red — H2] PerplexityClient demotes Pro when experiments omits server_is_pro (HEADLESS_ONLY)", async () => {
+  it("[regression: H2] PerplexityClient infers Pro from can_use_computer when experiments omits server_is_pro (HEADLESS_ONLY)", async () => {
     // Step 1 — populate vault via runner so getSavedCookies returns a real
     // session cookie. The runner's auto-login uses the un-suffixed mock URL.
     const { code } = await forkRunner({
@@ -229,16 +234,17 @@ describe("login -> reinit -> tier (integration harness)", () => {
       if (client) await client.shutdown?.().catch(() => {});
     }
     // Sanity: the headless phase MUST authenticate and observe Computer
-    // access; otherwise we're not actually witnessing H2 (we'd be observing
-    // a different failure mode). These are NOT inside the bug-witness
-    // assertion — they throw plain errors that break `it.fails`'s
-    // expected-fail contract, signaling test-mechanics breakage.
+    // access; otherwise we're not actually exercising the inference path
+    // (we'd be observing a different failure mode). Throw plain errors
+    // here so test-mechanics breakage is loud and distinct from a real
+    // regression in the inference logic.
     if (!observedAuthenticated) throw new Error("H2 setup invalid: client did not authenticate");
     if (!observedCanUseComputer) throw new Error("H2 setup invalid: asi.can_use_computer was false");
-    // The bug-witness assertion: with can_use_computer:true and no
-    // server_is_pro flag, a correct client infers isPro:true. Today it
-    // does not — `it.fails` flips this red into green for now.
-    expect(observedIsPro, "isPro should be true given can_use_computer:true (H2 inference fallback missing)").toBe(true);
+    // Regression assertion: with can_use_computer:true and no
+    // server_is_pro flag, the client's deriveTierFlagsFromExperiments
+    // helper infers isPro:true. If this fails, the inference fallback in
+    // client.ts has been removed or weakened.
+    expect(observedIsPro, "isPro should be true given can_use_computer:true (inference fallback)").toBe(true);
   }, 120_000);
 
   /**
