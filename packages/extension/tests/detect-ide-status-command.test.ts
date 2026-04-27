@@ -40,8 +40,14 @@ describe("detectIdeStatus — command-field validation", () => {
         {
           mcpServers: {
             Perplexity: {
-              command: "C:\\Program Files\\Microsoft VS Code\\Code.exe",
-              args: ["C:\\nonexistent\\server.mjs"],
+              command:
+                process.platform === "win32"
+                  ? "C:\\Program Files\\Microsoft VS Code\\Code.exe"
+                  : "/usr/share/code/code",
+              args:
+                process.platform === "win32"
+                  ? ["C:\\nonexistent\\server.mjs"]
+                  : ["/nonexistent/server.mjs"],
             },
           },
         },
@@ -52,9 +58,11 @@ describe("detectIdeStatus — command-field validation", () => {
 
     const status = detectIdeStatus("cursor", { configPath });
     expect(status.configured).toBe(true);
-    expect(status.command).toBe(
-      "C:\\Program Files\\Microsoft VS Code\\Code.exe",
-    );
+    const expectedCommand =
+      process.platform === "win32"
+        ? "C:\\Program Files\\Microsoft VS Code\\Code.exe"
+        : "/usr/share/code/code";
+    expect(status.command).toBe(expectedCommand);
     expect(status.commandHealth).toBe("wrong-runtime");
   });
 
@@ -124,10 +132,20 @@ describe("detectIdeStatus — command-field validation", () => {
     const configPath = join(root, ".codex", "config.toml");
     mkdirSync(join(root, ".codex"), { recursive: true });
     // Real TOML shape produced by `buildTomlMcpBlock` in auto-config/index.ts.
+    // Use a platform-appropriate absolute path so validateCommand's
+    // path.isAbsolute check (which is OS-specific) hits the blacklist branch
+    // on both Linux CI and Windows dev hosts.
+    const isWin = process.platform === "win32";
+    const tomlCommandLine = isWin
+      ? `command = "C:\\\\Program Files\\\\Microsoft VS Code\\\\Code.exe"`
+      : `command = "/usr/share/code/code"`;
+    const tomlArgsLine = isWin
+      ? `args = ["C:\\\\bundle\\\\server.mjs"]`
+      : `args = ["/bundle/server.mjs"]`;
     const toml = [
       `[mcp_servers.Perplexity]`,
-      `command = "C:\\\\Program Files\\\\Microsoft VS Code\\\\Code.exe"`,
-      `args = ["C:\\\\bundle\\\\server.mjs"]`,
+      tomlCommandLine,
+      tomlArgsLine,
       `enabled = true`,
       ``,
     ].join("\n");
@@ -136,9 +154,10 @@ describe("detectIdeStatus — command-field validation", () => {
     const status = detectIdeStatus("codexCli", { configPath });
     expect(status.configured).toBe(true);
     // The TOML extractor unescapes JSON-style escapes before classification.
-    expect(status.command).toBe(
-      "C:\\Program Files\\Microsoft VS Code\\Code.exe",
-    );
+    const expectedCommand = isWin
+      ? "C:\\Program Files\\Microsoft VS Code\\Code.exe"
+      : "/usr/share/code/code";
+    expect(status.command).toBe(expectedCommand);
     expect(status.commandHealth).toBe("wrong-runtime");
   });
 

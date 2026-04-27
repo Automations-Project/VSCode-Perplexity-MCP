@@ -1,5 +1,15 @@
 import { defineConfig } from "vitest/config";
 
+// CI sets PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 to avoid pulling Chromium on
+// every job. Integration tests that fork manual-login-runner / health-check
+// (and therefore launch a real Patchright browser) cannot run in that mode
+// and must be excluded from the test set entirely; otherwise they fail with
+// "browser executable doesn't exist" assertion errors after consuming
+// minutes per matrix cell. Skipping in CI is the standard pattern; locally
+// the env-var is unset so integration tests run normally.
+const skipBrowserBackedTests =
+  process.env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD === "1";
+
 export default defineConfig({
   test: {
     include: [
@@ -7,6 +17,12 @@ export default defineConfig({
       "packages/webview/tests/**/*.test.{ts,tsx}",
       "packages/mcp-server/test/**/*.test.{js,ts}",
       "packages/shared/tests/**/*.test.ts",
+    ],
+    exclude: [
+      "**/node_modules/**",
+      ...(skipBrowserBackedTests
+        ? ["packages/mcp-server/test/integration/**"]
+        : []),
     ],
     environment: "node",
     coverage: {
