@@ -18,6 +18,7 @@
  */
 
 import { setTimeout as delay } from "node:timers/promises";
+import type { RequestLike } from "express";
 
 export interface SecurityOptions {
   ratelimitRpm?: number;
@@ -197,7 +198,7 @@ export function resetTripwire(security: SecurityMiddlewareResult): void {
   (security as unknown as { __tripwireLatched?: boolean }).__tripwireLatched = false;
 }
 
-function pickClientIp(req: any): string | null {
+function pickClientIp(req: RequestLike): string | null {
   const xff = typeof req.headers?.["x-forwarded-for"] === "string" ? req.headers["x-forwarded-for"] : null;
   if (xff) {
     return xff.split(",")[0]!.trim();
@@ -207,7 +208,7 @@ function pickClientIp(req: any): string | null {
   return req.ip ?? req.connection?.remoteAddress ?? req.socket?.remoteAddress ?? null;
 }
 
-function isLoopbackRequest(req: any, ip: string | null): boolean {
+function isLoopbackRequest(req: RequestLike, ip: string | null): boolean {
   // x-perplexity-source is set by the extension host to mark its own calls.
   if (req.headers?.["x-perplexity-source"] === "loopback") return true;
   if (ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1") {

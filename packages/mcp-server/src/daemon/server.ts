@@ -6,7 +6,7 @@ import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middlew
 // @ts-ignore — helmet is CJS; express-shim.d.ts doesn't declare it
 import helmet from "helmet";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import express from "express";
+import express, { type NextFunction, type Request, type RequestLike, type Response } from "express";
 import { PerplexityClient } from "../client.js";
 import { registerPrompts } from "../prompts.js";
 import { registerResources } from "../resources.js";
@@ -203,7 +203,7 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
   // for audit enrichment only — it is NEVER consulted for the allowlist
   // check below. Runs before helmet / json / trace / security.middleware so
   // downstream consumers always see a populated source.
-  app.use((req: any, _res: any, next: any) => {
+  app.use((req: Request, _res: Response, next: NextFunction): void => {
     req._pplx = req._pplx ?? {};
     req._pplx.source = computeRequestSource(req);
     const declared = req.headers?.["x-perplexity-source"];
@@ -215,11 +215,15 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
   // to the MCP + OAuth surface (plus homepage / robots / favicon). Any other
   // path returns 404 (not 403) so the admin surface is invisible to probes.
   // Loopback requests pass through unchanged.
-  app.use((req: any, res: any, next: any) => {
-    if (req._pplx.source !== "tunnel") return next();
+  app.use((req: Request, res: Response, next: NextFunction): void => {
+    if (req._pplx?.source !== "tunnel") {
+      next();
+      return;
+    }
     const path = (typeof req.originalUrl === "string" ? req.originalUrl : req.url ?? "");
     if (!pathIsTunnelAllowed(path)) {
-      return res.status(404).end();
+      res.status(404).end();
+      return;
     }
     next();
   });
@@ -257,7 +261,7 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
   });
 
   // Trace every admin/mcp request + write an audit line.
-  app.use((req: any, res: any, next: any) => {
+  app.use((req: Request, res: Response, next: NextFunction): void => {
     const startedAtReq = Date.now();
     const ctx = req._pplx ?? {};
     res.on("finish", () => {
@@ -394,12 +398,16 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
   // deter bulk-registration scripts from a leaked tunnel URL.
   const oauthPathRe = /^\/(authorize|register|token|revoke)\b/;
   const oauthIpHits = new Map<string, number[]>();
-  app.use((req: any, res: any, next: any) => {
+  app.use((req: Request, res: Response, next: NextFunction): void => {
     if (!oauthPathRe.test(req.path ?? "")) {
-      return next();
+      next();
+      return;
     }
-    const ctx = (req as any)._pplx ?? {};
-    if (ctx.source === "loopback") return next();
+    const ctx = req._pplx ?? {};
+    if (ctx.source === "loopback") {
+      next();
+      return;
+    }
     const key = ctx.ip ?? "?";
     const now = Date.now();
     const bucket = (oauthIpHits.get(key) ?? []).filter((ts) => ts >= now - 60_000);
@@ -407,9 +415,10 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
     oauthIpHits.set(key, bucket);
     if (bucket.length > 30) {
       res.setHeader("Retry-After", "60");
-      return res.status(429).json({ error: "Too Many Requests" });
+      res.status(429).json({ error: "Too Many Requests" });
+      return;
     }
-    return next();
+    next();
   });
 
   try {
@@ -805,7 +814,7 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
  * `req._pplx.declaredSource` for audit enrichment but is never consulted
  * here.
  */
-function computeRequestSource(req: any): "loopback" | "tunnel" {
+function computeRequestSource(req: RequestLike): "loopback" | "tunnel" {
   if (req.headers?.["x-forwarded-for"]) return "tunnel";
   if (req.headers?.["cf-connecting-ip"]) return "tunnel";
   const ip = req.ip ?? req.socket?.remoteAddress ?? "";
@@ -837,7 +846,7 @@ function pathIsTunnelAllowed(path: string): boolean {
 }
 
 /** Resolve the OAuth issuer from the request's Host header so tunnel + loopback clients both see a correct metadata doc. */
-function resolveIssuer(req: any, fallback: URL): URL {
+function resolveIssuer(req: RequestLike, fallback: URL): URL {
   // Prefer X-Forwarded-Host when present — real cloudflared / ngrok front-
   // ends set this to the public hostname while the underlying Host header
   // stays 127.0.0.1 (local socket). Fall back to Host if the proxy only
@@ -864,7 +873,7 @@ function resolveIssuer(req: any, fallback: URL): URL {
  * PRM endpoint, the /authorize→/token binding, and verifyAccessToken's
  * expectedResource all agree on a single form.
  */
-export function resolveRequestResource(req: any, fallback: URL = new URL("http://localhost")): string {
+export function resolveRequestResource(req: RequestLike, fallback: URL = new URL("http://localhost")): string {
   const issuer = resolveIssuer(req, fallback);
   return new URL("/mcp", issuer).toString().replace(/\/$/, "");
 }
