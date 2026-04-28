@@ -2,8 +2,8 @@
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./mcp-tool-icons/Perplexity.svg" height="120">
-    <source media="(prefers-color-scheme: light)" srcset="./mcp-tool-icons/Perplexity.svg" height="120">
+    <source media="(prefers-color-scheme: dark)" srcset="./mcp-tool-icons/perplexity.svg" height="120">
+    <source media="(prefers-color-scheme: light)" srcset="./mcp-tool-icons/perplexity.svg" height="120">
     <img alt="Perplexity MCP" src="./mcp-tool-icons/Perplexity_Black.svg" height="120">
   </picture>
 </p>
