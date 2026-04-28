@@ -12,6 +12,7 @@ import {
   type BrowserProbe,
 } from "../browser/browser-detect.js";
 import type { BrowserDownloadManager } from "../browser/browser-download.js";
+import { getImpitStatus } from "../native-deps.js";
 
 export type AuthStatus =
   | "unknown" | "checking" | "valid" | "expired" | "error"
@@ -351,8 +352,32 @@ export class AuthManager implements vscode.Disposable {
 
   private async runLogin(opts: LoginOptions): Promise<AuthLoginResult> {
     this.setState({ profile: opts.profile, status: "logging-in", error: undefined, errorDetail: undefined });
-    const runnerPath = opts.runnerPath ?? this.defaultRunnerPath(opts.mode);
 
+    // Pilot: try the impit runner first when (a) the user opted in via env,
+    // (b) impit is installed (Speed Boost), (c) we're in auto mode, (d) the
+    // caller didn't pin a specific runnerPath. On impit-only failures
+    // (cf_blocked, impit_missing/load_failed, crash) we transparently retry
+    // with the existing browser runner. On user-facing failures (otp_rejected,
+    // sso_required, email_rejected) we surface them directly.
+    const wantImpit =
+      opts.mode === "auto" &&
+      !opts.runnerPath &&
+      process.env.PERPLEXITY_EXPERIMENTAL_IMPIT_LOGIN === "1" &&
+      isImpitInstalled();
+
+    if (wantImpit) {
+      const impitPath = this.defaultRunnerPath("impit-auto" as "auto");
+      const impit = await this.runOneRunner(opts, impitPath);
+      if (impit.ok) return impit;
+      if (!isImpitFallbackReason(impit.reason)) return impit;
+      this.log(`[login:${opts.profile}] impit runner failed (${impit.reason}); falling back to browser`);
+    }
+
+    const runnerPath = opts.runnerPath ?? this.defaultRunnerPath(opts.mode);
+    return this.runOneRunner(opts, runnerPath);
+  }
+
+  private async runOneRunner(opts: LoginOptions, runnerPath: string): Promise<AuthLoginResult> {
     // Forward the detected browser to the runner so the spawned login
     // process inherits the same browser selection (Chrome > Edge > Brave >
     // bundled). Custom-path picks pass through via PERPLEXITY_BROWSER_PATH.
@@ -505,12 +530,33 @@ export class AuthManager implements vscode.Disposable {
     return promise as Promise<AuthState>;
   }
 
-  private defaultRunnerPath(mode: "auto" | "manual" | "health"): string {
+  private defaultRunnerPath(mode: "auto" | "manual" | "health" | "impit-auto"): string {
     const map = {
       auto: "login-runner.mjs",
       manual: "manual-login-runner.mjs",
       health: "health-check.mjs",
+      "impit-auto": "impit-login-runner.mjs",
     } as const;
     return join(this.extensionUri.fsPath, "dist", "mcp", map[mode]);
+  }
+}
+
+/** Failure reasons from the impit runner that warrant browser fallback. */
+function isImpitFallbackReason(reason: string | undefined): boolean {
+  if (!reason) return true; // unknown → safer to retry
+  return [
+    "cf_blocked",
+    "impit_missing",
+    "impit_load_failed",
+    "auto_unsupported",
+    "crash",
+  ].includes(reason);
+}
+
+function isImpitInstalled(): boolean {
+  try {
+    return !!getImpitStatus()?.installed;
+  } catch {
+    return false;
   }
 }

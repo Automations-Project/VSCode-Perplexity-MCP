@@ -82,7 +82,10 @@ export async function syncCloudHistoryViaDaemon(
     const result = await callDaemonTool(
       "perplexity_sync_cloud",
       options.pageSize ? { page_size: options.pageSize } : {},
-      { ...options, clientId },
+      // 5-minute budget covers limit=1000 (a few MB payload + 1000 upserts
+      // each writing a .md file). Far above the 60s SDK default which was
+      // firing as MCP error -32001 in 0.8.21.
+      { ...options, clientId, requestTimeoutMs: 5 * 60 * 1000 },
     );
     await relay?.waitForPhase("done", 250).catch(() => undefined);
     return parseCloudSyncResult(result.text);
@@ -109,7 +112,7 @@ export async function hydrateCloudHistoryEntryViaDaemon(
 async function callDaemonTool(
   name: string,
   args: Record<string, unknown>,
-  options: DaemonClientRequestOptions,
+  options: DaemonClientRequestOptions & { requestTimeoutMs?: number },
 ): Promise<{ text: string }> {
   const daemon = await ensureDaemon(options);
   const clientId = options.clientId ?? `daemon-client-${randomUUID()}`;
@@ -134,7 +137,12 @@ async function callDaemonTool(
 
   try {
     await client.connect(transport);
-    const result = await client.callTool({ name, arguments: args });
+    // The MCP SDK's default per-request timeout is 60s
+    // (DEFAULT_REQUEST_TIMEOUT_MSEC). cloud-sync with limit=1000 + many
+    // upserts can run longer than that, so callers can opt into a longer
+    // budget via requestTimeoutMs.
+    const callToolOptions = options.requestTimeoutMs ? { timeout: options.requestTimeoutMs } : undefined;
+    const result = await client.callTool({ name, arguments: args }, undefined, callToolOptions);
     if (result.isError) {
       throw new Error(getToolText(result));
     }

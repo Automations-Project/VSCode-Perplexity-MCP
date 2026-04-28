@@ -803,12 +803,18 @@ export function HistoryView({
   setFilter,
   items,
   totalCount,
+  cloudCount,
+  totalSources,
   send,
 }: {
   filter: string;
   setFilter: (value: string) => void;
   items: HistoryItem[];
   totalCount: number;
+  /** Global count of cloud-sourced entries (unaffected by filter). */
+  cloudCount: number;
+  /** Global sum of all sourceCount values (unaffected by filter). */
+  totalSources: number;
   send: SendFn;
 }) {
   const sortNewest = useDashboardStore((s) => s.historySortNewest);
@@ -856,12 +862,12 @@ export function HistoryView({
           )}
           <div className="hist-stat hist-stat-cloud">
             <span className="hist-stat-icon"><Cloud size={12} /></span>
-            <span className="hist-stat-value">{items.filter(i => i.source === "cloud").length}</span>
+            <span className="hist-stat-value">{cloudCount}</span>
             <span className="hist-stat-label">cloud</span>
           </div>
           <div className="hist-stat hist-stat-sources">
             <span className="hist-stat-icon"><LinkIcon size={12} /></span>
-            <span className="hist-stat-value">{items.reduce((s, i) => s + i.sourceCount, 0)}</span>
+            <span className="hist-stat-value">{totalSources}</span>
             <span className="hist-stat-label">sources</span>
           </div>
         </div>

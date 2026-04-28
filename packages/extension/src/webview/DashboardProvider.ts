@@ -66,6 +66,7 @@ import { renderWebviewHtml } from "./html.js";
 import { LAUNCHER_PATH } from "../launcher/write-launcher.js";
 import {
   configureExternalViewer,
+  countHistoryEntries,
   deleteHistoryEntry,
   listExternalViewers,
   listHistoryEntries,
@@ -173,7 +174,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
     // change between actions" UX where a 100-cap rebuild and a 200-cap
     // sync rendered different visible totals on stores larger than 100.
     if (!this.view) return;
-    await this.view.webview.postMessage({ type: "history:list", payload: { items: listHistoryEntries(limit) } });
+    await this.view.webview.postMessage({ type: "history:list", payload: { items: listHistoryEntries(limit), totalCount: countHistoryEntries() } });
   }
 
   async postViewersList(): Promise<void> {
@@ -1558,6 +1559,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
     return {
       snapshot: getAccountSnapshot(),
       history: listHistoryEntries(25),
+      historyTotalCount: countHistoryEntries(),
       ideStatus,
       rulesStatus: wsRoot ? getRulesStatuses(wsRoot) : [],
       settings,

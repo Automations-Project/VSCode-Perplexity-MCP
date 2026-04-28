@@ -30,6 +30,7 @@ function makeDashboardState(enableTunnels: boolean): DashboardState {
       },
     } as unknown as DashboardState["snapshot"],
     history: [],
+    historyTotalCount: 0,
     ideStatus: {},
     rulesStatus: [],
     settings: {

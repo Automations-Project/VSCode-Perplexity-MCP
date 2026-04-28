@@ -1,7 +1,7 @@
 {
   "name": "perplexity-vscode",
   "displayName": "Perplexity MCP",
-  "version": "0.8.19",
+  "version": "0.8.28",
   "publisher": "Automations-Project",
   "private": true,
   "description": "Native VS Code extension for the Perplexity MCP server with dashboard, auth, and multi-IDE config generation",
@@ -376,7 +376,7 @@
     "build": "npm run clean && npm run build -w @perplexity-user-mcp/shared && npm run build -w perplexity-user-mcp && npm run build:extension && npm run build:mcp && npm run build:webview && node ./scripts/emit-version.mjs && node ./scripts/prepare-webview.mjs",
     "build:webview": "cd ../webview && npx vite build",
     "build:extension": "tsup src/extension.ts --format cjs --platform node --target node20 --outDir dist --external vscode --external patchright --external patchright-core --external got-scraping --external got --external tough-cookie --external header-generator --external fingerprint-generator --external keytar --external gray-matter --external express --external @ngrok/ngrok --external helmet",
-    "build:mcp": "tsup ../mcp-server/src/index.ts ../mcp-server/src/manual-login-runner.js ../mcp-server/src/login-runner.js ../mcp-server/src/health-check.js --format esm --platform node --target node20 --outDir dist/mcp --external patchright --external patchright-core --external got-scraping --external got --external tough-cookie --external header-generator --external fingerprint-generator --external keytar --external gray-matter --external express --external @ngrok/ngrok --external helmet && node -e \"require('fs').renameSync('dist/mcp/index.mjs','dist/mcp/server.mjs')\" && node -e \"require('fs').copyFileSync('../mcp-server/package.json','dist/mcp/package.json')\"",
+    "build:mcp": "tsup ../mcp-server/src/index.ts ../mcp-server/src/manual-login-runner.js ../mcp-server/src/login-runner.js ../mcp-server/src/impit-login-runner.js ../mcp-server/src/health-check.js --format esm --platform node --target node20 --outDir dist/mcp --external patchright --external patchright-core --external got-scraping --external got --external tough-cookie --external header-generator --external fingerprint-generator --external keytar --external gray-matter --external express --external @ngrok/ngrok --external helmet && node -e \"require('fs').renameSync('dist/mcp/index.mjs','dist/mcp/server.mjs')\" && node -e \"require('fs').copyFileSync('../mcp-server/package.json','dist/mcp/package.json')\"",
     "watch": "tsup src/extension.ts --format cjs --platform node --target node20 --outDir dist --external vscode --external patchright --external patchright-core --external got-scraping --external got --external tough-cookie --external header-generator --external fingerprint-generator --external keytar --external gray-matter --external express --external @ngrok/ngrok --external helmet --watch",
     "prepare:package-deps": "node ./scripts/prepare-package-deps.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",

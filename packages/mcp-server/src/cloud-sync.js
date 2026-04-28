@@ -1,8 +1,8 @@
-import { PerplexityClient, listCloudThreadsViaImpit } from "./client.js";
+import { PerplexityClient, listCloudThreadsViaImpit, getCloudThreadViaImpit } from "./client.js";
 import { hydrateCloudEntry, upsertFromCloud } from "./history-store.js";
 
-const DEFAULT_PAGE_SIZE = 100;
-const MAX_PAGES = 50; // hard cap to avoid accidental runaway (100*50 = 5000 threads)
+const DEFAULT_PAGE_SIZE = 1000;
+const MAX_PAGES = 10; // hard cap to avoid accidental runaway (1000*10 = 10000 threads)
 
 function firstAnswerPreview(firstAnswerJson) {
   if (typeof firstAnswerJson !== "string") return "";
@@ -47,7 +47,7 @@ function buildHydratedBody(entries) {
  * @param {PerplexityClient} [opts.client] Pre-initialized client. If supplied, the impit fast path is skipped (the caller has already paid for init).
  * @param {() => Promise<PerplexityClient>} [opts.getClient] Lazy getter. Called only when the impit path misses, so the browser is never spawned in the all-impit happy path.
  * @param {(evt: { phase: string; fetched?: number; total?: number; inserted?: number; updated?: number; skipped?: number; error?: string }) => void} [opts.onProgress]
- * @param {number} [opts.pageSize=100]
+ * @param {number} [opts.pageSize=1000]
  * @param {AbortSignal} [opts.signal]
  */
 export async function syncCloudHistory(opts = {}) {
@@ -149,9 +149,17 @@ export async function syncCloudHistory(opts = {}) {
  * replace the stub body. No-op if the entry is already hydrated or
  * isn't a cloud entry.
  *
+ * Tries the impit fast path first (no browser launch). If that misses,
+ * lazy-acquires the daemon's client (or constructs one) and falls back
+ * to the browser path. The first impit miss in a hydrate run sticks for
+ * any subsequent steps in this same call (there's only one fetch, so
+ * this is a no-op in practice but keeps the semantics consistent with
+ * syncCloudHistory).
+ *
  * @param {string} historyId
  * @param {object} [opts]
- * @param {PerplexityClient} [opts.client]
+ * @param {PerplexityClient} [opts.client] Pre-init'd client. Skips impit fast path (caller already paid for init).
+ * @param {() => Promise<PerplexityClient>} [opts.getClient] Lazy getter. Only called if impit misses.
  * @returns {Promise<{ action: "skipped-local" | "skipped-hydrated" | "hydrated"; id?: string }>}
  */
 export async function hydrateCloudHistoryEntry(historyId, opts = {}) {
@@ -162,16 +170,34 @@ export async function hydrateCloudHistoryEntry(historyId, opts = {}) {
   if (entry.cloudHydratedAt) return { action: "skipped-hydrated", id: entry.id };
   if (!entry.threadSlug) throw new Error(`Entry '${historyId}' has no threadSlug.`);
 
-  let ownsClient = false;
   let client = opts.client ?? null;
+  let ownsClient = false;
+  let thread = null;
+
+  // Fast path: impit. Skipped when caller passed an already-init'd client
+  // (no point — they've already paid for init).
   if (!client) {
-    client = new PerplexityClient();
-    ownsClient = true;
-    await client.init();
+    thread = await getCloudThreadViaImpit(entry.threadSlug);
+  }
+
+  if (!thread) {
+    if (!client) {
+      if (opts.getClient) {
+        client = await opts.getClient();
+      } else {
+        client = new PerplexityClient();
+        ownsClient = true;
+        await client.init();
+      }
+    }
+    try {
+      thread = await client.getCloudThread(entry.threadSlug);
+    } finally {
+      if (ownsClient && !thread) await client.shutdown().catch(() => {});
+    }
   }
 
   try {
-    const thread = await client.getCloudThread(entry.threadSlug);
     const body = buildHydratedBody(thread.entries);
     const firstEntry = thread.entries[0];
     const preview = firstEntry?.answer ? firstEntry.answer.replace(/\s+/g, " ").slice(0, 220) : entry.answerPreview;
@@ -184,6 +210,6 @@ export async function hydrateCloudHistoryEntry(historyId, opts = {}) {
     });
     return { action: "hydrated", id: entry.id };
   } finally {
-    if (ownsClient) await client.shutdown().catch(() => {});
+    if (ownsClient && client) await client.shutdown().catch(() => {});
   }
 }

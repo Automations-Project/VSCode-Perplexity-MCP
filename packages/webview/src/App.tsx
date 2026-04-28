@@ -249,7 +249,15 @@ function App() {
               <ModelsView filter={modelFilter} setFilter={setModelFilter} groups={modelGroups} state={state} send={send} />
             ) : null}
             {state && activeTab === "history" ? (
-              <HistoryView filter={historyFilter} setFilter={setHistoryFilter} items={filteredHistory} totalCount={state.history.length} send={send} />
+              <HistoryView
+                filter={historyFilter}
+                setFilter={setHistoryFilter}
+                items={filteredHistory}
+                totalCount={state.historyTotalCount ?? state.history.length}
+                cloudCount={state.history.filter(i => i.source === "cloud").length}
+                totalSources={state.history.reduce((s, i) => s + (i.sourceCount ?? 0), 0)}
+                send={send}
+              />
             ) : null}
             {state && activeTab === "settings" ? <SettingsView state={state} send={send} /> : null}
             {state && activeTab === "rules" ? <RulesView state={state} send={send} /> : null}

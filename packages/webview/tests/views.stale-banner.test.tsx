@@ -66,6 +66,7 @@ const baseState: DashboardState = {
     speedBoost: { installed: false, path: null, version: null, inWorkspace: false },
   },
   history: [],
+  historyTotalCount: 0,
   ideStatus: { cursor: cursorStatus },
   rulesStatus: [],
   settings,

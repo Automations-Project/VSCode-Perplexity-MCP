@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import type { ExportFormat, ExtensionMessage, ExternalViewer } from "@perplexity-user-mcp/shared";
 import {
+  countAllHistory,
   deleteEntry,
   get,
   pin,
@@ -94,6 +95,10 @@ export function rebuildHistoryEntries() {
 
 export function listHistoryEntries(limit = 50) {
   return readHistory({ limit });
+}
+
+export function countHistoryEntries(): number {
+  return countAllHistory();
 }
 
 export interface CloudSyncProgressPayload {

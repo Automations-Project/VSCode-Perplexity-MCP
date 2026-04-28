@@ -6,6 +6,28 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.28] — 2026-04-28 — Pre-public impit coverage: login + export + models
+
+> **Versioning note:** 0.8.20 through 0.8.27 were local pre-release iterations and were never tagged. The cumulative work (cloud-sync timeout fixes, retrieve-via-impit, search-pilot, plus the four phases below) is rolled into this release. Plan: [docs/impit-coverage-plan.md](docs/impit-coverage-plan.md).
+
+### Added
+- **Phase 1 — Impit-driven `perplexity_login` (auto mode), opt-in.** New runner at [packages/mcp-server/src/impit-login-runner.js](packages/mcp-server/src/impit-login-runner.js) drives the existing 6-step Perplexity email+OTP flow (csrf → sso check → signin/email → wait OTP → otp-redirect → callback) through impit instead of through a Patchright browser. The big visible Chrome window goes away on auto-login; OTP entry happens in the dashboard webview (existing UI) or CLI (`readline`-style prompt). Falls back to the existing browser runner on impit-only failures (`cf_blocked`, `impit_missing`, `impit_load_failed`, `auto_unsupported`, `crash`); user-facing failures (`otp_rejected`, `sso_required`, `email_rejected`) are surfaced directly. Gated behind `PERPLEXITY_EXPERIMENTAL_IMPIT_LOGIN=1` (env var) for the public release.
+- **CF warmup helper** at [packages/mcp-server/src/cf-warmup.ts](packages/mcp-server/src/cf-warmup.ts). Brief headless Chromium launch (~1-2s, capped at ~12s) that captures `cf_clearance` for the impit pipeline. Skipped when the vault already has it. This is the only browser surface remaining in the impit-login pilot — Phase 7 (post-public) explores raw-impit Turnstile solving to drop it entirely.
+- **`CookieJar` helper** at [packages/mcp-server/src/cookie-jar.js](packages/mcp-server/src/cookie-jar.js) (+ tests, 21 cases, all passing). RFC 6265-style Set-Cookie/Cookie round-trip used by the impit-login runner to capture session cookies across the OAuth callback redirect chain. Hand-rolled (no new npm deps) to honor the externalize-vs-bundle rules.
+- **Phase 2 — CLI parity for impit-login.** `npx perplexity-user-mcp login --mode auto --email <addr>` honors the same `PERPLEXITY_EXPERIMENTAL_IMPIT_LOGIN=1` opt-in (or `--impit` flag) and falls back to the browser runner with the same reason set as the extension. `--no-impit` forces the browser path.
+- **Phase 3 — `perplexity_export` impit fast path.** PDF / DOCX exports now go via two impit calls (entry-uuid resolve + `POST /rest/entry/export`) instead of through `page.evaluate`. Stable JSON contract — default-on, no env-var gate. Markdown remains a 100% local operation. Implemented as `exportThreadViaImpit` in [packages/mcp-server/src/client.ts](packages/mcp-server/src/client.ts).
+- **Phase 4 — `perplexity_models` from-cache.** Reads `<configDir>/profiles/<name>/models-cache.json` directly via the new `readCachedAccountInfoFromDisk()` helper, bypassing browser init when the cache is populated by an earlier `refresh.ts` tier-fetch. Falls back to lazy `getClient()` on missing/empty cache. Anonymous accounts still go through init (their cache has no `modelsConfig`).
+
+### Changed
+- `parseSSEText`, `parseASIReconnectSSE`, `extractFromWorkflowBlock`, `parseASIThreadEntry` were promoted from `private` instance methods to `static` so the standalone impit helpers can share the same response-parsing source of truth as the in-class browser path.
+- `auth-manager.ts` `runLogin` refactored into `runLogin` + `runOneRunner` to support the impit→browser fallback. Behavior identical when `PERPLEXITY_EXPERIMENTAL_IMPIT_LOGIN` is unset.
+- `loadImpit` and `ImpitModule` are now exports of `refresh.ts` so the impit-login runner can construct an Impit client directly.
+
+### Tests
+- `cookie-jar.test.js` — 21 cases covering Set-Cookie parsing, Domain/Path matching, Expires/Max-Age, Secure/HttpOnly, replace-on-same-triple, and round-trip through `toPlaywrightShape()`.
+- `getClient-retry.test.js` updated to set `PERPLEXITY_CONFIG_DIR` so the new cache-fast-path doesn't bypass the init() the test exercises.
+- `stealth-args.test.ts` updated to accept `static extractFromWorkflowBlock` (was `private`).
+
 ## [0.8.19] — 2026-04-28 — Fix impit silent-empty + history-list cap consistency
 
 > **Versioning note:** 0.8.18 was a local pre-release iteration and was never tagged.

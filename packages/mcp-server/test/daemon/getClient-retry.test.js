@@ -32,14 +32,24 @@ function makeMockClient() {
 describe("daemon getClient init retry", () => {
   let configDir;
   let daemon;
+  let prevConfigDir;
 
   beforeEach(() => {
     configDir = mkdtempSync(join(tmpdir(), "pplx-getclient-retry-"));
+    // Point the cache-resolver helpers (which read the global config dir
+    // via `getActivePaths`) at our empty tempdir so `perplexity_models`
+    // misses the on-disk cache and exercises the getClient init path
+    // this test is about. Without this the cache short-circuits the
+    // call and init() is never invoked. (0.8.27 — Agent C cache path.)
+    prevConfigDir = process.env.PERPLEXITY_CONFIG_DIR;
+    process.env.PERPLEXITY_CONFIG_DIR = configDir;
   });
 
   afterEach(async () => {
     await daemon?.close?.();
     rmSync(configDir, { recursive: true, force: true });
+    if (prevConfigDir === undefined) delete process.env.PERPLEXITY_CONFIG_DIR;
+    else process.env.PERPLEXITY_CONFIG_DIR = prevConfigDir;
   });
 
   it("constructs a fresh client and retries init() after a rejected init", async () => {

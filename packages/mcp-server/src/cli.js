@@ -533,32 +533,61 @@ export async function routeCommand(parsed) {
     const { fork } = await import("node:child_process");
     const mode = flags.mode ?? "manual";
     const profile = flags.profile ?? (await import("./profiles.js")).getActiveName() ?? "default";
-    const runner = fileURLToPath(new URL(
-      mode === "auto" ? "./login-runner.mjs" : "./manual-login-runner.mjs",
-      import.meta.url
-    ));
     const env = { ...process.env, PERPLEXITY_PROFILE: profile };
     if (mode === "auto") {
       if (!flags.email) return { code: 1, stdout: "", stderr: "`--email` required for --mode auto.\n" };
       env.PERPLEXITY_EMAIL = String(flags.email);
     }
-    return new Promise((resolve) => {
-      const child = fork(runner, [], { env, stdio: ["inherit", "pipe", "inherit", "ipc"] });
-      let out = "";
-      child.stdout.on("data", (d) => { out += d.toString(); process.stderr.write(d); });
-      child.on("message", async (m) => {
-        if (m?.phase === "awaiting_otp") {
-          const { promptSecret } = await import("./tty-prompt.js");
-          const otp = await promptSecret({ prompt: "Enter OTP from your email: " });
-          child.send({ otp });
-        }
+
+    // Pilot: try the impit-driven runner for `--mode auto` when (a) the
+    // user opted in via env / `--impit` flag, (b) impit is installed, and
+    // (c) `--no-impit` wasn't passed. Falls back to the browser-based
+    // runner on impit-only failures (cf_blocked, impit_missing, crash).
+    const wantImpit =
+      mode === "auto" &&
+      !flags["no-impit"] &&
+      (flags.impit || process.env.PERPLEXITY_EXPERIMENTAL_IMPIT_LOGIN === "1") &&
+      (await import("./refresh.js")).isImpitAvailable();
+
+    const browserRunnerName = mode === "auto" ? "./login-runner.mjs" : "./manual-login-runner.mjs";
+    const browserRunner = fileURLToPath(new URL(browserRunnerName, import.meta.url));
+    const impitRunner = fileURLToPath(new URL("./impit-login-runner.mjs", import.meta.url));
+    const IMPIT_FALLBACK_REASONS = new Set(["cf_blocked", "impit_missing", "impit_load_failed", "auto_unsupported", "crash"]);
+
+    async function spawnRunner(runner) {
+      return new Promise((resolve) => {
+        const child = fork(runner, [], { env, stdio: ["inherit", "pipe", "inherit", "ipc"] });
+        let out = "";
+        child.stdout.on("data", (d) => { out += d.toString(); process.stderr.write(d); });
+        child.on("message", async (m) => {
+          if (m?.phase === "awaiting_otp") {
+            const { promptSecret } = await import("./tty-prompt.js");
+            const otp = await promptSecret({ prompt: "Enter OTP from your email: " });
+            child.send({ otp });
+          }
+        });
+        child.on("close", (code) => {
+          const lines = out.trim().split("\n").filter(Boolean);
+          const last = lines[lines.length - 1];
+          let parsed = null;
+          try { parsed = last ? JSON.parse(last) : null; } catch { /* not JSON */ }
+          resolve({ code: code ?? 0, last, parsed });
+        });
       });
-      child.on("close", (code) => {
-        const lines = out.trim().split("\n").filter(Boolean);
-        const last = lines[lines.length - 1];
-        resolve({ code: code ?? 0, stdout: (flags.json ? last : `login finished (${code})`) + "\n", stderr: "" });
-      });
-    });
+    }
+
+    if (wantImpit) {
+      const impitResult = await spawnRunner(impitRunner);
+      const reason = impitResult.parsed?.reason;
+      const ok = impitResult.parsed?.ok === true;
+      if (ok || (reason && !IMPIT_FALLBACK_REASONS.has(reason))) {
+        return { code: impitResult.code, stdout: (flags.json ? impitResult.last : `login finished (${impitResult.code})`) + "\n", stderr: "" };
+      }
+      process.stderr.write(`[cli login] impit runner failed (${reason ?? "unknown"}); falling back to browser.\n`);
+    }
+
+    const browserResult = await spawnRunner(browserRunner);
+    return { code: browserResult.code, stdout: (flags.json ? browserResult.last : `login finished (${browserResult.code})`) + "\n", stderr: "" };
   }
   /* v8 ignore stop */
 

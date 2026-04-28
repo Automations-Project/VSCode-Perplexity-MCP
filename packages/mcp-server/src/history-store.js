@@ -492,6 +492,15 @@ export function findPendingByThread(threadSlug) {
     .find((entry) => entry.threadSlug === threadSlug) ?? null;
 }
 
+export function countAll() {
+  ensureStoreDirs();
+  const indexed = readIndex();
+  if (indexed) {
+    return indexed.length;
+  }
+  return readdirSync(getHistoryDir()).filter((file) => file.endsWith(".md")).length;
+}
+
 export function appendHistory(entry) {
   return append(entry);
 }

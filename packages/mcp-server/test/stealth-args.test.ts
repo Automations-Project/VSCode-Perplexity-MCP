@@ -114,10 +114,11 @@ describe("downloadASIFiles — APIRequestContext refactor guard", () => {
     // Bound the slice to the immediate next sibling declaration so we don't
     // accidentally pick up `page.evaluate` from later helpers (e.g.
     // extractFromWorkflowBlock, evaluateInBrowser, interceptRequests).
-    // The next sibling in this class is `private extractFromWorkflowBlock`
-    // — we slice up to that marker.
-    const NEXT_SIBLING = "private extractFromWorkflowBlock";
-    const next = CLIENT_TS.indexOf(NEXT_SIBLING, start + 1);
+    // The next sibling in this class is `extractFromWorkflowBlock` — we
+    // slice up to that marker. As of 0.8.27 the method was promoted from
+    // `private` to `static` so the standalone retrieve-via-impit helper
+    // can call it; accept either prefix.
+    const next = CLIENT_TS.search(/(?:private|static) extractFromWorkflowBlock/);
     expect(next).toBeGreaterThan(start);
     const methodSrc = CLIENT_TS.slice(start, next);
 

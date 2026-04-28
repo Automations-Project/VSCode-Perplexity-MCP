@@ -34,6 +34,7 @@ export declare function rebuildIndex(): RebuildIndexResult;
 export declare function getMdPath(id: string): string | null;
 export declare function getAttachmentsDir(id: string): string | null;
 export declare function findPendingByThread(threadSlug: string): HistoryItem | null;
+export declare function countAll(): number;
 export declare function appendHistory(entry: HistoryStoreEntryInput): HistoryItem;
 export declare function readHistory(limit?: number): HistoryItem[];
 

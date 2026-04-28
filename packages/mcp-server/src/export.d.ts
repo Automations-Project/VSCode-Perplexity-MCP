@@ -6,6 +6,7 @@ export interface ExportResult {
   contentType: string;
 }
 
+export declare const FORMAT_TO_CONTENT_TYPE: Record<ExportFormat, string>;
 export declare function resolveExportApiFormat(format: ExportFormat): "pdf" | "md" | "docx";
 export declare function exportThread(options: {
   entryUuid: string;

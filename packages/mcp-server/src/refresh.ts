@@ -262,7 +262,7 @@ async function tierGotScraping(cookies: PlaywrightCookie[], log: (l: string) => 
  * Full types aren't declared in our tsconfig because impit is NOT a build-time
  * dependency — it's installed at runtime by the user via "Install Speed Boost".
  */
-interface ImpitModule {
+export interface ImpitModule {
   Impit: new (opts: { browser: string; ignoreTlsErrors?: boolean; proxyUrl?: string }) => {
     fetch(
       url: string,
@@ -295,7 +295,7 @@ interface ImpitModule {
  * file path string per the docs) and resolves impit's peer native binding
  * from native-deps/node_modules correctly.
  */
-async function loadImpit(): Promise<ImpitModule | null> {
+export async function loadImpit(): Promise<ImpitModule | null> {
   // Order matters. impit 0.13+ ships TWO entry files:
   //   index.wrapper.js — the user-facing API, exposes the `Impit` class that
   //                      canonicalizes headers from {object} → [[k,v]] tuples

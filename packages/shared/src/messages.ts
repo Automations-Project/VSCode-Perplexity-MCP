@@ -123,6 +123,8 @@ export interface RulesStatus {
 export interface DashboardState {
   snapshot: AccountSnapshot;
   history: HistoryItem[];
+  /** True total count of all history entries on disk, independent of the paginated `history` array. */
+  historyTotalCount: number;
   ideStatus: Record<string, IdeStatus>;
   rulesStatus: RulesStatus[];
   settings: ExtensionSettingsSnapshot;
@@ -522,7 +524,7 @@ export type ExtensionMessage =
         | { ok: true; results: TunnelProbeResult[]; timeoutMs: 5000 }
         | { ok: false; results?: TunnelProbeResult[]; timeoutMs: 5000; error: string };
     }
-  | { type: "history:list"; payload: { items: HistoryItem[] } }
+  | { type: "history:list"; payload: { items: HistoryItem[]; totalCount: number } }
   | { type: "history:entry"; payload: HistoryEntryDetail }
   | {
       type: "history:export:progress";

@@ -7,7 +7,7 @@ const FORMAT_TO_API = {
   docx: "docx",
 };
 
-const FORMAT_TO_CONTENT_TYPE = {
+export const FORMAT_TO_CONTENT_TYPE = {
   pdf: "application/pdf",
   markdown: "text/markdown; charset=utf-8",
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",

@@ -4,7 +4,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AnySchema, ZodRawShapeCompat } from "@modelcontextprotocol/sdk/server/zod-compat.js";
 import { z } from "zod";
 import type { PerplexityClient } from "./client.js";
-import type { SearchResult } from "./config.js";
+import { exportThreadViaImpit, readCachedAccountInfoFromDisk, retrieveThreadViaImpit } from "./client.js";
+import type { AccountInfo, SearchResult } from "./config.js";
 import { hydrateCloudHistoryEntry, syncCloudHistory } from "./cloud-sync.js";
 import { buildStoredHistoryEntry, formatResponse } from "./format.js";
 import {
@@ -84,21 +85,24 @@ function isResearchTool(tool: string): boolean {
   return tool === "perplexity_compute" || tool === "perplexity_research";
 }
 
-function buildModelsResponse(client: PerplexityClient): string {
-  const info = client.accountInfo;
+function buildModelsResponseFromAccountInfo(
+  info: AccountInfo,
+  userId: string | null,
+  authenticated: boolean,
+): string {
   const tier = info.isMax
     ? "Max"
     : info.isPro
       ? "Pro"
       : info.isEnterprise
         ? "Enterprise"
-        : client.authenticated
+        : authenticated
           ? "Authenticated"
           : "Anonymous";
 
   const lines: string[] = [
     `**Account tier:** ${tier}`,
-    `**User ID:** ${client.userId || "anonymous"}`,
+    `**User ID:** ${userId || "anonymous"}`,
     `**Computer mode:** ${info.canUseComputer ? "Available" : "Not available"}`,
   ];
 
@@ -152,6 +156,10 @@ function buildModelsResponse(client: PerplexityClient): string {
   }
 
   return lines.join("\n");
+}
+
+function buildModelsResponse(client: PerplexityClient): string {
+  return buildModelsResponseFromAccountInfo(client.accountInfo, client.userId, client.authenticated);
 }
 
 export function registerTools(
@@ -491,6 +499,20 @@ export function registerTools(
         },
       },
       async () => {
+        // Cache-first path: read the on-disk AccountInfo cache (written by
+        // refresh.ts on every successful tier-fetch and by login-runner
+        // after a fresh login). Skips the browser launch entirely on warm
+        // runs. Falls back to the lazy getClient() → init() live fetch
+        // when the cache is missing or empty (modelsConfig === null).
+        // userId is not currently persisted to the cache file — pass null
+        // and let the response render `User ID: anonymous`. authenticated
+        // is true iff modelsConfig is populated (matches today's behavior:
+        // anonymous accounts have a minimal models config).
+        // TODO: background refresh on stale cache
+        const cached = readCachedAccountInfoFromDisk();
+        if (cached?.modelsConfig) {
+          return success(buildModelsResponseFromAccountInfo(cached, null, true));
+        }
         const client = await getClient();
         return success(buildModelsResponse(client));
       },
@@ -581,8 +603,6 @@ export function registerTools(
         },
       },
       async ({ research_id, thread_slug }) => {
-        const client = await getClient();
-
         let threadSlug = thread_slug ?? null;
         let backendUuid: string | null = null;
         let readWriteToken: string | null = null;
@@ -608,6 +628,43 @@ export function registerTools(
           return failure("Provide either research_id or thread_slug.");
         }
 
+        // Try the impit fast path before forcing a browser launch. The
+        // standalone helper returns null on any failure (no impit, no
+        // session cookie, has files, "still running", parse error), in
+        // which case we fall through to the browser path.
+        try {
+          const fast = await retrieveThreadViaImpit({
+            threadSlug: threadSlug ?? "",
+            backendUuid,
+            readWriteToken,
+          });
+          if (fast) {
+            if (savedId) {
+              const isStillRunning = fast.answer.includes("still running");
+              const existing = get(savedId);
+              if (existing) {
+                update(savedId, buildStoredHistoryEntry({
+                  tool: existing.tool,
+                  query: existing.query,
+                  model: existing.model,
+                  mode: existing.mode,
+                  language: existing.language,
+                  tier: existing.tier,
+                  createdAt: existing.createdAt,
+                  status: isStillRunning ? "pending" : "completed",
+                  completedAt: isStillRunning ? existing.completedAt : new Date().toISOString(),
+                  result: fast,
+                  ...(isStillRunning ? { error: fast.answer } : {}),
+                }));
+              }
+            }
+            return success(formatResponse(fast));
+          }
+        } catch (err) {
+          console.error(`[perplexity-mcp] retrieve impit fast path threw: ${(err as Error).message}; falling back to browser.`);
+        }
+
+        const client = await getClient();
         try {
           const result = await client.retrieveThread({
             threadSlug: threadSlug!,
@@ -673,6 +730,22 @@ export function registerTools(
           return failure("This entry cannot be exported natively because it has no Perplexity thread slug.");
         }
 
+        // Try the impit fast path before forcing a browser launch. The
+        // standalone helper returns null on any failure (no impit, no
+        // session cookie, can't resolve entry UUID, non-200), in which
+        // case we fall through to the lazy getClient() path below.
+        try {
+          const fast = await exportThreadViaImpit({ threadSlug: entry.threadSlug, format });
+          if (fast) {
+            const savedPath = join(attachmentsDir, fast.filename);
+            mkdirSync(dirname(savedPath), { recursive: true });
+            writeFileSync(savedPath, fast.buffer);
+            return success(`Saved ${format} export to \`${savedPath}\` (${fast.buffer.length} bytes).`);
+          }
+        } catch (err) {
+          console.error(`[perplexity-mcp] export impit fast path threw: ${(err as Error).message}; falling back to browser.`);
+        }
+
         const client = await getClient();
         const exported = await client.exportThread({ threadSlug: entry.threadSlug, format });
         const savedPath = join(attachmentsDir, exported.filename);
@@ -729,8 +802,10 @@ export function registerTools(
         },
       },
       async ({ history_id }) => {
-        const client = await getClient();
-        const result = await hydrateCloudHistoryEntry(history_id, { client });
+        // Pass `getClient` (lazy) instead of `client` (eager) so the impit
+        // fast path inside hydrateCloudHistoryEntry can serve the request
+        // without spawning a browser when Speed Boost is installed.
+        const result = await hydrateCloudHistoryEntry(history_id, { getClient });
         return success(`Cloud hydrate ${result.action}: ${result.id ?? history_id}`);
       },
     );

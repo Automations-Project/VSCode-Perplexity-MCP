@@ -29,7 +29,7 @@ import {
   type RateLimitResponse,
   type AccountInfo,
 } from "./config.js";
-import { exportThread as exportEntry } from "./export.js";
+import { exportThread as exportEntry, resolveExportApiFormat, FORMAT_TO_CONTENT_TYPE } from "./export.js";
 import { isImpitAvailable, impitFetchJson } from "./refresh.js";
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
@@ -46,6 +46,25 @@ function getActivePaths() {
 
 function getModelsCacheFile(): string {
   return getActivePaths().modelsCache;
+}
+
+/**
+ * Read the on-disk AccountInfo cache for the active profile without
+ * touching the browser or the network. Returns null when the cache file
+ * is missing, unreadable, or doesn't parse as JSON. Used by the
+ * perplexity_models handler to skip the browser launch entirely on warm
+ * runs — the cache is written by every successful refresh tier
+ * (refresh.ts) and by login-runner.js after a fresh login.
+ */
+export function readCachedAccountInfoFromDisk(): AccountInfo | null {
+  const modelsCacheFile = getModelsCacheFile();
+  if (!existsSync(modelsCacheFile)) return null;
+  try {
+    const cached = JSON.parse(readFileSync(modelsCacheFile, "utf-8")) as AccountInfo;
+    return cached;
+  } catch {
+    return null;
+  }
 }
 
 const STEALTH_ARGS = [
@@ -252,11 +271,11 @@ function buildListAskThreadsUrl(): string {
 
 function buildListAskThreadsBody(opts: ListAskThreadsOpts): Record<string, unknown> {
   return {
-    limit: opts.limit ?? 100,
+    limit: opts.limit ?? 1000,
     offset: opts.offset ?? 0,
     ascending: opts.ascending ?? false,
     search_term: opts.searchTerm ?? "",
-    with_temporary_threads: true,
+    with_temporary_threads: false,
     exclude_asi: opts.excludeAsi ?? false,
   };
 }
@@ -318,7 +337,11 @@ export async function listCloudThreadsViaImpit(
     referer: `${PERPLEXITY_URL}/`,
     origin: PERPLEXITY_URL,
   };
-  const result = await impitFetchJson(url, { method: "POST", body, headers }, cookies);
+  // 60s timeout — limit=1000 returns a payload that's a few MB, and even on
+  // a fast connection Perplexity sometimes takes 20-30s to assemble it. The
+  // 15s default in impitFetchJson is fine for unauthenticated /models/config
+  // probes but not for a fully-paged thread list.
+  const result = await impitFetchJson(url, { method: "POST", body, headers }, cookies, 60_000);
   if (!result || result.challenged || result.status !== 200 || !Array.isArray(result.data)) {
     console.error(
       `[perplexity-mcp] list_ask_threads impit miss ` +
@@ -330,9 +353,517 @@ export async function listCloudThreadsViaImpit(
   const parsed = parseListThreadsRows(result.data as Array<Record<string, unknown>>);
   console.error(
     `[perplexity-mcp] list_ask_threads via impit: ${parsed.items.length} rows ` +
-      `(offset=${opts.offset ?? 0} limit=${opts.limit ?? 100} total=${parsed.total})`,
+      `(offset=${opts.offset ?? 0} limit=${opts.limit ?? 1000} total=${parsed.total})`,
   );
   return parsed;
+}
+
+// ── /rest/thread/<slug> (single-thread fetch) ─────────────────────────────
+
+export interface GetCloudThreadOpts {
+  limit?: number;
+}
+
+export interface CloudThreadEntry {
+  backendUuid: string;
+  queryStr: string;
+  answer: string;
+  sources: Array<{ n: number; title: string; url: string; snippet?: string }>;
+  mediaItems: Array<{ url: string; name?: string; type?: string }>;
+  createdAt: string;
+  status: string;
+}
+
+export interface GetCloudThreadResult {
+  entries: CloudThreadEntry[];
+  thread: { slug: string; title: string | null; contextUuid: string | null };
+}
+
+function buildGetCloudThreadUrl(slug: string, limit: number): string {
+  // NOTE: `with_schematized_response=true` causes Perplexity to return a
+  // structured shape that omits the raw `entries[].text` JSON we parse
+  // for answer + sources. Keep it off.
+  return (
+    `${PERPLEXITY_URL}/rest/thread/${encodeURIComponent(slug)}` +
+    `?version=2.18&source=default&limit=${limit}&offset=0&from_first=true&with_parent_info=true`
+  );
+}
+
+function getCloudThreadHeaders(url: string): Record<string, string> {
+  // Same Perplexity request-context headers their frontend JS auto-injects.
+  // Without these, /rest/thread/<slug> may return a 200 with truncated /
+  // empty content (same silent-fallback behavior as list_ask_threads).
+  return {
+    "x-app-apiclient": "default",
+    "x-app-apiversion": "2.18",
+    "x-perplexity-request-endpoint": url,
+    "x-perplexity-request-reason": "thread-body",
+    "x-perplexity-request-try-number": "1",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    referer: `${PERPLEXITY_URL}/`,
+    origin: PERPLEXITY_URL,
+  };
+}
+
+function parseAnswerText(text: unknown): {
+  answer: string;
+  sources: Array<{ n: number; title: string; url: string; snippet?: string }>;
+} {
+  if (typeof text !== "string") return { answer: "", sources: [] };
+  let steps: unknown;
+  try { steps = JSON.parse(text); } catch { return { answer: "", sources: [] }; }
+  if (!Array.isArray(steps)) return { answer: "", sources: [] };
+  const final = steps.find((s: any) => s?.step_type === "FINAL");
+  const answerRaw = final?.content?.answer;
+  if (typeof answerRaw !== "string") return { answer: "", sources: [] };
+  let parsed: Record<string, unknown> = {};
+  try { parsed = JSON.parse(answerRaw); } catch { return { answer: answerRaw, sources: [] }; }
+  const answer = typeof parsed.answer === "string" ? parsed.answer : "";
+  const webResults = Array.isArray(parsed.web_results) ? parsed.web_results as Array<Record<string, unknown>> : [];
+  const sources = webResults.map((wr, i) => ({
+    n: i + 1,
+    title: String(wr.name ?? ""),
+    url: String(wr.url ?? ""),
+    ...(typeof wr.snippet === "string" && wr.snippet ? { snippet: wr.snippet } : {}),
+  })).filter((s) => s.title || s.url);
+  return { answer, sources };
+}
+
+function parseCloudThreadResponse(slug: string, body: Record<string, unknown>): GetCloudThreadResult {
+  const rawEntries = Array.isArray(body.entries) ? body.entries as Array<Record<string, unknown>> : [];
+  return {
+    thread: {
+      slug,
+      title: typeof rawEntries[0]?.thread_title === "string" ? rawEntries[0].thread_title as string : null,
+      contextUuid: typeof rawEntries[0]?.context_uuid === "string" ? rawEntries[0].context_uuid as string : null,
+    },
+    entries: rawEntries.map((e) => {
+      const { answer, sources: s } = parseAnswerText(e.text);
+      const srcFromBlock = Array.isArray(e.sources)
+        ? (e.sources as Array<Record<string, unknown>>).map((wr, i) => ({
+            n: i + 1,
+            title: String(wr.name ?? wr.title ?? ""),
+            url: String(wr.url ?? ""),
+            ...(typeof wr.snippet === "string" ? { snippet: wr.snippet } : {}),
+          })).filter((src) => src.title || src.url)
+        : [];
+      const createdUs = typeof e.created_us === "number" ? e.created_us : 0;
+      const iso = typeof e.updated_datetime === "string"
+        ? /[Zz]$/.test(e.updated_datetime) ? e.updated_datetime : `${e.updated_datetime}Z`
+        : createdUs > 0
+          ? new Date(Math.floor(createdUs / 1000)).toISOString()
+          : new Date().toISOString();
+      return {
+        backendUuid: String(e.backend_uuid ?? ""),
+        queryStr: String(e.query_str ?? ""),
+        answer: answer || "",
+        sources: s.length ? s : srcFromBlock,
+        mediaItems: Array.isArray(e.media_items)
+          ? (e.media_items as Array<Record<string, unknown>>).map((m) => ({
+              url: String(m.url ?? m.image ?? ""),
+              name: typeof m.name === "string" ? m.name : undefined,
+              type: typeof m.type === "string" ? m.type : undefined,
+            })).filter((m) => m.url)
+          : [],
+        createdAt: iso,
+        status: String(e.status ?? "completed").toLowerCase(),
+      };
+    }),
+  };
+}
+
+/**
+ * Browser-free fetch of /rest/thread/<slug> via impit. Returns null when
+ * impit isn't installed/loadable, no session cookie is on disk, the
+ * response status is non-200, or the body shape is unexpected. Callers
+ * should fall back to the browser path on null. A 404 is treated as a
+ * miss (returns null) — the caller will hit the browser path which will
+ * surface the 404 as a hard error.
+ */
+export async function getCloudThreadViaImpit(
+  slug: string,
+  opts: GetCloudThreadOpts = {},
+): Promise<GetCloudThreadResult | null> {
+  if (!slug) return null;
+  if (!isImpitAvailable()) return null;
+  const cookies = await getSavedCookies().catch(() => [] as Awaited<ReturnType<typeof getSavedCookies>>);
+  const hasSession = cookies.some((c) => c.name === "__Secure-next-auth.session-token");
+  if (!hasSession) return null;
+  const limit = opts.limit ?? 50;
+  const url = buildGetCloudThreadUrl(slug, limit);
+  const result = await impitFetchJson(url, { method: "GET", headers: getCloudThreadHeaders(url) }, cookies, 60_000);
+  if (!result || result.challenged || result.status !== 200 || typeof result.data !== "object" || result.data == null) {
+    console.error(
+      `[perplexity-mcp] get_cloud_thread impit miss slug=${slug} ` +
+        `(status=${result?.status ?? "n/a"} challenged=${!!result?.challenged}); ` +
+        `caller will fall back to browser.`,
+    );
+    return null;
+  }
+  const parsed = parseCloudThreadResponse(slug, result.data as Record<string, unknown>);
+  console.error(
+    `[perplexity-mcp] get_cloud_thread via impit: slug=${slug} entries=${parsed.entries.length} (limit=${limit})`,
+  );
+  return parsed;
+}
+
+// ── perplexity_search (experimental) ──────────────────────────────────────
+//
+// Pilot impit fast path for `searchPerplexity`. Opt-in via
+// PERPLEXITY_EXPERIMENTAL_IMPIT_SEARCH=1. When enabled, search bypasses the
+// browser entirely and POSTs the SSE query endpoint via impit; on any
+// failure we fall back to the existing in-page `fetch` path so users with
+// the flag still get answers if Perplexity changes the wire format upstream.
+//
+// Risk profile (vs. the cloud list/thread endpoints): the request body has
+// ~40 fields driven by Perplexity's frontend state, not a documented public
+// API, so it can drift between Perplexity releases. Keeping `buildSearchRequest`
+// as the single source of truth means the browser path drifts with it — if
+// our snapshot becomes wrong, both paths break together (visible, debuggable),
+// rather than impit silently producing degraded answers.
+
+export interface BuildSearchRequestOpts {
+  query: string;
+  modelPreference: string;
+  mode: string;
+  sources: string[];
+  language: string;
+  followUp?: { backendUuid: string; readWriteToken?: string | null };
+}
+
+function buildSearchRequest(opts: BuildSearchRequestOpts): { body: Record<string, unknown>; requestId: string } {
+  const frontendUuid = randomUUID();
+  const frontendContextUuid = randomUUID();
+  const requestId = randomUUID();
+  const isFollowup = !!opts.followUp?.backendUuid;
+
+  const params: Record<string, any> = {
+    attachments: [],
+    language: opts.language,
+    timezone: "America/Los_Angeles",
+    search_focus: "internet",
+    sources: opts.sources,
+    search_recency_filter: null,
+    frontend_uuid: frontendUuid,
+    mode: opts.mode,
+    model_preference: opts.modelPreference,
+    is_related_query: false,
+    is_sponsored: false,
+    frontend_context_uuid: frontendContextUuid,
+    prompt_source: "user",
+    query_source: isFollowup ? "followup" : "home",
+    is_incognito: false,
+    time_from_first_type: 5000 + Math.floor(Math.random() * 15000),
+    local_search_enabled: false,
+    use_schematized_api: true,
+    send_back_text_in_streaming_api: false,
+    supported_block_use_cases: SUPPORTED_BLOCK_USE_CASES,
+    client_coordinates: null,
+    mentions: [],
+    dsl_query: opts.query,
+    skip_search_enabled: true,
+    is_nav_suggestions_disabled: false,
+    source: "default",
+    always_search_override: false,
+    override_no_search: false,
+    should_ask_for_mcp_tool_confirmation: true,
+    browser_agent_allow_once_from_toggle: false,
+    force_enable_browser_agent: false,
+    supported_features: ["browser_agent_permission_banner_v1.1"],
+    version: "2.18",
+  };
+
+  if (isFollowup) {
+    params.last_backend_uuid = opts.followUp!.backendUuid;
+    params.read_write_token = opts.followUp!.readWriteToken ?? null;
+    params.followup_source = "link";
+  }
+
+  return { body: { params, query_str: opts.query }, requestId };
+}
+
+export function isExperimentalImpitSearchEnabled(): boolean {
+  return process.env.PERPLEXITY_EXPERIMENTAL_IMPIT_SEARCH === "1";
+}
+
+/**
+ * Browser-free search via impit. Returns null on any failure (impit not
+ * installed, no session cookie, non-200, parse error) so callers can fall
+ * back to the browser path. Same SSE response format as the in-page fetch
+ * — parsed by `PerplexityClient.parseSSEText`.
+ */
+export async function searchPerplexityViaImpit(opts: BuildSearchRequestOpts): Promise<SearchResult | null> {
+  if (!isExperimentalImpitSearchEnabled()) return null;
+  if (!isImpitAvailable()) return null;
+  const cookies = await getSavedCookies().catch(() => [] as Awaited<ReturnType<typeof getSavedCookies>>);
+  const hasSession = cookies.some((c) => c.name === "__Secure-next-auth.session-token");
+  if (!hasSession) return null;
+
+  const { body, requestId } = buildSearchRequest(opts);
+  const headers: Record<string, string> = {
+    accept: "text/event-stream",
+    "x-perplexity-request-reason": "perplexity-query-state-provider",
+    "x-request-id": requestId,
+    "x-app-apiclient": "default",
+    "x-app-apiversion": "2.18",
+    "x-perplexity-request-endpoint": QUERY_ENDPOINT,
+    "x-perplexity-request-try-number": "1",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    referer: `${PERPLEXITY_URL}/`,
+    origin: PERPLEXITY_URL,
+  };
+
+  // 3 minutes — search/reason can run long under load. Same budget the
+  // SDK callTool gets for cloud-sync after the 0.8.23 timeout fix.
+  const result = await impitFetchJson(QUERY_ENDPOINT, { method: "POST", body, headers }, cookies, 180_000);
+  if (!result || result.challenged || result.status !== 200) {
+    console.error(
+      `[perplexity-mcp] search impit miss ` +
+        `(status=${result?.status ?? "n/a"} challenged=${!!result?.challenged}); ` +
+        `caller will fall back to browser.`,
+    );
+    return null;
+  }
+  // SSE is text/event-stream — impitFetchJson tries JSON.parse and falls
+  // back to the raw text string when parsing fails (which it will here).
+  if (typeof result.data !== "string" || result.data.length === 0) {
+    console.error(`[perplexity-mcp] search impit returned non-text response (typeof=${typeof result.data}); falling back.`);
+    return null;
+  }
+
+  try {
+    const parsed = PerplexityClient.parseSSEText(result.data);
+    console.error(
+      `[perplexity-mcp] search via impit: model=${opts.modelPreference} answerLen=${parsed.answer?.length ?? 0} sources=${parsed.sources?.length ?? 0}`,
+    );
+    return parsed;
+  } catch (err) {
+    console.error(`[perplexity-mcp] search impit parse error: ${(err as Error).message}; falling back.`);
+    return null;
+  }
+}
+
+// ── perplexity_retrieve ───────────────────────────────────────────────────
+
+export interface RetrieveThreadViaImpitOpts {
+  threadSlug: string;
+  backendUuid: string | null;
+  readWriteToken: string | null;
+}
+
+/**
+ * Browser-free retrieve of an ASI / research result. Tries the reconnect
+ * SSE path first (POST `/rest/sse/perplexity_ask/reconnect/<uuid>`) when a
+ * backend_uuid is available, then falls back to the GET thread JSON
+ * (`/rest/thread/<slug>`). Returns null on any failure (impit not
+ * installed, no session cookie, non-200, parse error, "still running"
+ * answer that the caller will want to surface via the browser path) so
+ * the caller can fall through to the page-context path.
+ *
+ * Files are intentionally NOT downloaded here — when the result has
+ * attached files we return null so the caller forces a browser session
+ * which can drive `downloadASIFiles` via the page's APIRequestContext.
+ */
+export async function retrieveThreadViaImpit(opts: RetrieveThreadViaImpitOpts): Promise<SearchResult | null> {
+  if (!isImpitAvailable()) return null;
+  const cookies = await getSavedCookies().catch(() => [] as Awaited<ReturnType<typeof getSavedCookies>>);
+  const hasSession = cookies.some((c) => c.name === "__Secure-next-auth.session-token");
+  if (!hasSession) return null;
+
+  const { threadSlug, backendUuid, readWriteToken } = opts;
+  const sseHeaders: Record<string, string> = {
+    accept: "text/event-stream",
+    "x-perplexity-request-reason": "reconnect-stream",
+    "x-app-apiclient": "default",
+    "x-app-apiversion": "2.18",
+    "x-perplexity-request-try-number": "1",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    referer: `${PERPLEXITY_URL}/`,
+    origin: PERPLEXITY_URL,
+  };
+
+  // Path 1: reconnect SSE (preferred — gets full ASI/compute output)
+  if (backendUuid) {
+    const url = `${QUERY_ENDPOINT}/reconnect/${backendUuid}`;
+    const result = await impitFetchJson(
+      url,
+      { method: "POST", body: { reconnectInitialSnapshot: true }, headers: { ...sseHeaders, "x-perplexity-request-endpoint": url } },
+      cookies,
+      60_000,
+    );
+    if (result && !result.challenged && result.status === 200 && typeof result.data === "string" && result.data.length > 0) {
+      try {
+        const parsed = PerplexityClient.parseASIReconnectSSE(result.data, threadSlug, backendUuid, readWriteToken ?? "");
+        if (!parsed.answer.startsWith("ASI task may still be running")) {
+          console.error(
+            `[perplexity-mcp] retrieve via impit (reconnect): backendUuid=${backendUuid} answerLen=${parsed.answer?.length ?? 0} files=${parsed.files?.length ?? 0}`,
+          );
+          return parsed;
+        }
+        // Try the workflow-block extraction shape
+        const wb = PerplexityClient.extractFromWorkflowBlock(result.data, threadSlug, backendUuid, readWriteToken ?? "");
+        if (wb) {
+          console.error(
+            `[perplexity-mcp] retrieve via impit (workflow-block): backendUuid=${backendUuid} answerLen=${wb.answer?.length ?? 0}`,
+          );
+          return wb;
+        }
+      } catch (err) {
+        console.error(`[perplexity-mcp] retrieve impit reconnect parse error: ${(err as Error).message}`);
+      }
+    } else {
+      console.error(
+        `[perplexity-mcp] retrieve impit reconnect miss ` +
+          `(status=${result?.status ?? "n/a"} challenged=${!!result?.challenged}); trying thread fallback.`,
+      );
+    }
+  }
+
+  // Path 2: GET /rest/thread/<slug> JSON fallback
+  if (threadSlug) {
+    const url = `${PERPLEXITY_URL}/rest/thread/${encodeURIComponent(threadSlug)}`;
+    const result = await impitFetchJson(
+      url,
+      { method: "GET", headers: { ...sseHeaders, accept: "application/json", "x-perplexity-request-reason": "thread-body", "x-perplexity-request-endpoint": url } },
+      cookies,
+      60_000,
+    );
+    if (result && !result.challenged && result.status === 200 && typeof result.data === "object" && result.data !== null) {
+      try {
+        const threadData = result.data as { status?: string; entries?: Array<Record<string, unknown>> };
+        if (threadData.status === "success") {
+          const entries = threadData.entries ?? [];
+          const lastEntry = entries[entries.length - 1];
+          if (lastEntry) {
+            const parsed = PerplexityClient.parseASIThreadEntry(lastEntry, threadSlug, backendUuid ?? "", readWriteToken ?? "");
+            console.error(
+              `[perplexity-mcp] retrieve via impit (thread): slug=${threadSlug} answerLen=${parsed.answer?.length ?? 0}`,
+            );
+            return parsed;
+          }
+        }
+      } catch (err) {
+        console.error(`[perplexity-mcp] retrieve impit thread parse error: ${(err as Error).message}`);
+      }
+    } else {
+      console.error(
+        `[perplexity-mcp] retrieve impit thread miss ` +
+          `(status=${result?.status ?? "n/a"} challenged=${!!result?.challenged}); falling back to browser.`,
+      );
+    }
+  }
+
+  return null;
+}
+
+// ── perplexity_export ─────────────────────────────────────────────────────
+
+export interface ExportThreadViaImpitOpts {
+  threadSlug?: string | null;
+  entryUuid?: string | null;
+  format: "pdf" | "markdown" | "docx";
+}
+
+export interface ExportThreadResult {
+  buffer: Buffer;
+  filename: string;
+  contentType: string;
+}
+
+/**
+ * Browser-free PDF / DOCX export via impit. Returns null on any failure
+ * (impit not installed, no session cookie, markdown format, no entry UUID
+ * resolvable, non-200, empty body) so callers can fall back to the
+ * page-context export. Markdown export is intentionally not supported here
+ * — the caller assembles markdown locally from the saved history entry.
+ */
+export async function exportThreadViaImpit(
+  opts: ExportThreadViaImpitOpts,
+): Promise<ExportThreadResult | null> {
+  // Markdown is assembled locally from the saved history entry — never
+  // touch the network for it. Caller short-circuits before reaching here
+  // in practice, but guard defensively.
+  if (opts.format === "markdown") return null;
+
+  if (!isImpitAvailable()) return null;
+  const cookies = await getSavedCookies().catch(() => [] as Awaited<ReturnType<typeof getSavedCookies>>);
+  const hasSession = cookies.some((c) => c.name === "__Secure-next-auth.session-token");
+  if (!hasSession) return null;
+
+  // Step 1: resolve entryUuid. If the caller didn't pass one, fetch the
+  // thread via the impit thread endpoint and take the LAST entry's
+  // backendUuid (matches the page-context resolveThreadEntryUuid behavior).
+  let entryUuid = opts.entryUuid ?? null;
+  if (!entryUuid && opts.threadSlug) {
+    const thread = await getCloudThreadViaImpit(opts.threadSlug, { limit: 1 });
+    const entries = thread?.entries ?? [];
+    entryUuid = entries[entries.length - 1]?.backendUuid ?? null;
+  }
+  if (!entryUuid) {
+    console.error(
+      `[perplexity-mcp] export impit miss (no entry UUID resolvable for slug=${opts.threadSlug ?? "n/a"}); ` +
+        `caller will fall back to browser.`,
+    );
+    return null;
+  }
+
+  // Step 2: POST /rest/entry/export — same Perplexity request-context
+  // headers their frontend JS auto-injects. Without these the endpoint
+  // responds 200 with empty file_content_64 (silent rejection — same trap
+  // as list_ask_threads).
+  let apiFormat: "pdf" | "md" | "docx";
+  try {
+    apiFormat = resolveExportApiFormat(opts.format);
+  } catch (err) {
+    console.error(`[perplexity-mcp] export impit miss: ${(err as Error).message}; falling back.`);
+    return null;
+  }
+
+  const url = `${PERPLEXITY_URL}/rest/entry/export?version=2.18&source=default`;
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    "x-app-apiclient": "default",
+    "x-app-apiversion": "2.18",
+    "x-perplexity-request-endpoint": url,
+    "x-perplexity-request-reason": "entry-export",
+    "x-perplexity-request-try-number": "1",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    referer: `${PERPLEXITY_URL}/`,
+    origin: PERPLEXITY_URL,
+  };
+  const body = { entry_uuid: entryUuid, format: apiFormat };
+  const result = await impitFetchJson(url, { method: "POST", body, headers }, cookies, 60_000);
+
+  if (!result || result.challenged || result.status !== 200 || typeof result.data !== "object" || result.data == null) {
+    console.error(
+      `[perplexity-mcp] export impit miss ` +
+        `(status=${result?.status ?? "n/a"} challenged=${!!result?.challenged}); ` +
+        `caller will fall back to browser.`,
+    );
+    return null;
+  }
+
+  const data = result.data as { file_content_64?: unknown; filename?: unknown };
+  const buffer = Buffer.from(String(data.file_content_64 ?? ""), "base64");
+  if (buffer.length === 0) {
+    console.error(`[perplexity-mcp] export impit miss (empty file_content_64); caller will fall back to browser.`);
+    return null;
+  }
+
+  const filename = String(data.filename ?? `${entryUuid}.${apiFormat}`);
+  const contentType = FORMAT_TO_CONTENT_TYPE[opts.format] ?? "application/octet-stream";
+  console.error(
+    `[perplexity-mcp] export via impit: format=${opts.format} bytes=${buffer.length} filename=${filename}`,
+  );
+  return { buffer, filename, contentType };
 }
 
 export class PerplexityClient {
@@ -702,10 +1233,6 @@ export class PerplexityClient {
     language?: string;
     followUp?: { backendUuid: string; readWriteToken?: string | null };
   }): Promise<SearchResult> {
-    if (!this.page) {
-      throw new Error("Client not initialized. Call init() first.");
-    }
-
     const {
       query,
       modelPreference = "turbo",
@@ -714,6 +1241,20 @@ export class PerplexityClient {
       language = "en-US",
       followUp,
     } = opts;
+
+    // Experimental: try the impit fast path before forcing init().
+    // Opt-in via PERPLEXITY_EXPERIMENTAL_IMPIT_SEARCH=1. On any failure
+    // (impit not installed, no session cookie, non-200, parse error), we
+    // fall through to the browser path which still has all the existing
+    // session-state guarantees.
+    if (!this.page && isExperimentalImpitSearchEnabled()) {
+      const fast = await searchPerplexityViaImpit({ query, modelPreference, mode, sources, language, followUp });
+      if (fast) return fast;
+    }
+
+    if (!this.page) {
+      throw new Error("Client not initialized. Call init() first.");
+    }
 
     // Validate model if we have a models config
     if (modelPreference && this.accountInfo.modelsConfig) {
@@ -735,54 +1276,7 @@ export class PerplexityClient {
       }
     }
 
-    const frontendUuid = randomUUID();
-    const frontendContextUuid = randomUUID();
-    const requestId = randomUUID();
-    const isFollowup = !!followUp?.backendUuid;
-
-    const params: Record<string, any> = {
-      attachments: [],
-      language,
-      timezone: "America/Los_Angeles",
-      search_focus: "internet",
-      sources,
-      search_recency_filter: null,
-      frontend_uuid: frontendUuid,
-      mode,
-      model_preference: modelPreference,
-      is_related_query: false,
-      is_sponsored: false,
-      frontend_context_uuid: frontendContextUuid,
-      prompt_source: "user",
-      query_source: isFollowup ? "followup" : "home",
-      is_incognito: false,
-      time_from_first_type: 5000 + Math.floor(Math.random() * 15000),
-      local_search_enabled: false,
-      use_schematized_api: true,
-      send_back_text_in_streaming_api: false,
-      supported_block_use_cases: SUPPORTED_BLOCK_USE_CASES,
-      client_coordinates: null,
-      mentions: [],
-      dsl_query: query,
-      skip_search_enabled: true,
-      is_nav_suggestions_disabled: false,
-      source: "default",
-      always_search_override: false,
-      override_no_search: false,
-      should_ask_for_mcp_tool_confirmation: true,
-      browser_agent_allow_once_from_toggle: false,
-      force_enable_browser_agent: false,
-      supported_features: ["browser_agent_permission_banner_v1.1"],
-      version: "2.18",
-    };
-
-    if (isFollowup) {
-      params.last_backend_uuid = followUp!.backendUuid;
-      params.read_write_token = followUp!.readWriteToken ?? null;
-      params.followup_source = "link";
-    }
-
-    const body = { params, query_str: query };
+    const { body, requestId } = buildSearchRequest({ query, modelPreference, mode, sources, language, followUp });
 
     // Execute the fetch from inside the browser context (bypasses Cloudflare)
     const rawResponse = await this.page.evaluate(
@@ -810,7 +1304,7 @@ export class PerplexityClient {
       { url: QUERY_ENDPOINT, requestBody: JSON.stringify(body), reqId: requestId }
     );
 
-    return this.parseSSEText(rawResponse);
+    return PerplexityClient.parseSSEText(rawResponse);
   }
 
   /**
@@ -1015,7 +1509,7 @@ export class PerplexityClient {
           lastSSEData = sseText;
         }
 
-        const result = this.parseASIReconnectSSE(sseText, threadSlug, backendUuid, readWriteToken);
+        const result = PerplexityClient.parseASIReconnectSSE(sseText, threadSlug, backendUuid, readWriteToken);
         if (!result.answer.startsWith("ASI task may still be running")) {
           const elapsed = Math.round((Date.now() - startedAt) / 1000);
           console.error(`[perplexity-mcp] ASI completed via reconnect #${reconnectAttempt} (${elapsed}s).`);
@@ -1043,7 +1537,7 @@ export class PerplexityClient {
 
     // First, try to extract from the last SSE snapshot's workflow_block
     if (lastSSEData) {
-      const result = this.extractFromWorkflowBlock(lastSSEData, threadSlug, backendUuid, readWriteToken);
+      const result = PerplexityClient.extractFromWorkflowBlock(lastSSEData, threadSlug, backendUuid, readWriteToken);
       if (result) {
         this.page.setDefaultTimeout(30_000);
         return result;
@@ -1065,7 +1559,7 @@ export class PerplexityClient {
           const entries = threadData.entries || [];
           const lastEntry = entries[entries.length - 1];
           if (lastEntry) {
-            return this.parseASIThreadEntry(lastEntry, threadSlug, backendUuid, readWriteToken);
+            return PerplexityClient.parseASIThreadEntry(lastEntry, threadSlug, backendUuid, readWriteToken);
           }
         }
       } catch (err: any) {
@@ -1093,11 +1587,28 @@ export class PerplexityClient {
     backendUuid?: string | null;
     readWriteToken?: string | null;
   }): Promise<SearchResult> {
+    const { threadSlug, backendUuid, readWriteToken } = opts;
+
+    // Fast path: try impit before forcing a browser launch. Both shapes
+    // (reconnect SSE, /rest/thread/<slug> JSON) are stable Perplexity REST
+    // contracts — same risk profile as cloud-list/thread, so this is on
+    // by default rather than env-flagged like search.
+    //
+    // Caveat: if the result has files attached, fall through to the
+    // browser path so `downloadASIFiles` can save them locally via the
+    // page's APIRequestContext (which inherits the cookie jar). impit
+    // can't drive that download today.
     if (!this.page) {
-      throw new Error("Client not initialized. Call init() first.");
+      const fast = await retrieveThreadViaImpit({ threadSlug, backendUuid: backendUuid ?? null, readWriteToken: readWriteToken ?? null });
+      if (fast && (!fast.files || fast.files.length === 0)) return fast;
     }
 
-    const { threadSlug, backendUuid, readWriteToken } = opts;
+    if (!this.page) {
+      await this.init();
+    }
+    if (!this.page) {
+      throw new Error("Client not initialized after init().");
+    }
 
     // Try reconnect SSE if we have a backendUuid
     if (backendUuid) {
@@ -1160,7 +1671,7 @@ export class PerplexityClient {
         );
 
         if (!sseText.startsWith("ERROR:")) {
-          const result = this.parseASIReconnectSSE(sseText, threadSlug, backendUuid, readWriteToken ?? "");
+          const result = PerplexityClient.parseASIReconnectSSE(sseText, threadSlug, backendUuid, readWriteToken ?? "");
           if (!result.answer.startsWith("ASI task may still be running")) {
             console.error(`[perplexity-mcp] Retrieved completed result via reconnect.`);
             if (result.files?.length) {
@@ -1170,7 +1681,7 @@ export class PerplexityClient {
           }
 
           // Try workflow block extraction
-          const wbResult = this.extractFromWorkflowBlock(sseText, threadSlug, backendUuid, readWriteToken ?? "");
+          const wbResult = PerplexityClient.extractFromWorkflowBlock(sseText, threadSlug, backendUuid, readWriteToken ?? "");
           if (wbResult) {
             console.error(`[perplexity-mcp] Retrieved result via workflow block extraction.`);
             return wbResult;
@@ -1197,7 +1708,7 @@ export class PerplexityClient {
           const entries = threadData.entries || [];
           const lastEntry = entries[entries.length - 1];
           if (lastEntry) {
-            const result = this.parseASIThreadEntry(lastEntry, threadSlug, backendUuid ?? "", readWriteToken ?? "");
+            const result = PerplexityClient.parseASIThreadEntry(lastEntry, threadSlug, backendUuid ?? "", readWriteToken ?? "");
             console.error(`[perplexity-mcp] Retrieved result via thread endpoint.`);
             return result;
           }
@@ -1226,7 +1737,7 @@ export class PerplexityClient {
    * - blocks[]: workflow_root (workflow_block with steps/items/text),
    *   web_results (web_result_block), pending_followups, sources_answer_mode
    */
-  private parseASIReconnectSSE(
+  static parseASIReconnectSSE(
     sseText: string,
     threadSlug: string,
     backendUuid: string,
@@ -1480,7 +1991,7 @@ export class PerplexityClient {
    * Used when the reconnect loop didn't catch COMPLETED live but we have
    * a snapshot with workflow_block data (steps, items, sources).
    */
-  private extractFromWorkflowBlock(
+  static extractFromWorkflowBlock(
     sseText: string,
     threadSlug: string,
     backendUuid: string,
@@ -1563,7 +2074,7 @@ export class PerplexityClient {
     };
   }
 
-  private parseASIThreadEntry(
+  static parseASIThreadEntry(
     entry: any,
     threadSlug: string,
     backendUuid: string,
@@ -1636,7 +2147,7 @@ export class PerplexityClient {
     };
   }
 
-  private parseSSEText(text: string): SearchResult {
+  static parseSSEText(text: string): SearchResult {
     let fullAnswer = "";
     let fullReasoning = "";
     const webSources: SearchResult["sources"] = [];
@@ -1913,6 +2424,14 @@ export class PerplexityClient {
     entryUuid?: string | null;
     format: "pdf" | "markdown" | "docx";
   }): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
+    // Fast path: impit (no browser launch). Mirrors the pattern used by
+    // getCloudThread / retrieveThread. Returns null on any failure so we
+    // fall through to the page-context export below.
+    if (!this.page) {
+      const fast = await exportThreadViaImpit(opts);
+      if (fast) return fast;
+    }
+
     if (!this.page) throw new Error("Client not initialized");
 
     const entryUuid = opts.entryUuid ?? (opts.threadSlug ? await this.resolveThreadEntryUuid(opts.threadSlug) : null);
@@ -2041,98 +2560,28 @@ export class PerplexityClient {
   }
 
   /**
-   * Fetch full content of a single cloud thread by slug. Returns the raw
-   * entries — callers (cloud-sync) convert to markdown. Endpoint:
+   * Fetch full content of a single cloud thread by slug. Tries impit first,
+   * falls back to the page-context fetch. Endpoint:
    * GET /rest/thread/<slug>?from_first=true (captured 2026-04-21).
    */
-  async getCloudThread(slug: string, { limit = 50 }: { limit?: number } = {}): Promise<{
-    entries: Array<{
-      backendUuid: string;
-      queryStr: string;
-      answer: string;
-      sources: Array<{ n: number; title: string; url: string; snippet?: string }>;
-      mediaItems: Array<{ url: string; name?: string; type?: string }>;
-      createdAt: string;
-      status: string;
-    }>;
-    thread: { slug: string; title: string | null; contextUuid: string | null };
-  }> {
+  async getCloudThread(slug: string, opts: GetCloudThreadOpts = {}): Promise<GetCloudThreadResult> {
     if (!slug) throw new Error("getCloudThread: slug required");
+
+    // Fast path: same shape as listCloudThreads — go through impit when
+    // available + we have a session cookie, no browser launch.
+    if (!this.page && isImpitAvailable()) {
+      const fast = await getCloudThreadViaImpit(slug, opts);
+      if (fast) return fast;
+    }
+
     if (!this.page) await this.init();
-    // NOTE: `with_schematized_response=true` causes Perplexity to return a
-    // structured shape that omits the raw `entries[].text` JSON we parse
-    // for answer + sources. Keep it off.
-    const url =
-      `${PERPLEXITY_URL}/rest/thread/${encodeURIComponent(slug)}` +
-      `?version=2.18&source=default&limit=${limit}&offset=0&from_first=true&with_parent_info=true`;
-    const { status, data } = await this.pageFetchJson(url);
+    const url = buildGetCloudThreadUrl(slug, opts.limit ?? 50);
+    const { status, data } = await this.pageFetchJson(url, { headers: getCloudThreadHeaders(url) });
     if (status === 404) throw new Error(`Thread '${slug}' not found on Perplexity (404).`);
     if (status !== 200 || typeof data !== "object" || data == null) {
       throw new Error(`getCloudThread failed: status ${status}`);
     }
-    const body = data as Record<string, unknown>;
-    const rawEntries = Array.isArray(body.entries) ? body.entries as Array<Record<string, unknown>> : [];
-
-    const parseAnswer = (text: unknown): { answer: string; sources: Array<{ n: number; title: string; url: string; snippet?: string }> } => {
-      if (typeof text !== "string") return { answer: "", sources: [] };
-      let steps: unknown;
-      try { steps = JSON.parse(text); } catch { return { answer: "", sources: [] }; }
-      if (!Array.isArray(steps)) return { answer: "", sources: [] };
-      const final = steps.find((s: any) => s?.step_type === "FINAL");
-      const answerRaw = final?.content?.answer;
-      if (typeof answerRaw !== "string") return { answer: "", sources: [] };
-      let parsed: Record<string, unknown> = {};
-      try { parsed = JSON.parse(answerRaw); } catch { return { answer: answerRaw, sources: [] }; }
-      const answer = typeof parsed.answer === "string" ? parsed.answer : "";
-      const webResults = Array.isArray(parsed.web_results) ? parsed.web_results as Array<Record<string, unknown>> : [];
-      const sources = webResults.map((wr, i) => ({
-        n: i + 1,
-        title: String(wr.name ?? ""),
-        url: String(wr.url ?? ""),
-        ...(typeof wr.snippet === "string" && wr.snippet ? { snippet: wr.snippet } : {}),
-      })).filter((s) => s.title || s.url);
-      return { answer, sources };
-    };
-
-    return {
-      thread: {
-        slug,
-        title: typeof rawEntries[0]?.thread_title === "string" ? rawEntries[0].thread_title as string : null,
-        contextUuid: typeof rawEntries[0]?.context_uuid === "string" ? rawEntries[0].context_uuid as string : null,
-      },
-      entries: rawEntries.map((e) => {
-        const { answer, sources: s } = parseAnswer(e.text);
-        const srcFromBlock = Array.isArray(e.sources)
-          ? (e.sources as Array<Record<string, unknown>>).map((wr, i) => ({
-              n: i + 1,
-              title: String(wr.name ?? wr.title ?? ""),
-              url: String(wr.url ?? ""),
-              ...(typeof wr.snippet === "string" ? { snippet: wr.snippet } : {}),
-            })).filter((src) => src.title || src.url)
-          : [];
-        const createdUs = typeof e.created_us === "number" ? e.created_us : 0;
-        const iso = typeof e.updated_datetime === "string"
-          ? /[Zz]$/.test(e.updated_datetime) ? e.updated_datetime : `${e.updated_datetime}Z`
-          : createdUs > 0
-            ? new Date(Math.floor(createdUs / 1000)).toISOString()
-            : new Date().toISOString();
-        return {
-          backendUuid: String(e.backend_uuid ?? ""),
-          queryStr: String(e.query_str ?? ""),
-          answer: answer || "",
-          sources: s.length ? s : srcFromBlock,
-          mediaItems: Array.isArray(e.media_items)
-            ? (e.media_items as Array<Record<string, unknown>>).map((m) => ({
-                url: String(m.url ?? m.image ?? ""),
-                name: typeof m.name === "string" ? m.name : undefined,
-                type: typeof m.type === "string" ? m.type : undefined,
-              })).filter((m) => m.url)
-            : [],
-          createdAt: iso,
-          status: String(e.status ?? "completed").toLowerCase(),
-        };
-      }),
-    };
+    return parseCloudThreadResponse(slug, data as Record<string, unknown>);
   }
 
   async shutdown(): Promise<void> {

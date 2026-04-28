@@ -31,5 +31,8 @@ export declare function syncCloudHistory(opts?: CloudSyncOptions): Promise<Cloud
 
 export declare function hydrateCloudHistoryEntry(
   historyId: string,
-  opts?: { client?: PerplexityClient },
+  opts?: {
+    client?: PerplexityClient;
+    getClient?: () => Promise<PerplexityClient>;
+  },
 ): Promise<{ action: "skipped-local" | "skipped-hydrated" | "hydrated"; id?: string }>;

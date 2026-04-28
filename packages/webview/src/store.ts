@@ -226,6 +226,7 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
           state: {
             ...store.state,
             history: message.payload.items,
+            historyTotalCount: message.payload.totalCount ?? message.payload.items.length,
           },
           richViewEntry,
         };

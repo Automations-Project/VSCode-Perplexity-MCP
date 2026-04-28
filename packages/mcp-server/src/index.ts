@@ -147,6 +147,7 @@ export { registerResources } from "./resources.js";
 export { formatResponse, buildHistoryBody, buildHistoryEntry, buildStoredHistoryEntry, buildAnswerPreview } from "./format.js";
 export {
   append as appendHistory,
+  countAll as countAllHistory,
   deleteEntry,
   findPendingByThread,
   get,
