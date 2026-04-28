@@ -4,14 +4,49 @@
   "version": "0.8.34",
   "publisher": "Automations-Project",
   "private": true,
-  "description": "Native VS Code extension for the Perplexity MCP server with dashboard, auth, and multi-IDE config generation",
+  "description": "Perplexity AI search, reasoning, research, and compute — MCP server, dashboard, and multi-IDE auto-config for VS Code.",
+  "icon": "media/icon.png",
   "license": "MIT",
+  "author": {
+    "name": "Nskha",
+    "url": "https://github.com/automations-Project"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Automations-Project/VSCode-Perplexity-MCP.git"
+  },
+  "homepage": "https://github.com/Automations-Project/VSCode-Perplexity-MCP#readme",
+  "bugs": {
+    "url": "https://github.com/Automations-Project/VSCode-Perplexity-MCP/issues"
+  },
+  "qna": "https://github.com/Automations-Project/VSCode-Perplexity-MCP/discussions",
+  "sponsor": {
+    "url": "https://github.com/sponsors/automations-Project"
+  },
+  "funding": [
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/automations-Project"
+    },
+    {
+      "type": "individual",
+      "url": "https://github.com/Automations-Project/VSCode-Perplexity-MCP"
+    }
+  ],
   "engines": {
-    "vscode": "^1.100.0"
+    "vscode": "^1.100.0",
+    "node": ">=20"
   },
   "categories": [
     "AI",
     "Other"
+  ],
+  "keywords": [
+    "perplexity",
+    "mcp",
+    "ai",
+    "search",
+    "research"
   ],
   "activationEvents": [
     "onStartupFinished",

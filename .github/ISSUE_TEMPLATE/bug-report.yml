@@ -1,0 +1,79 @@
+name: Bug Report
+description: Report a bug in the MCP server or VS Code extension
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Please redact any session tokens, cookies, or email addresses before submitting.
+  - type: dropdown
+    id: product
+    attributes:
+      label: Product
+      options:
+        - VS Code extension (perplexity-vscode)
+        - npm package (perplexity-user-mcp)
+        - Both
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: "e.g., extension 0.8.34 or perplexity-user-mcp 0.8.34"
+    validations:
+      required: true
+  - type: dropdown
+    id: mcp-client
+    attributes:
+      label: MCP Client (if applicable)
+      options:
+        - VS Code (built-in MCP)
+        - Cursor
+        - Claude Desktop
+        - Claude Code
+        - Cline
+        - Windsurf
+        - Amp
+        - Codex CLI
+        - Other
+  - type: dropdown
+    id: tier
+    attributes:
+      label: Perplexity tier
+      options:
+        - Free
+        - Pro
+        - Max
+        - Enterprise
+        - Unknown
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "e.g., Windows 11, macOS 14.5, Ubuntu 22.04"
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser used by the MCP server
+      placeholder: "e.g., Google Chrome 130, Microsoft Edge 130, patchright Chromium"
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      placeholder: Describe the bug and steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: doctor-output
+    attributes:
+      label: Doctor output (optional, recommended)
+      description: "Run `npx perplexity-user-mcp doctor` and paste the output. Doctor redacts secrets automatically."
+      render: shell
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or errors
+      render: shell

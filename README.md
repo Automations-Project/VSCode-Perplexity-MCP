@@ -1,57 +1,43 @@
-<!--
-  VSCode-Perplexity-MCP
-  Root README – designed for both GitHub and npm, with SVG hero and tables.
--->
+<div align="center">
 
 <p align="center">
   <picture>
-    <!-- Update these SVG paths to actual files under mcp-tool-icons/ -->
     <source media="(prefers-color-scheme: dark)" srcset="./mcp-tool-icons/Perplexity.svg" height="120">
-    <source media="(prefers-color-scheme: light)" srcset="./mcp-tool-icons/Perplexity.svg" height="120" >
+    <source media="(prefers-color-scheme: light)" srcset="./mcp-tool-icons/Perplexity.svg" height="120">
     <img alt="Perplexity MCP" src="./mcp-tool-icons/Perplexity_Black.svg" height="120">
   </picture>
 </p>
 
-<h1 align="center">Perplexity MCP for 15+ IDEs</h1>
+# Perplexity MCP for 15+ IDEs
+
+**Long‑lived Perplexity browser session, auto‑config for 15+ IDEs, and a VS Code extension – all in one monorepo.**
 
 <p align="center">
-  Long‑lived Perplexity browser session, auto‑config for 15+ IDEs, and a VS Code extension – all in one monorepo.
+  <a href="https://marketplace.visualstudio.com/items?itemName=Automations-Project.perplexity-vscode"><img src="https://vsmarketplacebadges.dev/version-short/Automations-Project.perplexity-vscode.svg?style=for-the-badge&label=VS%20Code&colorB=007ACC" alt="VS Code version" /></a>
+  <a href="https://www.npmjs.com/package/perplexity-user-mcp"><img src="https://img.shields.io/npm/v/perplexity-user-mcp?style=for-the-badge&logo=npm&logoColor=white&label=npm&color=CB3837" alt="npm version" /></a>
+  <a href="https://registry.modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP%20Registry-Listed-1D4ED8?style=for-the-badge" alt="MCP Registry listing" /></a>
 </p>
 
 <p align="center">
-  <!-- VS Code Marketplace badge – update publisher + extension ID -->
-  <a href="https://marketplace.visualstudio.com/items?itemName=yourpublisher.perplexity-vscode">
-    <img alt="VS Code Marketplace" src="https://img.shields.io/visual-studio-marketplace/v/yourpublisher.perplexity-vscode?label=VS%20Code%20Marketplace&logo=visualstudiocode">
-  </a>
-  <!-- NPM: perplexity-user-mcp -->
-  <a href="https://www.npmjs.com/package/perplexity-user-mcp">
-    <img alt="npm version" src="https://img.shields.io/npm/v/perplexity-user-mcp?logo=npm">
-  </a>
-  <a href="https://www.npmjs.com/package/perplexity-user-mcp">
-    <img alt="npm downloads" src="https://img.shields.io/npm/dm/perplexity-user-mcp">
-  </a>
-  <!-- CI -->
-  <a href="https://github.com/Automations-Project/VSCode-Perplexity-MCP/actions">
-    <img alt="CI" src="https://github.com/Automations-Project/VSCode-Perplexity-MCP/actions/workflows/ci.yml/badge.svg">
-  </a>
-  <!-- License -->
-  <a href="./LICENSE">
-    <img alt="MIT License" src="https://img.shields.io/github/license/Automations-Project/VSCode-Perplexity-MCP">
-  </a>
-    <!-- Status -->
-  <a href="https://github.com/Automations-Project/VSCode-Perplexity-MCP/blob/main/CHANGELOG.md">
-    <img alt="Status Experimental" src="https://img.shields.io/badge/status-experimental-orange.svg">
-  </a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=Automations-Project.perplexity-vscode"><img src="https://vsmarketplacebadges.dev/installs-short/Automations-Project.perplexity-vscode.svg?style=for-the-badge&label=VS%20Code%20Installs&colorB=1E8CBE" alt="VS Code installs" /></a>
+  <a href="https://www.npmjs.com/package/perplexity-user-mcp"><img src="https://img.shields.io/npm/dw/perplexity-user-mcp?style=for-the-badge&logo=npm&logoColor=white&label=npm%20Downloads%2FWeek&color=F43F5E" alt="npm downloads per week" /></a>
+  <a href="https://github.com/Automations-Project/VSCode-Perplexity-MCP/stargazers"><img src="https://img.shields.io/github/stars/Automations-Project/VSCode-Perplexity-MCP?style=for-the-badge&logo=github&logoColor=white&label=GitHub%20Stars&color=FBBF24" alt="GitHub stars" /></a>
 </p>
-
-
 
 <p align="center">
-  <sub>
-    Bundles <code>perplexity-user-mcp</code> and <code>perplexity-vscode</code>, currently <strong>0.8.12</strong>, with a patchright‑backed browser session, daemon + tunnels, auto‑config for Cursor / Claude / Windsurf / Cline / Amp / Codex CLI, and more.
-  </sub>
+  <a href="https://github.com/Automations-Project/VSCode-Perplexity-MCP/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Automations-Project/VSCode-Perplexity-MCP/ci.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI" alt="CI status" /></a>
+  <a href="https://github.com/Automations-Project/VSCode-Perplexity-MCP/releases/latest"><img src="https://img.shields.io/github/v/release/Automations-Project/VSCode-Perplexity-MCP?style=for-the-badge&logo=github&logoColor=white&label=Latest%20Release&color=10B981" alt="Latest release" /></a>
+  <a href="https://github.com/Automations-Project/VSCode-Perplexity-MCP/commits/main"><img src="https://img.shields.io/github/last-commit/Automations-Project/VSCode-Perplexity-MCP?style=for-the-badge&logo=github&logoColor=white&label=Last%20Commit&color=6366F1" alt="Last commit" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Automations-Project/VSCode-Perplexity-MCP?style=for-the-badge&logo=opensourceinitiative&logoColor=white&label=License&color=22C55E" alt="License" /></a>
 </p>
 
+<br />
+
+> **Not affiliated with Perplexity AI, Inc.** This is a community-maintained project.
+>
+> **Experimental** — This project is under active development and not intended for production use. APIs, tools, and behavior may change without notice.
+
+</div>
 
 ---
 
@@ -299,6 +285,28 @@ For deeper internals, see:
 
 - [`docs/release-process.md`](./docs/release-process.md)
 - [`docs/smoke-tests.md`](./docs/smoke-tests.md)
+
+---
+
+## Find Us
+
+<div align="center">
+
+| Registry | Link |
+|:---------|:-----|
+| **VS Code Marketplace** | [`Automations-Project.perplexity-vscode`](https://marketplace.visualstudio.com/items?itemName=Automations-Project.perplexity-vscode) |
+| **npm** | [`perplexity-user-mcp`](https://www.npmjs.com/package/perplexity-user-mcp) |
+| **MCP Registry** | [`io.github.Automations-Project/perplexity-user-mcp`](https://registry.modelcontextprotocol.io) |
+
+</div>
+
+---
+
+## Support This Project
+
+This project is built and maintained with the help of AI coding tools. If you find it useful and want to support continued development (new tools, updates, bug fixes), you can contribute by gifting **Claude Code credits** — the primary tool used to build this project.
+
+Interested? [Open an issue](https://github.com/Automations-Project/VSCode-Perplexity-MCP/issues/new) or reach out to discuss feature requests and sponsorship.
 
 ---
 

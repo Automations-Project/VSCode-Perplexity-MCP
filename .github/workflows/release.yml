@@ -7,94 +7,284 @@ on:
         description: "What to release"
         type: choice
         options: [auto, extension, mcp-server, both]
+        default: auto
       bump:
         description: "Version bump (ignored when target=auto)"
         type: choice
         options: [patch, minor, major]
         default: patch
       dry_run:
-        description: "Dry run (no publish)"
+        description: "Dry run — build & test only, skip publish/commit/tag"
         type: boolean
         default: false
 
 env:
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+  # tsup's --dts worker hits Node's default ~2GB heap during the mcp-server
+  # build (70+ entry points + DTS emission). Lift the cap to 4GB.
+  NODE_OPTIONS: "--max-old-space-size=4096"
+
+permissions:
+  contents: write
+  id-token: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      id-token: write
+    defaults:
+      run:
+        shell: bash
     steps:
+      # ── Setup ──────────────────────────────────────────────────
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
           registry-url: "https://registry.npmjs.org"
-      - run: npm ci
-      - run: npm run build
-      - run: npm test
 
-      - name: Smart bump versions (auto)
+      - run: npm ci
+
+      # Workaround for npm/cli#4828 — same as ci.yml
+      - name: Install platform-specific tailwind oxide binding
+        run: npm install --no-save --workspaces=false @tailwindcss/oxide-linux-x64-gnu
+
+      # ── Compute target versions ────────────────────────────────
+      # auto:  use scripts/bump-version.mjs (smart, based on git diff)
+      # else:  for each requested target, pick max(local, published) and bump
+      - name: Smart bump versions (auto mode)
         if: inputs.target == 'auto'
         id: smart_bump
         run: |
           node scripts/bump-version.mjs
           MCP_VERSION=$(node -p "require('./packages/mcp-server/package.json').version")
           EXT_VERSION=$(node -p "require('./packages/extension/package.json').version")
-          TAG=$(git describe --tags --abbrev=0)
-          MCP_OLD=$(git show "${TAG}:packages/mcp-server/package.json" 2>/dev/null | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version" 2>/dev/null || echo "0.0.0")
-          EXT_OLD=$(git show "${TAG}:packages/extension/package.json" 2>/dev/null | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version" 2>/dev/null || echo "0.0.0")
+          TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          MCP_OLD="0.0.0"
+          EXT_OLD="0.0.0"
+          if [ -n "$TAG" ]; then
+            MCP_OLD=$(git show "${TAG}:packages/mcp-server/package.json" 2>/dev/null | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{console.log(JSON.parse(d).version)}catch{console.log('0.0.0')}})" || echo "0.0.0")
+            EXT_OLD=$(git show "${TAG}:packages/extension/package.json" 2>/dev/null | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{console.log(JSON.parse(d).version)}catch{console.log('0.0.0')}})" || echo "0.0.0")
+          fi
           if [ "$MCP_VERSION" != "$MCP_OLD" ]; then echo "mcp_changed=true" >> "$GITHUB_OUTPUT"; else echo "mcp_changed=false" >> "$GITHUB_OUTPUT"; fi
           if [ "$EXT_VERSION" != "$EXT_OLD" ]; then echo "ext_changed=true" >> "$GITHUB_OUTPUT"; else echo "ext_changed=false" >> "$GITHUB_OUTPUT"; fi
           echo "mcp_version=${MCP_VERSION}" >> "$GITHUB_OUTPUT"
           echo "ext_version=${EXT_VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Bump and publish MCP server
-        if: (inputs.target == 'mcp-server' || inputs.target == 'both') || (inputs.target == 'auto' && steps.smart_bump.outputs.mcp_changed == 'true')
+      - name: Bump extension version (manual mode)
+        if: inputs.target != 'auto' && (inputs.target == 'extension' || inputs.target == 'both')
+        id: ext_version
         run: |
-          if [ "${{ inputs.target }}" != "auto" ]; then
-            cd packages/mcp-server
-            npm version ${{ inputs.bump }} --no-git-tag-version
-          fi
-          if [ "${{ inputs.dry_run }}" = "false" ]; then
-            cd packages/mcp-server
-            npm publish --provenance --access public
-          else
-            echo "DRY RUN: would publish v$(node -p "require('./packages/mcp-server/package.json').version" 2>/dev/null || node -p "require('./package.json').version")"
-          fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Bump and publish extension
-        if: (inputs.target == 'extension' || inputs.target == 'both') || (inputs.target == 'auto' && steps.smart_bump.outputs.ext_changed == 'true')
-        run: |
-          if [ "${{ inputs.target }}" != "auto" ]; then
-            cd packages/extension
-            npm version ${{ inputs.bump }} --no-git-tag-version
-          fi
-          cd packages/extension
-          npm run prepare:package-deps
-          if [ "${{ inputs.dry_run }}" = "false" ]; then
-            npx @vscode/vsce publish --no-dependencies
-          else
-            npx @vscode/vsce package --no-dependencies
-            echo "DRY RUN: VSIX packaged but not published"
-          fi
+          PKG="packages/extension/package.json"
+          LOCAL=$(node -p "require('./$PKG').version")
+          PUBLISHED=$(npx --yes vsce show Automations-Project.perplexity-vscode --json 2>/dev/null \
+            | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{console.log(JSON.parse(d).versions[0].version)}catch{console.log('0.0.0')}})" || echo "0.0.0")
+          echo "Local: ${LOCAL}, Marketplace: ${PUBLISHED}"
+          BASE=$(node -e "
+            const a = '${LOCAL}'.split('.').map(Number);
+            const b = '${PUBLISHED}'.split('.').map(Number);
+            const cmp = a[0]-b[0] || a[1]-b[1] || a[2]-b[2];
+            console.log(cmp >= 0 ? '${LOCAL}' : '${PUBLISHED}');
+          ")
+          NEXT=$(node -e "
+            const [major, minor, patch] = '${BASE}'.split('.').map(Number);
+            const bump = '${{ inputs.bump }}';
+            if (bump === 'major') console.log((major+1)+'.0.0');
+            else if (bump === 'minor') console.log(major+'.'+(minor+1)+'.0');
+            else console.log(major+'.'+minor+'.'+(patch+1));
+          ")
+          echo "current=${BASE}" >> $GITHUB_OUTPUT
+          echo "next=${NEXT}" >> $GITHUB_OUTPUT
+          node -e "
+            const fs = require('fs');
+            const p = '$PKG';
+            const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
+            pkg.version = '${NEXT}';
+            fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n');
+          "
+          echo "Extension: ${BASE} → ${NEXT}"
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
-      - name: Commit version bumps and tag
-        if: inputs.dry_run == false
+      - name: Bump MCP server version (manual mode)
+        if: inputs.target != 'auto' && (inputs.target == 'mcp-server' || inputs.target == 'both')
+        id: mcp_version
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          VERSION=$(node -p "require('./packages/extension/package.json').version")
-          git add -A
-          git commit -m "release: ${{ inputs.target }} v${VERSION}" || true
-          git tag "v${VERSION}"
-          git push && git push --tags
+          PKG="packages/mcp-server/package.json"
+          LOCAL=$(node -p "require('./$PKG').version")
+          PUBLISHED=$(npm view perplexity-user-mcp version 2>/dev/null || echo "0.0.0")
+          echo "Local: ${LOCAL}, npm: ${PUBLISHED}"
+          BASE=$(node -e "
+            const a = '${LOCAL}'.split('.').map(Number);
+            const b = '${PUBLISHED}'.split('.').map(Number);
+            const cmp = a[0]-b[0] || a[1]-b[1] || a[2]-b[2];
+            console.log(cmp >= 0 ? '${LOCAL}' : '${PUBLISHED}');
+          ")
+          NEXT=$(node -e "
+            const [major, minor, patch] = '${BASE}'.split('.').map(Number);
+            const bump = '${{ inputs.bump }}';
+            if (bump === 'major') console.log((major+1)+'.0.0');
+            else if (bump === 'minor') console.log(major+'.'+(minor+1)+'.0');
+            else console.log(major+'.'+minor+'.'+(patch+1));
+          ")
+          echo "current=${BASE}" >> $GITHUB_OUTPUT
+          echo "next=${NEXT}" >> $GITHUB_OUTPUT
+          node -e "
+            const fs = require('fs');
+            const p = '$PKG';
+            const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
+            pkg.version = '${NEXT}';
+            fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n');
+          "
+          echo "MCP server: ${BASE} → ${NEXT}"
+
+      # ── Build & Test ───────────────────────────────────────────
+      - name: Build all packages
+        run: npm run build
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      # ── Compute "did this target change?" flags ────────────────
+      - name: Resolve effective targets
+        id: targets
+        run: |
+          if [ "${{ inputs.target }}" = "auto" ]; then
+            echo "publish_ext=${{ steps.smart_bump.outputs.ext_changed }}" >> $GITHUB_OUTPUT
+            echo "publish_mcp=${{ steps.smart_bump.outputs.mcp_changed }}" >> $GITHUB_OUTPUT
+            echo "ext_next=${{ steps.smart_bump.outputs.ext_version }}" >> $GITHUB_OUTPUT
+            echo "mcp_next=${{ steps.smart_bump.outputs.mcp_version }}" >> $GITHUB_OUTPUT
+          else
+            if [ "${{ inputs.target }}" = "extension" ] || [ "${{ inputs.target }}" = "both" ]; then
+              echo "publish_ext=true" >> $GITHUB_OUTPUT
+            else
+              echo "publish_ext=false" >> $GITHUB_OUTPUT
+            fi
+            if [ "${{ inputs.target }}" = "mcp-server" ] || [ "${{ inputs.target }}" = "both" ]; then
+              echo "publish_mcp=true" >> $GITHUB_OUTPUT
+            else
+              echo "publish_mcp=false" >> $GITHUB_OUTPUT
+            fi
+            echo "ext_next=${{ steps.ext_version.outputs.next }}" >> $GITHUB_OUTPUT
+            echo "mcp_next=${{ steps.mcp_version.outputs.next }}" >> $GITHUB_OUTPUT
+          fi
+
+      # ── Package extension VSIX ─────────────────────────────────
+      - name: Package VSIX
+        id: vsix
+        if: steps.targets.outputs.publish_ext == 'true'
+        working-directory: packages/extension
+        run: |
+          npm run prepare:package-deps
+          npx @vscode/vsce package --no-dependencies
+          VSIX=$(ls *.vsix | head -1)
+          echo "file=packages/extension/${VSIX}" >> $GITHUB_OUTPUT
+          echo "Packaged: ${VSIX}"
+
+      # ── Publish extension ──────────────────────────────────────
+      - name: Publish extension to VS Code Marketplace
+        if: |
+          !inputs.dry_run &&
+          steps.targets.outputs.publish_ext == 'true'
+        run: npx @vscode/vsce publish --packagePath "${{ steps.vsix.outputs.file }}"
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      - name: Publish extension to Open VSX
+        if: |
+          !inputs.dry_run &&
+          steps.targets.outputs.publish_ext == 'true' &&
+          env.OVSX_PAT != ''
+        run: npx --yes ovsx publish "${{ steps.vsix.outputs.file }}" --pat $OVSX_PAT
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+
+      # ── Publish MCP server ─────────────────────────────────────
+      - name: Publish MCP server to npm
+        if: |
+          !inputs.dry_run &&
+          steps.targets.outputs.publish_mcp == 'true'
+        working-directory: packages/mcp-server
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # ── Commit, tag, push ──────────────────────────────────────
+      - name: Commit version bumps and create tags
+        if: "!inputs.dry_run"
+        run: |
+          MSG_PARTS=""
+          TAGS=""
+          if [ "${{ steps.targets.outputs.publish_ext }}" = "true" ]; then
+            git add packages/extension/package.json
+            MSG_PARTS="${MSG_PARTS} extension v${{ steps.targets.outputs.ext_next }}"
+            TAGS="${TAGS} extension/v${{ steps.targets.outputs.ext_next }}"
+          fi
+          if [ "${{ steps.targets.outputs.publish_mcp }}" = "true" ]; then
+            git add packages/mcp-server/package.json
+            MSG_PARTS="${MSG_PARTS} mcp-server v${{ steps.targets.outputs.mcp_next }}"
+            TAGS="${TAGS} mcp-server/v${{ steps.targets.outputs.mcp_next }}"
+          fi
+          # Only commit if we actually have something to commit
+          if [ -n "$MSG_PARTS" ]; then
+            git commit -m "release:${MSG_PARTS}" || true
+            for TAG in $TAGS; do
+              git tag "$TAG" || true
+            done
+            git push origin HEAD --tags
+          else
+            echo "Nothing to commit (no targets selected to publish)."
+          fi
+
+      # ── GitHub Releases ────────────────────────────────────────
+      - name: Create extension GitHub Release
+        if: |
+          !inputs.dry_run &&
+          steps.targets.outputs.publish_ext == 'true'
+        run: |
+          gh release create "extension/v${{ steps.targets.outputs.ext_next }}" \
+            "${{ steps.vsix.outputs.file }}" \
+            --title "Extension v${{ steps.targets.outputs.ext_next }}" \
+            --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create MCP server GitHub Release
+        if: |
+          !inputs.dry_run &&
+          steps.targets.outputs.publish_mcp == 'true'
+        run: |
+          gh release create "mcp-server/v${{ steps.targets.outputs.mcp_next }}" \
+            --title "MCP Server v${{ steps.targets.outputs.mcp_next }}" \
+            --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Summary ────────────────────────────────────────────────
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Mode: \`${{ inputs.target }}\`" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "- **DRY RUN — nothing published**" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ "${{ steps.targets.outputs.publish_ext }}" = "true" ]; then
+            echo "- Extension: published \`v${{ steps.targets.outputs.ext_next }}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ "${{ steps.targets.outputs.publish_mcp }}" = "true" ]; then
+            echo "- MCP server: published \`v${{ steps.targets.outputs.mcp_next }}\`" >> $GITHUB_STEP_SUMMARY
+          fi

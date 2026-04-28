@@ -1,2 +1,14 @@
-blank_issues_enabled: true
-contact_links: []
+blank_issues_enabled: false
+contact_links:
+  - name: "Can't log in?"
+    url: https://github.com/Automations-Project/VSCode-Perplexity-MCP/tree/main/packages/mcp-server#first-run--login
+    about: Check the first-run / login guide before opening an auth issue.
+  - name: "Run the doctor first"
+    url: https://github.com/Automations-Project/VSCode-Perplexity-MCP/tree/main/packages/mcp-server#cli-commands
+    about: "`npx perplexity-user-mcp doctor --probe` reports browser, profile, vault, and network status with secrets redacted."
+  - name: MCP Registry
+    url: https://registry.modelcontextprotocol.io
+    about: Find this server and others on the MCP Registry.
+  - name: VS Code Marketplace
+    url: https://marketplace.visualstudio.com/items?itemName=Automations-Project.perplexity-vscode
+    about: Install or rate the VS Code extension.

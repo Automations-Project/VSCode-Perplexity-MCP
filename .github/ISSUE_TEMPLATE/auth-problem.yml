@@ -1,0 +1,53 @@
+name: Authentication / Login Problem
+description: Trouble logging in, sessions expiring, Cloudflare blocks, or browser launch failures
+labels: [auth]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Login uses a real browser session against Perplexity. Most issues are browser-detection, Cloudflare clearance, or expired session-related. Please paste the **doctor output** below — it redacts secrets automatically.
+  - type: dropdown
+    id: auth-method
+    attributes:
+      label: Authentication method
+      options:
+        - Browser login (manual SSO via headed browser)
+        - Auto login (email + OTP, impit-backed if Speed Boost installed)
+        - Pre-supplied PERPLEXITY_SESSION_TOKEN env var
+        - VS Code extension login
+    validations:
+      required: true
+  - type: dropdown
+    id: browser
+    attributes:
+      label: Detected browser
+      options:
+        - Google Chrome
+        - Microsoft Edge
+        - Brave
+        - System Chromium
+        - Patchright bundled Chromium
+        - None / detection failed
+        - Unknown
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "e.g., Windows 11, macOS 14.5, Ubuntu 22.04 (server / WSL / desktop)"
+    validations:
+      required: true
+  - type: textarea
+    id: doctor-output
+    attributes:
+      label: Doctor output
+      description: "Run `npx perplexity-user-mcp doctor --probe` and paste the output. Secrets are redacted automatically."
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: "What's happening?"
+      placeholder: "What did you try? What error appeared? Did the browser open?"
+    validations:
+      required: true

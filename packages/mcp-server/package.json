@@ -1,10 +1,37 @@
 {
   "name": "perplexity-user-mcp",
   "version": "0.8.34",
+  "mcpName": "io.github.Automations-Project/perplexity-user-mcp",
   "type": "module",
-  "description": "Perplexity AI MCP server — browser automation for search, reasoning, research, and compute",
-  "author": "A.R.",
+  "description": "Perplexity AI MCP server — browser automation for search, reasoning, research, and compute. Not affiliated with Perplexity AI, Inc.",
+  "author": {
+    "name": "Nskha",
+    "url": "https://github.com/automations-Project"
+  },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Automations-Project/VSCode-Perplexity-MCP.git",
+    "directory": "packages/mcp-server"
+  },
+  "homepage": "https://github.com/Automations-Project/VSCode-Perplexity-MCP/tree/main/packages/mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/Automations-Project/VSCode-Perplexity-MCP/issues"
+  },
+  "funding": [
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/automations-Project"
+    },
+    {
+      "type": "individual",
+      "url": "https://github.com/Automations-Project/VSCode-Perplexity-MCP"
+    }
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "engines": {
     "node": ">=20"
   },
@@ -12,9 +39,14 @@
     "perplexity",
     "mcp",
     "model-context-protocol",
+    "mcp-server",
     "ai",
     "search",
     "research",
+    "reasoning",
+    "claude",
+    "cursor",
+    "windsurf",
     "browser-automation",
     "patchright"
   ],
@@ -90,7 +122,8 @@
     "dist/**/*.d.ts",
     "dist/**/*.js",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsup",

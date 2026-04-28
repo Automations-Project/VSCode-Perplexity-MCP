@@ -10,3 +10,4 @@
 **/*.map
 **/tsup.config.*
 **/tsconfig.*
+media/perplexity-color.svg
