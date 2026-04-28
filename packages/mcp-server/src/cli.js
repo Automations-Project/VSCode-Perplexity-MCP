@@ -62,6 +62,7 @@ export function parseArgs(argv) {
 const KNOWN_COMMANDS = new Set([
   "server", "version", "help",
   "login", "logout", "status", "doctor", "install-browser",
+  "install-speed-boost", "uninstall-speed-boost", "speed-boost-status",
   "add-account", "switch-account", "list-accounts",
   "export", "open", "rebuild-history-index", "sync-cloud",
   "daemon:help", "daemon:start", "daemon:stop", "daemon:status", "daemon:attach",
@@ -591,6 +592,61 @@ export async function routeCommand(parsed) {
   }
   /* v8 ignore stop */
 
+  if (command === "install-speed-boost") {
+    const { installImpit, getImpitStatus } = await import("./native-deps.js");
+    const before = getImpitStatus();
+    if (before.installed && !flags.force) {
+      const msg = flags.json
+        ? JSON.stringify({ ok: true, alreadyInstalled: true, version: before.version, runtimeDir: before.runtimeDir })
+        : `Speed Boost (impit ${before.version ?? "?"}) already installed at ${before.runtimeDir}.\nPass --force to reinstall.`;
+      return { code: 0, stdout: msg + "\n", stderr: "" };
+    }
+    const log = (line) => process.stderr.write(`[speed-boost] ${line}\n`);
+    const result = await installImpit({ log });
+    if (!result.ok) {
+      const stderr = flags.json
+        ? JSON.stringify({ ok: false, error: result.error }) + "\n"
+        : `Speed Boost install failed: ${result.error}\n`;
+      return { code: 1, stdout: "", stderr };
+    }
+    const status = getImpitStatus();
+    const out = flags.json
+      ? JSON.stringify({ ok: true, version: status.version, installedAt: status.installedAt, runtimeDir: status.runtimeDir })
+      : `Speed Boost installed: impit ${status.version ?? "?"} at ${status.runtimeDir}.\nAll impit-eligible tools (sync, hydrate, retrieve, export, models, login) will use it automatically.`;
+    return { code: 0, stdout: out + "\n", stderr: "" };
+  }
+
+  if (command === "uninstall-speed-boost") {
+    const { uninstallImpit, getImpitStatus } = await import("./native-deps.js");
+    const before = getImpitStatus();
+    const log = (line) => process.stderr.write(`[speed-boost] ${line}\n`);
+    const result = uninstallImpit({ log });
+    if (!result.ok) {
+      const stderr = flags.json
+        ? JSON.stringify({ ok: false, error: result.error }) + "\n"
+        : `Speed Boost uninstall failed: ${result.error}\n`;
+      return { code: 1, stdout: "", stderr };
+    }
+    const out = flags.json
+      ? JSON.stringify({ ok: true, hadImpit: before.installed })
+      : before.installed
+        ? `Speed Boost removed (was impit ${before.version ?? "?"}). Affected tools fall back to the browser path.`
+        : `Speed Boost was not installed. Nothing to remove.`;
+    return { code: 0, stdout: out + "\n", stderr: "" };
+  }
+
+  if (command === "speed-boost-status") {
+    const { getImpitStatus } = await import("./native-deps.js");
+    const status = getImpitStatus();
+    if (flags.json) {
+      return { code: 0, stdout: JSON.stringify(status) + "\n", stderr: "" };
+    }
+    const out = status.installed
+      ? `Speed Boost: installed (impit ${status.version ?? "?"}${status.installedAt ? `, installed ${status.installedAt}` : ""}).\nRuntime dir: ${status.runtimeDir}`
+      : `Speed Boost: not installed.\nRun: npx perplexity-user-mcp install-speed-boost\nRuntime dir (for manual install): ${status.runtimeDir}`;
+    return { code: 0, stdout: out + "\n", stderr: "" };
+  }
+
   if (command === "doctor") {
     const { runAll, exitCodeFor, formatReportMarkdown } = await import("./doctor.js");
     const report = await runAll({
@@ -824,6 +880,9 @@ Usage:
   npx perplexity-user-mcp status [--profile X] [--all]
   npx perplexity-user-mcp doctor [--profile X] [--probe] [--all] [--report]
   npx perplexity-user-mcp install-browser
+  npx perplexity-user-mcp install-speed-boost [--force] [--json]
+  npx perplexity-user-mcp uninstall-speed-boost [--json]
+  npx perplexity-user-mcp speed-boost-status [--json]
   npx perplexity-user-mcp add-account [--name X] [--email Y] [--mode auto|manual] [--plain-cookies]
   npx perplexity-user-mcp switch-account <name>
   npx perplexity-user-mcp list-accounts

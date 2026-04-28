@@ -119,8 +119,8 @@ export async function run(opts = {}) {
       category: CATEGORY,
       name: "impit",
       status: "skip",
-      message: "not installed (optional — gives HTTP tier speed boost)",
-      hint: "Install via the dashboard's 'Install Speed Boost' button.",
+      message: "not installed (optional — skips browser launches for sync, hydrate, retrieve, export, models, login)",
+      hint: "Install with: `npx perplexity-user-mcp install-speed-boost` — or click 'Install Speed Boost' in the VS Code extension dashboard.",
       action: { label: "Install Speed Boost", commandId: "Perplexity.installSpeedBoost" },
     });
   }
