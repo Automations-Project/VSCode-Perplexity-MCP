@@ -1,11 +1,7 @@
 <div align="center">
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Automations-Project/VSCode-Perplexity-MCP/main/mcp-tool-icons/perplexity.svg" height="120">
-    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Automations-Project/VSCode-Perplexity-MCP/main/mcp-tool-icons/perplexity.svg" height="120">
-    <img alt="Perplexity MCP" src="https://raw.githubusercontent.com/Automations-Project/VSCode-Perplexity-MCP/main/mcp-tool-icons/Perplexity_Black.svg" height="120">
-  </picture>
+  <img alt="Perplexity MCP" src="https://raw.githubusercontent.com/Automations-Project/VSCode-Perplexity-MCP/main/packages/extension/media/icon.png" height="120">
 </p>
 
 # Perplexity MCP for VS Code

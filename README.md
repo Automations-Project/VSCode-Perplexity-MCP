@@ -1,11 +1,7 @@
 <div align="center">
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./mcp-tool-icons/perplexity.svg" height="120">
-    <source media="(prefers-color-scheme: light)" srcset="./mcp-tool-icons/perplexity.svg" height="120">
-    <img alt="Perplexity MCP" src="./mcp-tool-icons/Perplexity_Black.svg" height="120">
-  </picture>
+  <img alt="Perplexity MCP" src="./packages/extension/media/icon.png" height="120">
 </p>
 
 # Perplexity MCP for 15+ IDEs
