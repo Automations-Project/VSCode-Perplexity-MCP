@@ -1,6 +1,6 @@
 {
   "name": "perplexity-user-mcp",
-  "version": "0.8.35",
+  "version": "0.8.36",
   "mcpName": "io.github.Automations-Project/perplexity-user-mcp",
   "type": "module",
   "description": "Perplexity AI MCP server — browser automation for search, reasoning, research, and compute. Not affiliated with Perplexity AI, Inc.",
