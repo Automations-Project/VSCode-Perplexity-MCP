@@ -30,7 +30,11 @@
 !scripts/
 !scripts/**
 
-# 5. Allow packages (production source)
+# 5. Allow root media assets
+!mcp-tool-icons/
+!mcp-tool-icons/**
+
+# 6. Allow packages (production source)
 !packages/
 
 !packages/shared/

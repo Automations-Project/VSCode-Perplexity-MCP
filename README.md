@@ -41,6 +41,24 @@
 
 ---
 
+## Install the Extension
+
+<div align="center">
+
+| IDE | One-click Install |
+|:---:|:------------------|
+| <img src="./mcp-tool-icons/vscode.svg" height="20" valign="middle" alt="VS Code" /> **Visual Studio Code** | [Install](vscode:extension/Nskha.perplexity-vscode) |
+| <img src="./mcp-tool-icons/vscode.svg" height="20" valign="middle" alt="VS Code Insiders" /> **VS Code Insiders** | [Install](vscode-insiders:extension/Nskha.perplexity-vscode) |
+| <img src="./mcp-tool-icons/cursor.svg" height="20" valign="middle" alt="Cursor" /> **Cursor** | [Install](cursor:extension/Nskha.perplexity-vscode) |
+| <img src="./mcp-tool-icons/windsurf.svg" height="20" valign="middle" alt="Windsurf" /> **Windsurf** | [Install](windsurf:extension/Nskha.perplexity-vscode) |
+| <img src="./mcp-tool-icons/trae.svg" height="20" valign="middle" alt="Trae" /> **Trae** | [Install](trae:extension/Nskha.perplexity-vscode) |
+| <img src="./mcp-tool-icons/vscode.svg" height="20" valign="middle" alt="Marketplace" /> **VS Code Marketplace** | [Open in browser](https://marketplace.visualstudio.com/items?itemName=Nskha.perplexity-vscode) |
+| <img src="./mcp-tool-icons/vscode.svg" height="20" valign="middle" alt="Open VSX" /> **Open VSX** (Gitpod · Theia · Coder) | [Open in browser](https://open-vsx.org/extension/Nskha/perplexity-vscode) |
+
+</div>
+
+---
+
 ## TL;DR – what lives here?
 
 A monorepo that ships the Perplexity MCP runtime two ways:
