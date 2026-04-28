@@ -12,6 +12,7 @@ export interface CloudSyncProgressEvent {
 
 export interface CloudSyncOptions {
   client?: PerplexityClient;
+  getClient?: () => Promise<PerplexityClient>;
   onProgress?: (evt: CloudSyncProgressEvent) => void;
   pageSize?: number;
   signal?: AbortSignal;

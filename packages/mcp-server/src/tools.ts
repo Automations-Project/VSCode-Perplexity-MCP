@@ -694,11 +694,13 @@ export function registerTools(
         },
       },
       async ({ page_size }, extra) => {
-        const client = await getClient();
         const clientId = getClientId(extra);
         const source = getRequestSource(extra);
+        // Pass `getClient` instead of `client` so cloud-sync can take the
+        // impit fast path (no browser) when Speed Boost is installed. The
+        // browser is only spawned if impit misses on a page.
         const result = await syncCloudHistory({
-          client,
+          getClient,
           pageSize: page_size,
           onProgress: (progress) => {
             hooks.onToolProgress?.({

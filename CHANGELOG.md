@@ -6,6 +6,30 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.17] — 2026-04-28 — Cloud-sync impit fast path + larger pages
+
+> **Versioning note:** 0.8.13–0.8.16 were local pre-release iterations and were never tagged or published. The cumulative work (public-hardening followups: stealth-flag pruning, vault v3 KDF stretching, auto-config full tool list, CI heap + Windows browser-test fixes, webview-on-reload error catch) was rolled into this release alongside the cloud-sync work below.
+
+### Added
+- **Browser-free cloud-sync fast path via impit.** New `listCloudThreadsViaImpit` + `impitFetchJson` helpers in [client.ts](packages/mcp-server/src/client.ts) / [refresh.ts](packages/mcp-server/src/refresh.ts) skip the headless Patchright launch entirely when impit (Speed Boost) is installed and a session cookie is on disk. The daemon's `perplexity_sync_cloud` tool now passes `getClient` (lazy) instead of an already-init'd client so the browser is only spawned if impit misses on a page; the first miss in a run sticks. Per-page success logs as `[perplexity-mcp] list_ask_threads via impit: N rows ...` to make engagement easy to verify.
+- **`with_temporary_threads: true`** in `list_ask_threads` POST body, matching the captured browser-side request.
+
+### Changed
+- **Cloud-sync default page size 20 → 100** ([cloud-sync.js](packages/mcp-server/src/cloud-sync.js), [client.ts](packages/mcp-server/src/client.ts)) — 5× fewer round trips per sync. `MAX_PAGES` lowered from 200 to 50 so the runaway cap is still ~5000 threads.
+- `CloudSyncOptions` gains an optional `getClient` (lazy getter) used by the daemon to defer init until impit-fallback is needed; the `client` (eager) form is preserved for the CLI and other callers that already paid for init.
+
+### Fixed
+- **Stealth flags pruned** ([client.ts](packages/mcp-server/src/client.ts), [refresh.ts](packages/mcp-server/src/refresh.ts)) — `--disable-web-security`, `--disable-features=IsolateOrigins,site-per-process`, and `--disable-site-isolation-trials` removed; the rationale is documented inline. Same-origin in-page `fetch()` doesn't need them; the off-origin ASI download path moved to `APIRequestContext` (which inherits cookies but isn't subject to CORS) so the security cost was unjustified.
+- **Vault v3 KDF stretching with scrypt** for passphrase-derived vaults; v1/v2 vaults migrate transparently on first unlock.
+- **Auto-config rules block now lists all 14 tools** in the PERPLEXITY-MCP managed section so IDEs that read the rules file get an accurate inventory.
+- **Extension webview `already registered` error** on host reload caught and logged instead of crashing activation.
+
+### CI
+- Tailwind oxide native binding force-installed on CI to work around npm/cli#4828.
+- `NODE_OPTIONS` heap raised to 4GB for the tsup DTS worker.
+- Browser-backed integration tests skipped on CI; per-OS test paths fixed.
+- VSIX clean-check ignores vendored `.ts` under `node_modules`; tighter VSIX grep + platform-aware path validator.
+
 ## [0.8.12] — 2026-04-27 — Open-source readiness + vault v2 + responsive webview
 
 ### Added

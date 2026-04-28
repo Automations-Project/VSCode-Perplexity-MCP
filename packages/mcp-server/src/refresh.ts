@@ -266,7 +266,13 @@ interface ImpitModule {
   Impit: new (opts: { browser: string; ignoreTlsErrors?: boolean; proxyUrl?: string }) => {
     fetch(
       url: string,
-      init?: { headers?: Record<string, string>; signal?: AbortSignal; redirect?: "follow" | "manual" | "error" }
+      init?: {
+        method?: string;
+        body?: string | Uint8Array;
+        headers?: Record<string, string>;
+        signal?: AbortSignal;
+        redirect?: "follow" | "manual" | "error";
+      }
     ): Promise<{
       status: number;
       headers: Headers | Record<string, string>;
@@ -330,6 +336,67 @@ async function loadImpit(): Promise<ImpitModule | null> {
 export function isImpitAvailable(): boolean {
   const marker = join(getImpitRuntimeDirPath(), "node_modules", "impit", "package.json");
   return existsSync(marker);
+}
+
+/**
+ * Browser-free authenticated fetch via impit. Used as a fast path for REST
+ * endpoints that only need cookies + a Chrome-ish TLS fingerprint
+ * (e.g. /rest/thread/list_ask_threads). Callers should fall back to the
+ * browser path on any non-success outcome.
+ *
+ * Returns null when impit isn't installed/loadable or the request threw at
+ * the network level. Returns `{ challenged: true }` when the response body
+ * looks like a Cloudflare interstitial.
+ */
+export async function impitFetchJson(
+  url: string,
+  init: { method?: string; body?: unknown; headers?: Record<string, string> } = {},
+  cookies: PlaywrightCookie[],
+  timeoutMs = 15000,
+): Promise<{ status: number; data: unknown; challenged?: boolean } | null> {
+  const impitMod = await loadImpit();
+  if (!impitMod) return null;
+
+  let client: InstanceType<ImpitModule["Impit"]>;
+  try {
+    client = new impitMod.Impit({ browser: "chrome", ignoreTlsErrors: false });
+  } catch {
+    return null;
+  }
+
+  const hasBody = init.body !== undefined && init.body !== null;
+  const headers: Record<string, string> = {
+    cookie: buildCookieHeader(cookies),
+    "user-agent": USER_AGENT,
+    ...CHROME_CLIENT_HINTS,
+    accept: "application/json, text/plain, */*",
+    ...(hasBody ? { "content-type": "application/json" } : {}),
+    ...(init.headers ?? {}),
+  };
+
+  try {
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), timeoutMs);
+    const res = await client.fetch(url, {
+      method: init.method ?? "GET",
+      headers,
+      body: hasBody ? JSON.stringify(init.body) : undefined,
+      signal: ctrl.signal,
+    });
+    clearTimeout(to);
+
+    const text = await res.text();
+    if (detectCfChallenge(text)) {
+      return { status: res.status, data: null, challenged: true };
+    }
+    let data: unknown = text;
+    if (text) {
+      try { data = JSON.parse(text); } catch { /* leave as text */ }
+    }
+    return { status: res.status, data };
+  } catch {
+    return null;
+  }
 }
 
 async function tierImpit(cookies: PlaywrightCookie[], log: (l: string) => void, timeoutMs: number): Promise<TierResult> {

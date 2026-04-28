@@ -1,8 +1,8 @@
-import { PerplexityClient } from "./client.js";
+import { PerplexityClient, listCloudThreadsViaImpit } from "./client.js";
 import { hydrateCloudEntry, upsertFromCloud } from "./history-store.js";
 
-const DEFAULT_PAGE_SIZE = 20;
-const MAX_PAGES = 200; // hard cap to avoid accidental runaway (20*200 = 4000 threads)
+const DEFAULT_PAGE_SIZE = 100;
+const MAX_PAGES = 50; // hard cap to avoid accidental runaway (100*50 = 5000 threads)
 
 function firstAnswerPreview(firstAnswerJson) {
   if (typeof firstAnswerJson !== "string") return "";
@@ -38,10 +38,16 @@ function buildHydratedBody(entries) {
  * Merges by backend_uuid. Never touches local MCP-originated entries or the
  * bodies of already-hydrated cloud entries.
  *
+ * Per-page strategy: try impit first (no browser); on miss, lazily acquire
+ * the client (init() or caller-provided getClient) and use the browser path
+ * for the remainder of the sync. The first impit miss in a run sticks —
+ * we don't ping-pong between paths.
+ *
  * @param {object} opts
- * @param {PerplexityClient} [opts.client]
+ * @param {PerplexityClient} [opts.client] Pre-initialized client. If supplied, the impit fast path is skipped (the caller has already paid for init).
+ * @param {() => Promise<PerplexityClient>} [opts.getClient] Lazy getter. Called only when the impit path misses, so the browser is never spawned in the all-impit happy path.
  * @param {(evt: { phase: string; fetched?: number; total?: number; inserted?: number; updated?: number; skipped?: number; error?: string }) => void} [opts.onProgress]
- * @param {number} [opts.pageSize=20]
+ * @param {number} [opts.pageSize=100]
  * @param {AbortSignal} [opts.signal]
  */
 export async function syncCloudHistory(opts = {}) {
@@ -49,25 +55,51 @@ export async function syncCloudHistory(opts = {}) {
   const onProgress = opts.onProgress ?? (() => {});
   const signal = opts.signal;
 
-  let ownsClient = false;
+  // Eager client wins — caller has already paid for init.
   let client = opts.client ?? null;
-  if (!client) {
+  let ownsClient = false;
+  // When neither `client` nor `getClient` is supplied we own lifecycle:
+  // construct + init only on impit miss and shut down on the way out.
+  const acquireClient = async () => {
+    if (client) return client;
+    if (opts.getClient) {
+      client = await opts.getClient();
+      return client;
+    }
     client = new PerplexityClient();
     ownsClient = true;
     await client.init();
-  }
+    return client;
+  };
 
   const stats = { fetched: 0, total: 0, inserted: 0, updated: 0, skipped: 0 };
   onProgress({ phase: "starting", ...stats });
 
   try {
     let offset = 0;
+    let impitDisabled = !!client; // never use impit when caller passed an already-init'd client
     for (let page = 0; page < MAX_PAGES; page++) {
       if (signal?.aborted) {
         onProgress({ phase: "cancelled", ...stats });
         return { ...stats, cancelled: true };
       }
-      const { items, total } = await client.listCloudThreads({ limit: pageSize, offset });
+
+      let items, total;
+      if (!impitDisabled) {
+        const fast = await listCloudThreadsViaImpit({ limit: pageSize, offset });
+        if (fast) {
+          ({ items, total } = fast);
+        } else {
+          // Impit missed — switch to the client/browser path for this and
+          // every subsequent page in this run.
+          impitDisabled = true;
+        }
+      }
+      if (impitDisabled && items === undefined) {
+        const c = await acquireClient();
+        ({ items, total } = await c.listCloudThreads({ limit: pageSize, offset }));
+      }
+
       stats.total = Math.max(stats.total, total);
       if (items.length === 0) break;
 
@@ -108,7 +140,7 @@ export async function syncCloudHistory(opts = {}) {
     onProgress({ phase: "error", ...stats, error: message });
     throw err;
   } finally {
-    if (ownsClient) await client.shutdown().catch(() => {});
+    if (ownsClient && client) await client.shutdown().catch(() => {});
   }
 }
 

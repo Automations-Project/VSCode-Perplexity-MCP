@@ -30,6 +30,7 @@ import {
   type AccountInfo,
 } from "./config.js";
 import { exportThread as exportEntry } from "./export.js";
+import { isImpitAvailable, impitFetchJson } from "./refresh.js";
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
 import { getActiveName, getConfigDir, getProfilePaths } from "./profiles.js";
@@ -212,6 +213,110 @@ function deriveTierFlagsFromExperiments(
   const isEnterprise = experiments?.server_is_enterprise === true;
   const isPro = isProFromExp || (canUseComputer && !isMax && !isEnterprise);
   return { isPro, isMax, isEnterprise };
+}
+
+export interface ListAskThreadsItem {
+  backendUuid: string;
+  contextUuid: string;
+  slug: string;
+  title: string;
+  queryStr: string;
+  answerPreview: string;
+  firstAnswer: string | null;
+  createdAt: string;
+  mode: string | null;
+  displayModel: string | null;
+  searchFocus: string | null;
+  sources: string[];
+  queryCount: number;
+  threadStatus: string;
+  readWriteToken: string | null;
+}
+
+export interface ListAskThreadsResult {
+  items: ListAskThreadsItem[];
+  total: number;
+}
+
+export interface ListAskThreadsOpts {
+  limit?: number;
+  offset?: number;
+  searchTerm?: string;
+  excludeAsi?: boolean;
+  ascending?: boolean;
+}
+
+function buildListAskThreadsUrl(): string {
+  return `${PERPLEXITY_URL}/rest/thread/list_ask_threads?version=2.18&source=default`;
+}
+
+function buildListAskThreadsBody(opts: ListAskThreadsOpts): Record<string, unknown> {
+  return {
+    limit: opts.limit ?? 100,
+    offset: opts.offset ?? 0,
+    ascending: opts.ascending ?? false,
+    search_term: opts.searchTerm ?? "",
+    with_temporary_threads: true,
+    exclude_asi: opts.excludeAsi ?? false,
+  };
+}
+
+function parseListThreadsRows(rows: Array<Record<string, unknown>>): ListAskThreadsResult {
+  const total = typeof rows[0]?.total_threads === "number" ? rows[0].total_threads as number : rows.length;
+  return {
+    total,
+    items: rows.map((row) => ({
+      backendUuid: String(row.uuid ?? ""),
+      contextUuid: String(row.context_uuid ?? ""),
+      slug: String(row.slug ?? ""),
+      title: String(row.title ?? row.query_str ?? "(untitled)"),
+      queryStr: String(row.query_str ?? ""),
+      answerPreview: String(row.answer_preview ?? "").slice(0, 220),
+      firstAnswer: typeof row.first_answer === "string" ? row.first_answer : null,
+      createdAt: typeof row.last_query_datetime === "string"
+        ? /[Zz]$/.test(row.last_query_datetime) ? row.last_query_datetime : `${row.last_query_datetime}Z`
+        : new Date().toISOString(),
+      mode: typeof row.mode === "string" ? row.mode : null,
+      displayModel: typeof row.display_model === "string" ? row.display_model : null,
+      searchFocus: typeof row.search_focus === "string" ? row.search_focus : null,
+      sources: Array.isArray(row.sources) ? row.sources.map(String) : [],
+      queryCount: typeof row.query_count === "number" ? row.query_count : 1,
+      threadStatus: String(row.thread_status ?? row.status ?? "completed").toLowerCase(),
+      readWriteToken: typeof row.read_write_token === "string" ? row.read_write_token : null,
+    })),
+  };
+}
+
+/**
+ * Browser-free fetch of /rest/thread/list_ask_threads via impit. Returns null
+ * when impit isn't installed, no session cookie is on disk, or the request
+ * doesn't yield a parseable 200. Lets callers (cloud-sync, the class method)
+ * fall back to the browser path on any miss.
+ */
+export async function listCloudThreadsViaImpit(
+  opts: ListAskThreadsOpts = {},
+): Promise<ListAskThreadsResult | null> {
+  if (!isImpitAvailable()) return null;
+  const cookies = await getSavedCookies().catch(() => [] as Awaited<ReturnType<typeof getSavedCookies>>);
+  const hasSession = cookies.some((c) => c.name === "__Secure-next-auth.session-token");
+  if (!hasSession) return null;
+  const url = buildListAskThreadsUrl();
+  const body = buildListAskThreadsBody(opts);
+  const result = await impitFetchJson(url, { method: "POST", body }, cookies);
+  if (!result || result.challenged || result.status !== 200 || !Array.isArray(result.data)) {
+    console.error(
+      `[perplexity-mcp] list_ask_threads impit miss ` +
+        `(status=${result?.status ?? "n/a"} challenged=${!!result?.challenged}); ` +
+        `caller will fall back to browser.`,
+    );
+    return null;
+  }
+  const parsed = parseListThreadsRows(result.data as Array<Record<string, unknown>>);
+  console.error(
+    `[perplexity-mcp] list_ask_threads via impit: ${parsed.items.length} rows ` +
+      `(offset=${opts.offset ?? 0} limit=${opts.limit ?? 100} total=${parsed.total})`,
+  );
+  return parsed;
 }
 
 export class PerplexityClient {
@@ -1896,48 +2001,27 @@ export class PerplexityClient {
     }>;
     total: number;
   }> {
+    const url = buildListAskThreadsUrl();
+    const body = buildListAskThreadsBody(opts);
+
+    // Fast path: when impit is installed and we have a logged-in session
+    // cookie, POST directly via the Rust client and skip the browser launch
+    // entirely. Falls through to the browser path on any non-success outcome
+    // so init() still gets a chance to refresh stale cookies.
+    if (!this.page && isImpitAvailable()) {
+      const fast = await listCloudThreadsViaImpit(opts);
+      if (fast) return fast;
+    }
+
     if (!this.page) await this.init();
-    const url = `${PERPLEXITY_URL}/rest/thread/list_ask_threads?version=2.18&source=default`;
-    const { status, data } = await this.pageFetchJson(url, {
-      method: "POST",
-      body: {
-        limit: opts.limit ?? 20,
-        offset: opts.offset ?? 0,
-        ascending: opts.ascending ?? false,
-        search_term: opts.searchTerm ?? "",
-        exclude_asi: opts.excludeAsi ?? false,
-      },
-    });
+    const { status, data } = await this.pageFetchJson(url, { method: "POST", body });
     if (status === 403 || status === 401) {
       throw new Error(`Perplexity rejected list_ask_threads (status ${status}). Re-login and retry.`);
     }
     if (status !== 200 || !Array.isArray(data)) {
       throw new Error(`list_ask_threads failed: status ${status}`);
     }
-    const rows = data as Array<Record<string, unknown>>;
-    const total = typeof rows[0]?.total_threads === "number" ? rows[0].total_threads as number : rows.length;
-    return {
-      total,
-      items: rows.map((row) => ({
-        backendUuid: String(row.uuid ?? ""),
-        contextUuid: String(row.context_uuid ?? ""),
-        slug: String(row.slug ?? ""),
-        title: String(row.title ?? row.query_str ?? "(untitled)"),
-        queryStr: String(row.query_str ?? ""),
-        answerPreview: String(row.answer_preview ?? "").slice(0, 220),
-        firstAnswer: typeof row.first_answer === "string" ? row.first_answer : null,
-        createdAt: typeof row.last_query_datetime === "string"
-          ? /[Zz]$/.test(row.last_query_datetime) ? row.last_query_datetime : `${row.last_query_datetime}Z`
-          : new Date().toISOString(),
-        mode: typeof row.mode === "string" ? row.mode : null,
-        displayModel: typeof row.display_model === "string" ? row.display_model : null,
-        searchFocus: typeof row.search_focus === "string" ? row.search_focus : null,
-        sources: Array.isArray(row.sources) ? row.sources.map(String) : [],
-        queryCount: typeof row.query_count === "number" ? row.query_count : 1,
-        threadStatus: String(row.thread_status ?? row.status ?? "completed").toLowerCase(),
-        readWriteToken: typeof row.read_write_token === "string" ? row.read_write_token : null,
-      })),
-    };
+    return parseListThreadsRows(data as Array<Record<string, unknown>>);
   }
 
   /**
