@@ -353,16 +353,16 @@ export class AuthManager implements vscode.Disposable {
   private async runLogin(opts: LoginOptions): Promise<AuthLoginResult> {
     this.setState({ profile: opts.profile, status: "logging-in", error: undefined, errorDetail: undefined });
 
-    // Pilot: try the impit runner first when (a) the user opted in via env,
-    // (b) impit is installed (Speed Boost), (c) we're in auto mode, (d) the
-    // caller didn't pin a specific runnerPath. On impit-only failures
-    // (cf_blocked, impit_missing/load_failed, crash) we transparently retry
-    // with the existing browser runner. On user-facing failures (otp_rejected,
-    // sso_required, email_rejected) we surface them directly.
+    // Auto-enable: if the user explicitly installed Speed Boost (impit) via
+    // the dashboard, use the impit runner — that install IS the opt-in.
+    // Opt-out via PERPLEXITY_DISABLE_IMPIT_LOGIN=1 if needed for debugging.
+    // On impit-only failures (cf_blocked, impit_missing/load_failed, crash)
+    // we transparently retry with the existing browser runner. User-facing
+    // failures (otp_rejected, sso_required, email_rejected) surface directly.
     const wantImpit =
       opts.mode === "auto" &&
       !opts.runnerPath &&
-      process.env.PERPLEXITY_EXPERIMENTAL_IMPIT_LOGIN === "1" &&
+      process.env.PERPLEXITY_DISABLE_IMPIT_LOGIN !== "1" &&
       isImpitInstalled();
 
     if (wantImpit) {

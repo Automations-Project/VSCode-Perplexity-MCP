@@ -908,19 +908,26 @@ export function registerTools(
       "perplexity_login",
       {
         title: "Perplexity Login",
-        description: "Open a browser window, complete Perplexity login, and persist the shared browser profile.",
+        description: "Returns instructions for completing Perplexity login. Login is interactive (email + OTP) and must be initiated from the IDE extension dashboard or the CLI — an MCP tool call cannot prompt for the OTP.",
       },
       async () => {
-        try {
-          const client = await getClient();
-          const result = await client.loginViaBrowser();
-          return {
-            content: [{ type: "text" as const, text: result.message }],
-            isError: !result.success,
-          };
-        } catch (error) {
-          return failure((error as Error).message);
-        }
+        // Login is interactive and an MCP tool call has no surface to prompt
+        // for the email + OTP. We return a clear, non-error message pointing
+        // the user at the supported entry points instead of throwing — which
+        // previously surfaced as a misleading "unexpected nil response"
+        // transport error in MCP clients.
+        const message = [
+          "**Perplexity login is interactive — run it from the dashboard or CLI:**",
+          "",
+          "1. **IDE / Extension:** open the Perplexity dashboard and click *Login*. Enter your email; the OTP prompt appears in the dashboard.",
+          "2. **CLI:** `npx perplexity-user-mcp login --mode auto --email YOUR_EMAIL@example.com` — the OTP is read from your terminal.",
+          "",
+          "Both paths share the same vault, so once you're logged in via either, all MCP tools (search, reason, research, sync, hydrate, etc.) work immediately. Speed Boost (impit) is used automatically when installed.",
+        ].join("\n");
+        return {
+          content: [{ type: "text" as const, text: message }],
+          isError: false,
+        };
       },
     );
   }

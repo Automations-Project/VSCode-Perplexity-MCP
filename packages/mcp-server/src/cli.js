@@ -539,14 +539,14 @@ export async function routeCommand(parsed) {
       env.PERPLEXITY_EMAIL = String(flags.email);
     }
 
-    // Pilot: try the impit-driven runner for `--mode auto` when (a) the
-    // user opted in via env / `--impit` flag, (b) impit is installed, and
-    // (c) `--no-impit` wasn't passed. Falls back to the browser-based
-    // runner on impit-only failures (cf_blocked, impit_missing, crash).
+    // Auto-enable when impit (Speed Boost) is installed — the install is
+    // the opt-in. `--no-impit` or PERPLEXITY_DISABLE_IMPIT_LOGIN=1 forces
+    // the browser path. Falls back to the browser-based runner on impit-
+    // only failures (cf_blocked, impit_missing, crash).
     const wantImpit =
       mode === "auto" &&
       !flags["no-impit"] &&
-      (flags.impit || process.env.PERPLEXITY_EXPERIMENTAL_IMPIT_LOGIN === "1") &&
+      process.env.PERPLEXITY_DISABLE_IMPIT_LOGIN !== "1" &&
       (await import("./refresh.js")).isImpitAvailable();
 
     const browserRunnerName = mode === "auto" ? "./login-runner.mjs" : "./manual-login-runner.mjs";
