@@ -13,13 +13,13 @@
 **Long‑lived Perplexity browser session, auto‑config for 15+ IDEs, and a VS Code extension – all in one monorepo.**
 
 <p align="center">
-  <a href="https://marketplace.visualstudio.com/items?itemName=Automations-Project.perplexity-vscode"><img src="https://vsmarketplacebadges.dev/version-short/Automations-Project.perplexity-vscode.svg?style=for-the-badge&label=VS%20Code&colorB=007ACC" alt="VS Code version" /></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=Nskha.perplexity-vscode"><img src="https://vsmarketplacebadges.dev/version-short/Nskha.perplexity-vscode.svg?style=for-the-badge&label=VS%20Code&colorB=007ACC" alt="VS Code version" /></a>
   <a href="https://www.npmjs.com/package/perplexity-user-mcp"><img src="https://img.shields.io/npm/v/perplexity-user-mcp?style=for-the-badge&logo=npm&logoColor=white&label=npm&color=CB3837" alt="npm version" /></a>
   <a href="https://registry.modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP%20Registry-Listed-1D4ED8?style=for-the-badge" alt="MCP Registry listing" /></a>
 </p>
 
 <p align="center">
-  <a href="https://marketplace.visualstudio.com/items?itemName=Automations-Project.perplexity-vscode"><img src="https://vsmarketplacebadges.dev/installs-short/Automations-Project.perplexity-vscode.svg?style=for-the-badge&label=VS%20Code%20Installs&colorB=1E8CBE" alt="VS Code installs" /></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=Nskha.perplexity-vscode"><img src="https://vsmarketplacebadges.dev/installs-short/Nskha.perplexity-vscode.svg?style=for-the-badge&label=VS%20Code%20Installs&colorB=1E8CBE" alt="VS Code installs" /></a>
   <a href="https://www.npmjs.com/package/perplexity-user-mcp"><img src="https://img.shields.io/npm/dw/perplexity-user-mcp?style=for-the-badge&logo=npm&logoColor=white&label=npm%20Downloads%2FWeek&color=F43F5E" alt="npm downloads per week" /></a>
   <a href="https://github.com/Automations-Project/VSCode-Perplexity-MCP/stargazers"><img src="https://img.shields.io/github/stars/Automations-Project/VSCode-Perplexity-MCP?style=for-the-badge&logo=github&logoColor=white&label=GitHub%20Stars&color=FBBF24" alt="GitHub stars" /></a>
 </p>
@@ -294,7 +294,7 @@ For deeper internals, see:
 
 | Registry | Link |
 |:---------|:-----|
-| **VS Code Marketplace** | [`Automations-Project.perplexity-vscode`](https://marketplace.visualstudio.com/items?itemName=Automations-Project.perplexity-vscode) |
+| **VS Code Marketplace** | [`Nskha.perplexity-vscode`](https://marketplace.visualstudio.com/items?itemName=Nskha.perplexity-vscode) |
 | **npm** | [`perplexity-user-mcp`](https://www.npmjs.com/package/perplexity-user-mcp) |
 | **MCP Registry** | [`io.github.Automations-Project/perplexity-user-mcp`](https://registry.modelcontextprotocol.io) |
 

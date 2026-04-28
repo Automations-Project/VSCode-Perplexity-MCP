@@ -10,5 +10,5 @@ contact_links:
     url: https://registry.modelcontextprotocol.io
     about: Find this server and others on the MCP Registry.
   - name: VS Code Marketplace
-    url: https://marketplace.visualstudio.com/items?itemName=Automations-Project.perplexity-vscode
+    url: https://marketplace.visualstudio.com/items?itemName=Nskha.perplexity-vscode
     about: Install or rate the VS Code extension.
