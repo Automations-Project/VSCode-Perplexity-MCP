@@ -632,13 +632,33 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
 
   log("Registering webview provider...");
 
-  context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider("Perplexity.dashboard", dashboard, {
-      webviewOptions: {
-        retainContextWhenHidden: true
-      }
-    })
-  );
+  // VS Code's registerWebviewViewProvider throws if the same viewType was
+  // registered by a still-alive provider — which happens during in-place
+  // extension updates / reloads when the previous extension-host instance
+  // hasn't been torn down yet. Catch the specific "already registered" error
+  // so activation doesn't go FATAL; the old provider continues to serve the
+  // view, and the user can pick up the new code by reloading the window.
+  // Any OTHER error is rethrown so genuine bugs still surface.
+  try {
+    context.subscriptions.push(
+      vscode.window.registerWebviewViewProvider("Perplexity.dashboard", dashboard, {
+        webviewOptions: {
+          retainContextWhenHidden: true
+        }
+      })
+    );
+  } catch (err) {
+    if (err instanceof Error && /already registered/i.test(err.message)) {
+      log(
+        "[webview] Dashboard provider already registered — likely an extension hot-reload " +
+        "or update over a still-alive previous instance. The existing provider continues " +
+        "to serve the view. Reload the window (Command Palette → 'Developer: Reload Window') " +
+        "to fully pick up the new extension code.",
+      );
+    } else {
+      throw err;
+    }
+  }
 
   context.subscriptions.push(
     vscode.commands.registerCommand("Perplexity.openDashboard", async () => {
