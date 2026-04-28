@@ -6,6 +6,14 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.19] — 2026-04-28 — Fix impit silent-empty + history-list cap consistency
+
+> **Versioning note:** 0.8.18 was a local pre-release iteration and was never tagged.
+
+### Fixed
+- **Cloud-sync via impit was returning 0 rows on every call** while the same account had hundreds of threads on the web. Root cause: `listCloudThreadsViaImpit` POSTed without the Perplexity-specific request headers (`x-app-apiclient`, `x-app-apiversion`, `x-perplexity-request-endpoint`, `x-perplexity-request-reason`, `x-perplexity-request-try-number`) that Perplexity's frontend JS auto-injects on every same-origin fetch. The backend treats requests missing these as "no app context" and silently returns HTTP 200 with `[]` rather than 401 — so the sync looked successful but never imported anything. The browser path (`pageFetchJson`) was unaffected because Perplexity's own JS adds the headers when fetch fires from inside the page context. Discovered in 0.8.17 testing where every sync logged `list_ask_threads via impit: 0 rows (offset=0 limit=100 total=0)`.
+- **History-list cap was inconsistent across actions in the dashboard.** `postHistoryList` in [DashboardProvider.ts](packages/extension/src/webview/DashboardProvider.ts) was called with `100` after rebuild / search / hydrate / profile-switch and `200` after cloud-sync; the default was `50`. On stores larger than 100 entries this made the visible total flip between actions — the source of the "stats change when I click rebuild / when I click from Claude" reports. All call sites now use a single 200-cap default.
+
 ## [0.8.17] — 2026-04-28 — Cloud-sync impit fast path + larger pages
 
 > **Versioning note:** 0.8.13–0.8.16 were local pre-release iterations and were never tagged or published. The cumulative work (public-hardening followups: stealth-flag pruning, vault v3 KDF stretching, auto-config full tool list, CI heap + Windows browser-test fixes, webview-on-reload error catch) was rolled into this release alongside the cloud-sync work below.

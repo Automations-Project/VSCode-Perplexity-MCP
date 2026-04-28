@@ -302,7 +302,23 @@ export async function listCloudThreadsViaImpit(
   if (!hasSession) return null;
   const url = buildListAskThreadsUrl();
   const body = buildListAskThreadsBody(opts);
-  const result = await impitFetchJson(url, { method: "POST", body }, cookies);
+  // Perplexity's frontend JS auto-injects these on every same-origin fetch.
+  // Without them, /rest/thread/list_ask_threads returns HTTP 200 with [] —
+  // a silent "no app context" rejection that we'd otherwise misread as
+  // "user has no threads" (root cause of the 0-rows bug seen in 0.8.17).
+  const headers: Record<string, string> = {
+    "x-app-apiclient": "default",
+    "x-app-apiversion": "2.18",
+    "x-perplexity-request-endpoint": url,
+    "x-perplexity-request-reason": "threads-body",
+    "x-perplexity-request-try-number": "1",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    referer: `${PERPLEXITY_URL}/`,
+    origin: PERPLEXITY_URL,
+  };
+  const result = await impitFetchJson(url, { method: "POST", body, headers }, cookies);
   if (!result || result.challenged || result.status !== 200 || !Array.isArray(result.data)) {
     console.error(
       `[perplexity-mcp] list_ask_threads impit miss ` +

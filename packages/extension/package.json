@@ -1,7 +1,7 @@
 {
   "name": "perplexity-vscode",
   "displayName": "Perplexity MCP",
-  "version": "0.8.17",
+  "version": "0.8.19",
   "publisher": "Automations-Project",
   "private": true,
   "description": "Native VS Code extension for the Perplexity MCP server with dashboard, auth, and multi-IDE config generation",

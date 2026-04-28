@@ -167,7 +167,11 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
     await this.view.webview.postMessage({ type: "profile:list", payload: { active: getActiveName(), profiles: listProfiles() } });
   }
 
-  async postHistoryList(limit = 50): Promise<void> {
+  async postHistoryList(limit = 200): Promise<void> {
+    // Default cap aligned across all call sites (search, hydrate, rebuild,
+    // sync, profile-switch). Keeping these in sync prevents the "stats
+    // change between actions" UX where a 100-cap rebuild and a 200-cap
+    // sync rendered different visible totals on stores larger than 100.
     if (!this.view) return;
     await this.view.webview.postMessage({ type: "history:list", payload: { items: listHistoryEntries(limit) } });
   }
@@ -1161,7 +1165,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             break;
           }
           case "history:request-list": {
-            await this.postHistoryList(100);
+            await this.postHistoryList();
             break;
           }
           case "history:request-entry":
@@ -1212,27 +1216,27 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
           }
           case "history:pin": {
             pinHistoryEntry(message.payload.historyId, message.payload.pinned);
-            await this.postHistoryList(100);
+            await this.postHistoryList();
             await this.postHistoryEntry(message.payload.historyId);
             await this.postActionResult(message.id, true);
             break;
           }
           case "history:tag": {
             tagHistoryEntry(message.payload.historyId, message.payload.tags);
-            await this.postHistoryList(100);
+            await this.postHistoryList();
             await this.postHistoryEntry(message.payload.historyId);
             await this.postActionResult(message.id, true);
             break;
           }
           case "history:delete": {
             deleteHistoryEntry(message.payload.historyId);
-            await this.postHistoryList(100);
+            await this.postHistoryList();
             await this.postActionResult(message.id, true);
             break;
           }
           case "history:rebuild-index": {
             rebuildHistoryEntries();
-            await this.postHistoryList(100);
+            await this.postHistoryList();
             await this.postActionResult(message.id, true);
             break;
           }
@@ -1271,7 +1275,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
                   },
                 });
               }, { pageSize: message.payload?.pageSize });
-              await this.postHistoryList(200);
+              await this.postHistoryList();
               await this.view?.webview.postMessage({
                 type: "history:cloud-sync:progress",
                 payload: { id: message.id, phase: "done", fetched: result.fetched, inserted: result.inserted, updated: result.updated, skipped: result.skipped },
@@ -1296,7 +1300,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
               const res = await hydrateCloudEntry(message.payload.historyId);
               // Re-post the (now-hydrated) entry so Rich View refreshes.
               await this.postHistoryEntry(message.payload.historyId);
-              await this.postHistoryList(200);
+              await this.postHistoryList();
               await this.view?.webview.postMessage({
                 type: "history:cloud-hydrate:progress",
                 payload: { id: message.id, historyId: message.payload.historyId, phase: res.action === "hydrated" ? "done" : res.action },
@@ -1570,7 +1574,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       payload: this.buildState()
     } satisfies ExtensionMessage);
     await this.postProfileList();
-    await this.postHistoryList(100);
+    await this.postHistoryList();
     await this.postViewersList();
     await this.postDaemonState({ ensure: true });
     if (this.authManager) {
