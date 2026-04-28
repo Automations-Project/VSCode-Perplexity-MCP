@@ -1593,10 +1593,14 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
 
 /* When any dropdown inside the card is open, raise its stacking context
    above all following card siblings so the popover isn't painted behind
-   the next card. Requires :has() — VS Code webview runs current Chromium. */
+   the next card. Requires :has() — VS Code webview runs current Chromium.
+   IMPORTANT: `transform: none` cancels the hover translateY(-1px) which
+   otherwise creates a containing block that traps `position: fixed`
+   popovers (making them scroll with the card instead of the viewport). */
 .hist-card:has(.hist-menu-popover) {
   z-index: 50;
   overflow: visible;
+  transform: none;
 }
 
 .hist-card-error {
