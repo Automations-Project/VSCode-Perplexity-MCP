@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ChevronDown,
   Download,
@@ -31,6 +32,7 @@ export function DownloadMenu({ item, send }: { item: HistoryItem; send: SendFn }
   const [menuPosition, setMenuPosition] = useState<React.CSSProperties>();
   const containerRef = useRef<HTMLDivElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
 
   const hasMarkdown = item.answerPreview.trim().length > 0;
   const toggleDisabled = !hasMarkdown && !item.threadSlug;
@@ -76,7 +78,7 @@ export function DownloadMenu({ item, send }: { item: HistoryItem; send: SendFn }
     };
   }, [open, updateMenuPosition]);
 
-  useDisclosureMenu({ triggerRef: toggleRef, menuRef: containerRef, isOpen: open, onClose: close });
+  useDisclosureMenu({ triggerRef: toggleRef, menuRef: containerRef, popoverRef, isOpen: open, onClose: close });
 
   const onToggleKey = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" || e.key === " ") {
@@ -111,8 +113,8 @@ export function DownloadMenu({ item, send }: { item: HistoryItem; send: SendFn }
         Download
         <ChevronDown size={11} className="hist-action-caret" aria-hidden="true" />
       </button>
-      {open && (
-        <div className="hist-menu-popover hist-menu-popover-fixed" role="menu" style={menuPosition}>
+      {open && createPortal(
+        <div ref={popoverRef} className="hist-menu-popover hist-menu-popover-fixed" role="menu" style={menuPosition}>
           <div className="hist-menu-section-label">Export as</div>
           {FORMATS.map((format) => {
             const { disabled, reason } = formatIsDisabled(format);
@@ -141,7 +143,8 @@ export function DownloadMenu({ item, send }: { item: HistoryItem; send: SendFn }
             <kbd className="hist-menu-footer-kbd">Esc</kbd>
             <span>close</span>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

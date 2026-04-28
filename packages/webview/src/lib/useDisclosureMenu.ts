@@ -7,6 +7,12 @@ export interface DisclosureMenuOptions {
   triggerRef: React.RefObject<HTMLElement | null>;
   /** Ref to the container that wraps both the trigger and the menu popover. */
   menuRef: React.RefObject<HTMLElement | null>;
+  /**
+   * Optional ref to a portaled popover element rendered outside `menuRef`.
+   * When provided, item querying and click-outside detection also consider
+   * this element so that React-portaled menus work correctly.
+   */
+  popoverRef?: React.RefObject<HTMLElement | null>;
   isOpen: boolean;
   onClose: () => void;
   /**
@@ -31,7 +37,7 @@ export interface DisclosureMenuOptions {
  * cleanup / close.
  */
 export function useDisclosureMenu(opts: DisclosureMenuOptions): void {
-  const { triggerRef, menuRef, isOpen, onClose, itemSelector = DEFAULT_ITEM_SELECTOR } = opts;
+  const { triggerRef, menuRef, popoverRef, isOpen, onClose, itemSelector = DEFAULT_ITEM_SELECTOR } = opts;
 
   // Keep a stable ref so callbacks inside the effect always see the latest onClose
   // without having to re-subscribe every render.
@@ -43,13 +49,14 @@ export function useDisclosureMenu(opts: DisclosureMenuOptions): void {
     if (!isOpen) return;
     // Defer one frame so the menu DOM is guaranteed to be in the tree.
     const frame = requestAnimationFrame(() => {
-      const items = menuRef.current?.querySelectorAll<HTMLElement>(
+      const root = popoverRef?.current ?? menuRef.current;
+      const items = root?.querySelectorAll<HTMLElement>(
         `${itemSelector}:not([disabled]):not(:disabled)`
       );
       items?.[0]?.focus();
     });
     return () => cancelAnimationFrame(frame);
-  }, [isOpen, menuRef, itemSelector]);
+  }, [isOpen, menuRef, popoverRef, itemSelector]);
 
   // Keyboard and click-outside handlers.
   useEffect(() => {
@@ -66,8 +73,9 @@ export function useDisclosureMenu(opts: DisclosureMenuOptions): void {
 
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
+        const root = popoverRef?.current ?? menuRef.current;
         const items = Array.from(
-          menuRef.current?.querySelectorAll<HTMLElement>(
+          root?.querySelectorAll<HTMLElement>(
             `${itemSelector}:not([disabled]):not(:disabled)`
           ) ?? []
         );
@@ -84,7 +92,7 @@ export function useDisclosureMenu(opts: DisclosureMenuOptions): void {
 
       if (e.key === "Enter") {
         const active = document.activeElement as HTMLElement | null;
-        if (active && menuRef.current?.contains(active)) {
+        if (active && (menuRef.current?.contains(active) || popoverRef?.current?.contains(active))) {
           e.preventDefault();
           active.click();
         }
@@ -92,7 +100,8 @@ export function useDisclosureMenu(opts: DisclosureMenuOptions): void {
     };
 
     const onClick = (e: MouseEvent) => {
-      if (!menuRef.current?.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (!menuRef.current?.contains(target) && !popoverRef?.current?.contains(target)) {
         onCloseRef.current();
         // No focus restoration on outside-click — the user clicked somewhere
         // intentionally and that element may already hold focus.
@@ -105,5 +114,5 @@ export function useDisclosureMenu(opts: DisclosureMenuOptions): void {
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("click", onClick);
     };
-  }, [isOpen, triggerRef, menuRef, itemSelector]);
+  }, [isOpen, triggerRef, menuRef, popoverRef, itemSelector]);
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   BookOpen,
   ChevronDown,
@@ -25,6 +26,7 @@ export function OpenWithMenu({
   const [menuPosition, setMenuPosition] = useState<React.CSSProperties>();
   const containerRef = useRef<HTMLDivElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
 
   const close = useCallback(() => setOpen(false), []);
   const updateMenuPosition = useCallback(() => {
@@ -68,7 +70,7 @@ export function OpenWithMenu({
     };
   }, [open, updateMenuPosition]);
 
-  useDisclosureMenu({ triggerRef: toggleRef, menuRef: containerRef, isOpen: open, onClose: close });
+  useDisclosureMenu({ triggerRef: toggleRef, menuRef: containerRef, popoverRef, isOpen: open, onClose: close });
 
   const onToggleKey = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" || e.key === " ") {
@@ -95,8 +97,8 @@ export function OpenWithMenu({
         Open with
         <ChevronDown size={11} className="hist-action-caret" aria-hidden="true" />
       </button>
-      {open && (
-        <div className="hist-menu-popover hist-menu-popover-fixed" role="menu" style={menuPosition}>
+      {open && createPortal(
+        <div ref={popoverRef} className="hist-menu-popover hist-menu-popover-fixed" role="menu" style={menuPosition}>
           <div className="hist-menu-section-label">Built-in</div>
           <button
             className="hist-menu-item"
@@ -166,7 +168,8 @@ export function OpenWithMenu({
             <kbd className="hist-menu-footer-kbd">Esc</kbd>
             <span>close</span>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

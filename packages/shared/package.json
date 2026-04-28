@@ -1,6 +1,6 @@
 {
   "name": "@perplexity-user-mcp/shared",
-  "version": "0.1.15",
+  "version": "0.1.17",
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
