@@ -1,7 +1,7 @@
 {
   "name": "perplexity-vscode",
   "displayName": "Perplexity MCP",
-  "version": "0.8.36",
+  "version": "0.8.37",
   "publisher": "Nskha",
   "private": true,
   "description": "Perplexity AI search, reasoning, research, and compute — MCP server, dashboard, and multi-IDE auto-config for VS Code.",
