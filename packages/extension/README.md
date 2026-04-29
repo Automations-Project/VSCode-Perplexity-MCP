@@ -28,13 +28,13 @@
 ## Install
 
 | IDE | Install |
-|:---:|:--------|
-| <img src="https://raw.githubusercontent.com/Automations-Project/VSCode-Perplexity-MCP/main/mcp-tool-icons/vscode.svg" height="20" valign="middle" alt="VS Code" /> **Visual Studio Code** | [![Install](https://img.shields.io/badge/Install-VS%20Code-007ACC?style=flat-square&logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=Nskha.perplexity-vscode) |
-| <img src="https://raw.githubusercontent.com/Automations-Project/VSCode-Perplexity-MCP/main/mcp-tool-icons/vscode.svg" height="20" valign="middle" alt="VS Code Insiders" /> **VS Code Insiders** | [![Install](https://img.shields.io/badge/Install-VS%20Code%20Insiders-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=Nskha.perplexity-vscode) |
-| <img src="https://raw.githubusercontent.com/Automations-Project/VSCode-Perplexity-MCP/main/mcp-tool-icons/cursor.svg" height="20" valign="middle" alt="Cursor" /> **Cursor** | [![Install](https://img.shields.io/badge/Install-Cursor-000000?style=flat-square&logo=cursor&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=Nskha.perplexity-vscode) |
-| <img src="https://raw.githubusercontent.com/Automations-Project/VSCode-Perplexity-MCP/main/mcp-tool-icons/windsurf.svg" height="20" valign="middle" alt="Windsurf" /> **Windsurf** | [![Install](https://img.shields.io/badge/Install-Windsurf-0E6EFD?style=flat-square&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=Nskha.perplexity-vscode) |
-| <img src="https://raw.githubusercontent.com/Automations-Project/VSCode-Perplexity-MCP/main/mcp-tool-icons/trae.svg" height="20" valign="middle" alt="Trae" /> **Trae** | [![Install](https://img.shields.io/badge/Install-Trae-FF6B35?style=flat-square&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=Nskha.perplexity-vscode) |
-| <img src="https://raw.githubusercontent.com/Automations-Project/VSCode-Perplexity-MCP/main/mcp-tool-icons/vscode.svg" height="20" valign="middle" alt="Open VSX" /> **Open VSX** (Gitpod · Theia · Coder) | [![Install](https://img.shields.io/badge/Install-Open%20VSX-C160EF?style=flat-square&logoColor=white)](https://open-vsx.org/extension/Nskha/perplexity-vscode) |
+|:----|:--------|
+| **Visual Studio Code** | [![Install](https://img.shields.io/badge/Install-VS%20Code-007ACC?style=flat-square&logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=Nskha.perplexity-vscode) |
+| **VS Code Insiders** | [![Install](https://img.shields.io/badge/Install-VS%20Code%20Insiders-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=Nskha.perplexity-vscode) |
+| **Cursor** | [![Install](https://img.shields.io/badge/Install-Cursor-000000?style=flat-square&logo=cursor&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=Nskha.perplexity-vscode) |
+| **Windsurf** | [![Install](https://img.shields.io/badge/Install-Windsurf-0E6EFD?style=flat-square&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=Nskha.perplexity-vscode) |
+| **Trae** | [![Install](https://img.shields.io/badge/Install-Trae-FF6B35?style=flat-square&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=Nskha.perplexity-vscode) |
+| **Open VSX** (Gitpod · Theia · Coder) | [![Install](https://img.shields.io/badge/Install-Open%20VSX-C160EF?style=flat-square&logoColor=white)](https://open-vsx.org/extension/Nskha/perplexity-vscode) |
 
 ---
 
