@@ -37,6 +37,19 @@
 
 ---
 
+## Demo
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=wErgEe9Pgqo" title="Watch on YouTube">
+    <img src="https://readme-svg-youtube-preview.vercel.app/badge?id=wErgEe9Pgqo&width=640&radius=8&bg=0d1117&title_color=ffffff&title_opacity=1&plate_color=0f1117&plate_opacity=0.78&title_position=overlay_bottom&border_width=1&border_color=ffffff" alt="Perplexity MCP demo — Search, Reason, Research, and Computer mode as a native MCP tool in your code editor" width="720">
+  </a>
+</p>
+
+<p align="center"><sub>▶ Watch the demo on YouTube</sub></p>
+
+---
+
+
 ## Install the Extension
 
 <div align="center">

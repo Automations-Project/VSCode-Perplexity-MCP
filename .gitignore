@@ -34,6 +34,10 @@
 !mcp-tool-icons/
 !mcp-tool-icons/**
 
+# 5b. Allow specific docs assets (e.g. README preview images)
+!docs/
+!docs/preview_compressed.webp
+
 # 6. Allow packages (production source)
 !packages/
 
@@ -67,4 +71,3 @@
 .env*
 packages/extension/media/webview/
 packages/extension/dist/node_modules/
-docs

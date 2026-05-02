@@ -25,6 +25,18 @@
 
 ---
 
+## Demo
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=wErgEe9Pgqo" title="Watch on YouTube">
+    <img src="https://raw.githubusercontent.com/Automations-Project/VSCode-Perplexity-MCP/main/docs/preview_compressed.webp" alt="Perplexity MCP demo — Search, Reason, Research, and Computer mode as a native MCP tool in your code editor" width="720">
+  </a>
+</p>
+
+<p align="center"><sub>▶ Watch the demo on YouTube</sub></p>
+
+---
+
 ## Install
 
 | IDE | Install |
