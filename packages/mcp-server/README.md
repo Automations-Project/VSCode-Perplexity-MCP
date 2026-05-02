@@ -165,6 +165,92 @@ Claude Desktop (`claude_desktop_config.json`) uses the same shape.
 - `perplexity_login` — returns login instructions (interactive login runs via the CLI / extension)
 - `perplexity_doctor` — run diagnostic checks across browser, profile, auth, and network and return a Markdown report (pass `probe:true` for a live search probe)
 
+## Search sources and advanced queries
+
+Search-style tools support Perplexity source focus through a `sources` argument:
+
+- `web` — general web search. This is the default.
+- `scholar` — scholarly / academic source focus.
+- `social` — social discussion source focus.
+
+The source selector is explicit. If `sources` is omitted, the server sends `["web"]`.
+
+Examples:
+
+```json
+{
+  "tool": "perplexity_search",
+  "arguments": {
+    "query": "recent papers on retrieval augmented generation evaluation",
+    "sources": ["scholar"],
+    "language": "en-US"
+  }
+}
+```
+
+```json
+{
+  "tool": "perplexity_ask",
+  "arguments": {
+    "query": "What are practitioners saying about Cursor versus Windsurf for large TypeScript repos?",
+    "sources": ["social"],
+    "mode": "copilot"
+  }
+}
+```
+
+```json
+{
+  "tool": "perplexity_research",
+  "arguments": {
+    "query": "Compare academic evidence and practitioner discussion around code review automation",
+    "sources": ["scholar", "social"],
+    "language": "en-US"
+  }
+}
+```
+
+Natural-language prompts usually work too when they name the desired source mode:
+
+- "Use Perplexity scholar sources for recent papers on agentic search evaluation."
+- "Search social sources for developer reports about Claude Code memory issues."
+- "Run deep research using both scholar and web sources, and cite every claim."
+- "Use `perplexity_ask` with `sources: [\"social\"]` and keep the answer concise."
+
+Useful shorthand:
+
+- "search ..." usually maps to `perplexity_search` for quick lookup and source discovery.
+- "ask Perplexity ..." usually maps to `perplexity_ask` for a synthesized answer with citations.
+- "reason through ..." usually maps to `perplexity_reason` for multi-step analysis.
+- "research deeply ..." usually maps to `perplexity_research` for longer reports.
+- "use ASI", "Computer mode", "run a compute task", or "do code/execution-style analysis" maps to `perplexity_compute` when the account has Computer-mode access.
+
+For ASI / Computer mode, ask for `perplexity_compute` by name when precision matters:
+
+```json
+{
+  "tool": "perplexity_compute",
+  "arguments": {
+    "query": "Model the true cost of a 5 kW residential solar installation in the Philippines versus investing the same cash at 6% annually over 10 and 20 years. Show assumptions, calculations, and sensitivity cases.",
+    "language": "en-US"
+  }
+}
+```
+
+### Defaults
+
+| Tool | Model default | Mode default | Sources default | Language default |
+|---|---|---|---|---|
+| `perplexity_search` | Authenticated: `pplx_pro`; anonymous: `turbo` | Authenticated: `copilot`; anonymous: `concise` | `["web"]` | `en-US` |
+| `perplexity_ask` | `PERPLEXITY_SEARCH_MODEL` or `pplx_pro` | `copilot` | `["web"]` | `en-US` |
+| `perplexity_reason` | `PERPLEXITY_REASON_MODEL` or `claude46sonnetthinking` | `copilot` | `["web"]` | `en-US` |
+| `perplexity_research` | `PERPLEXITY_RESEARCH_MODEL` or `pplx_alpha` | `copilot` | `["web"]` | `en-US` |
+| `perplexity_compute` | Tool argument, then `PERPLEXITY_COMPUTE_MODEL`, then account ASI default, then `pplx_asi` | `asi` | web-only Computer mode | `en-US` |
+
+Model defaults are configurable with `PERPLEXITY_SEARCH_MODEL`, `PERPLEXITY_REASON_MODEL`, `PERPLEXITY_RESEARCH_MODEL`, and `PERPLEXITY_COMPUTE_MODEL`. `perplexity_ask`, `perplexity_reason`, and `perplexity_compute` also accept a per-call `model` argument. `perplexity_ask` accepts `mode: "concise" | "copilot"`.
+
+Under the hood, search-style tools post a Perplexity web-app style request from the logged-in browser session to `https://www.perplexity.ai/rest/sse/perplexity_ask`. The response is a Server-Sent Events stream, which the MCP runtime parses into answer text, citation sources, media items, suggested follow-ups, follow-up context, and the Perplexity thread URL.
+
 ## Library use
 
 Subpath exports are published for embedding the same runtime inside other Node tooling:

@@ -210,6 +210,114 @@ Delete `~/.perplexity-mcp/` to start over completely, or use `PERPLEXITY_HEADLES
 
 ---
 
+## Search Sources and Advanced Queries
+
+This MCP mirrors Perplexity's web app source picker more closely than the official API-key MCP server. The search-style tools accept a `sources` array with these values:
+
+- `web` - general web search. This is the default.
+- `scholar` - scholarly / academic source focus.
+- `social` - social discussion source focus.
+
+The source selector is explicit. If your MCP client calls a tool without `sources`, the server sends `["web"]`. Ask your agent for the source mode you want, or pass it directly when your client exposes tool arguments.
+
+Examples:
+
+```json
+{
+  "tool": "perplexity_search",
+  "arguments": {
+    "query": "recent papers on retrieval augmented generation evaluation",
+    "sources": ["scholar"],
+    "language": "en-US"
+  }
+}
+```
+
+```json
+{
+  "tool": "perplexity_ask",
+  "arguments": {
+    "query": "What are practitioners saying about Cursor versus Windsurf for large TypeScript repos?",
+    "sources": ["social"],
+    "mode": "copilot"
+  }
+}
+```
+
+```json
+{
+  "tool": "perplexity_research",
+  "arguments": {
+    "query": "Compare academic evidence and practitioner discussion around code review automation",
+    "sources": ["scholar", "social"],
+    "language": "en-US"
+  }
+}
+```
+
+Natural-language prompts usually work too, as long as they are specific:
+
+- "Use Perplexity scholar sources for recent papers on agentic search evaluation."
+- "Search social sources for developer reports about Claude Code memory issues."
+- "Run deep research using both scholar and web sources, and cite every claim."
+- "Use `perplexity_ask` with `sources: [\"social\"]` and keep the answer concise."
+
+Useful shorthand:
+
+- "search ..." usually maps to `perplexity_search` for quick lookup and source discovery.
+- "ask Perplexity ..." usually maps to `perplexity_ask` for a synthesized answer with citations.
+- "reason through ..." usually maps to `perplexity_reason` for multi-step analysis.
+- "research deeply ..." usually maps to `perplexity_research` for longer reports.
+- "use ASI", "Computer mode", "run a compute task", or "do code/execution-style analysis" maps to `perplexity_compute` when the account has Computer-mode access.
+
+For ASI / Computer mode, ask for `perplexity_compute` by name when precision matters:
+
+```json
+{
+  "tool": "perplexity_compute",
+  "arguments": {
+    "query": "Model the true cost of a 5 kW residential solar installation in the Philippines versus investing the same cash at 6% annually over 10 and 20 years. Show assumptions, calculations, and sensitivity cases.",
+    "language": "en-US"
+  }
+}
+```
+
+### Search defaults
+
+When no optional arguments are supplied:
+
+| Tool | Model default | Mode default | Sources default | Language default |
+|---|---|---|---|---|
+| `perplexity_search` | Authenticated: `pplx_pro`; anonymous: `turbo` | Authenticated: `copilot`; anonymous: `concise` | `["web"]` | `en-US` |
+| `perplexity_ask` | `PERPLEXITY_SEARCH_MODEL` or `pplx_pro` | `copilot` | `["web"]` | `en-US` |
+| `perplexity_reason` | `PERPLEXITY_REASON_MODEL` or `claude46sonnetthinking` | `copilot` | `["web"]` | `en-US` |
+| `perplexity_research` | `PERPLEXITY_RESEARCH_MODEL` or `pplx_alpha` | `copilot` | `["web"]` | `en-US` |
+| `perplexity_compute` | Tool argument, then `PERPLEXITY_COMPUTE_MODEL`, then account ASI default, then `pplx_asi` | `asi` | web-only Computer mode | `en-US` |
+
+Model defaults are configurable with environment variables:
+
+- `PERPLEXITY_SEARCH_MODEL`
+- `PERPLEXITY_REASON_MODEL`
+- `PERPLEXITY_RESEARCH_MODEL`
+- `PERPLEXITY_COMPUTE_MODEL`
+
+`perplexity_ask`, `perplexity_reason`, and `perplexity_compute` also accept a per-call `model` argument. `perplexity_ask` accepts `mode: "concise" | "copilot"`. `perplexity_search`, `perplexity_reason`, `perplexity_research`, and `perplexity_ask` accept `sources` and `language`.
+
+### How requests reach Perplexity
+
+For search-style tools, the MCP server builds the same kind of request body the Perplexity web app sends: `query_str`, selected model, mode, source list, language, and optional follow-up thread context. It posts that body from the logged-in browser session to `https://www.perplexity.ai/rest/sse/perplexity_ask`.
+
+Perplexity responds as a Server-Sent Events stream. The MCP runtime reads the stream and turns it into a normal tool response: answer text, citation sources, media items, suggested follow-ups, follow-up context, and the Perplexity thread URL. This is why the server can use your existing Free / Pro / Max account features without a Perplexity API key, but it also means the request shape can drift if Perplexity changes its private web endpoint.
+
+### Current tuning opportunities
+
+- The auto-config rules catalogue in `packages/extension/src/auto-config/index.ts` is a static copy of the tool list and summaries. Tests keep it in sync with registered tool names, but summaries and usage guidance still have to be updated by hand. A future improvement would generate the rules block from the MCP tool schemas, or share one typed catalogue between the runtime and auto-config.
+- `sources` defaults to `["web"]` even for queries that clearly ask for papers or social discussion. We can either document prompt patterns, as above, or add a small routing layer that infers `scholar` / `social` from the user's request before calling Perplexity.
+- `perplexity_search` uses browser-backed search by default. Experimental browser-free search exists behind `PERPLEXITY_EXPERIMENTAL_IMPIT_SEARCH=1`, but it is intentionally opt-in because Perplexity's private search request body can change.
+- `perplexity_models` already uses a warm disk cache before launching the browser. Similar cache-first behavior may help for repeated model/tier/rate-limit checks from agents.
+
+---
+
 ## Supported IDEs / MCP clients
 
 Auto‑config writes MCP configs and rulesets for 15+ IDEs and agents; the same server also runs everywhere else.[^ide]

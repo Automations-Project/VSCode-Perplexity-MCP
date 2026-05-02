@@ -61,6 +61,21 @@ export async function runVaultPreflight(
   }
 }
 
+export async function waitForStdioInputClose(
+  stdin: NodeJS.ReadableStream = process.stdin,
+): Promise<void> {
+  stdin.resume();
+  await new Promise<void>((resolve) => {
+    const done = () => {
+      stdin.off("end", done);
+      stdin.off("close", done);
+      resolve();
+    };
+    stdin.once("end", done);
+    stdin.once("close", done);
+  });
+}
+
 export async function main() {
   client = new PerplexityClient();
 
@@ -108,6 +123,12 @@ export async function main() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  try {
+    await waitForStdioInputClose();
+  } finally {
+    watcher.dispose();
+    await client.shutdown();
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

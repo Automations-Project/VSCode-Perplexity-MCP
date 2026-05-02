@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Writable } from "node:stream";
-import { runVaultPreflight, __resetVaultPreflightForTests } from "../src/index.js";
+import { PassThrough, Writable } from "node:stream";
+import { runVaultPreflight, waitForStdioInputClose, __resetVaultPreflightForTests } from "../src/index.js";
 import { __resetKeyCache } from "../src/vault.js";
 
 // In-memory stderr stub so we can assert on the warning lines without
@@ -86,5 +86,24 @@ describe("runVaultPreflight — locked vault (Codex CLI scenario)", () => {
     // Second call: gate prevents re-emission.
     await runVaultPreflight(sink);
     expect(sink.chunks.length).toBe(firstLength);
+  });
+});
+
+describe("waitForStdioInputClose", () => {
+  it("keeps the stdio server alive until stdin ends", async () => {
+    const stdin = new PassThrough();
+    let resolved = false;
+
+    const waitPromise = waitForStdioInputClose(stdin).then(() => {
+      resolved = true;
+    });
+
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    stdin.end();
+    await waitPromise;
+
+    expect(resolved).toBe(true);
   });
 });
