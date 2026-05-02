@@ -76,6 +76,31 @@ export async function waitForStdioInputClose(
   });
 }
 
+const SHUTDOWN_TIMEOUT_MS = 5000;
+
+// Race client.shutdown() against a timer so a wedged browser context (patchright
+// hung on a frame, keytar deadlocked, etc.) can't pin the process forever. The
+// timer is unref'd so it doesn't itself keep the loop alive after shutdown wins.
+export async function shutdownClientWithTimeout(
+  c: { shutdown: () => Promise<void> } | undefined,
+  timeoutMs: number = SHUTDOWN_TIMEOUT_MS,
+): Promise<void> {
+  if (!c) return;
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      console.error(`[perplexity-mcp] WARN shutdown timeout after ${timeoutMs}ms — exiting.`);
+      resolve();
+    }, timeoutMs);
+    timer.unref?.();
+  });
+  try {
+    await Promise.race([c.shutdown().catch(() => undefined), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function main() {
   client = new PerplexityClient();
 
@@ -112,12 +137,12 @@ export async function main() {
 
   process.on("SIGINT", async () => {
     watcher.dispose();
-    await client.shutdown();
+    await shutdownClientWithTimeout(client);
     process.exit(0);
   });
   process.on("SIGTERM", async () => {
     watcher.dispose();
-    await client.shutdown();
+    await shutdownClientWithTimeout(client);
     process.exit(0);
   });
 
@@ -127,14 +152,14 @@ export async function main() {
     await waitForStdioInputClose();
   } finally {
     watcher.dispose();
-    await client.shutdown();
+    await shutdownClientWithTimeout(client);
   }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   runEntrypoint().catch(async (error) => {
     console.error("[perplexity-mcp] Fatal error:", error);
-    await client?.shutdown?.().catch(() => undefined);
+    await shutdownClientWithTimeout(client);
     process.exit(1);
   });
 }
