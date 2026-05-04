@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes, hkdfSync, scrypt as nodeScrypt } from "node:crypto";
 import { promisify } from "node:util";
-import { existsSync, readFileSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { getProfilePaths } from "./profiles.js";
 import { safeAtomicWriteFileSync } from "./safe-write.js";
@@ -418,6 +418,29 @@ export async function getUnsealMaterial() {
 }
 
 /**
+ * Resolve EVERY available unseal material in preference order. Used by the
+ * vault read path so that when a vault.enc was written with one path
+ * (e.g. passphrase, when keychain wasn't yet wired) and the user later gains
+ * access to a different path (e.g. keytar starts working after a libsecret
+ * install or extension upgrade), reads transparently fall back instead of
+ * crashing with "Vault decrypt failed: wrong passphrase or corrupted
+ * ciphertext".
+ *
+ * Skips the TTY prompt — that's interactive and only meaningful as a primary
+ * unseal path, never as a silent fallback.
+ *
+ * @returns {Promise<Array<{kind:"key", key:Buffer}|{kind:"passphrase", passphrase:string}>>}
+ */
+export async function getAllUnsealMaterials() {
+  const materials = [];
+  const fromKc = await keyFromKeychain();
+  if (fromKc) materials.push({ kind: "key", key: fromKc });
+  const envPass = process.env.PERPLEXITY_VAULT_PASSPHRASE;
+  if (envPass) materials.push({ kind: "passphrase", passphrase: envPass });
+  return materials;
+}
+
+/**
  * Return a 32-byte master key. SIGNATURE PRESERVED for back-compat; internal
  * implementation now defers to `getUnsealMaterial()`. For passphrase users,
  * this derives via HKDF + the legacy static salt — which is suitable as a
@@ -467,16 +490,49 @@ async function readVaultObject(profileName) {
   if (!existsSync(p)) return {};
   const blob = readFileSync(p);
   const header = parseVaultHeader(blob);
-  const unseal = await getUnsealMaterial();
-  const key = await deriveKeyForHeader(header, unseal);
-  const plain = aesGcmOpen(header, key);
-  try {
-    return JSON.parse(plain.toString("utf8"));
-  } catch (err) {
-    const { redact } = await import("./redact.js");
-    console.error(`[vault] Corrupt vault JSON for profile ${redact(profileName)}: ${redact(err.message)}`);
-    throw new Error(`Vault for profile '${profileName}' is corrupt or unreadable.`);
+
+  // 0.8.40: try every available unseal material instead of just the preferred
+  // one. A user who first logged in with PERPLEXITY_VAULT_PASSPHRASE (because
+  // keytar wasn't loading on their box) and later got keytar working would
+  // otherwise see "Vault decrypt failed" because getUnsealMaterial flipped
+  // its preference between the write and the read. Cache the winning material
+  // so we don't repeat the work next call.
+  const materials = _unsealMaterialCache
+    ? [_unsealMaterialCache, ...(await getAllUnsealMaterials()).filter((m) => m !== _unsealMaterialCache)]
+    : await getAllUnsealMaterials();
+  if (materials.length === 0) {
+    // Fall back to getUnsealMaterial which throws the structured "Vault
+    // locked" message — keeps the existing user-facing error verbatim.
+    await getUnsealMaterial();
+    return {};
   }
+
+  let lastErr;
+  for (const unseal of materials) {
+    try {
+      const key = await deriveKeyForHeader(header, unseal);
+      const plain = aesGcmOpen(header, key);
+      try {
+        const parsed = JSON.parse(plain.toString("utf8"));
+        // Pin the winning material so subsequent calls in the same process
+        // don't re-try the wrong one (only relevant when both keychain and
+        // passphrase are available).
+        _unsealMaterialCache = unseal;
+        return parsed;
+      } catch (err) {
+        const { redact } = await import("./redact.js");
+        console.error(`[vault] Corrupt vault JSON for profile ${redact(profileName)}: ${redact(err.message)}`);
+        throw new Error(`Vault for profile '${profileName}' is corrupt or unreadable.`);
+      }
+    } catch (err) {
+      lastErr = err;
+      // AES auth failures look like "Vault decrypt failed". Retry with the
+      // next material. Any non-decrypt error (corrupt JSON, etc.) bubbles up
+      // immediately because re-trying with another key won't help.
+      if (!/wrong passphrase or corrupted ciphertext/.test(String(err?.message ?? ""))) throw err;
+    }
+  }
+  throw lastErr ?? new Error("Vault decrypt failed: no unseal material succeeded.");
 }
 
 async function writeVaultObject(profileName, obj) {
@@ -513,7 +569,38 @@ export class Vault {
     return obj[key] ?? null;
   }
   async set(profile, key, value) {
-    const obj = await readVaultObject(profile);
+    // Read-merge-write. If the existing vault.enc is genuinely undecryptable
+    // (e.g. keytar's stored key was rotated/cleared and the vault was written
+    // with the previous key), the read-then-fallback chain in readVaultObject
+    // will throw. For a write — almost always a fresh login that's about to
+    // overwrite the relevant keys anyway — losing old siblings (email,
+    // userId) is strictly better than failing the login. Quarantine the bad
+    // blob so the user can recover it for debugging, then start fresh.
+    let obj;
+    try {
+      obj = await readVaultObject(profile);
+    } catch (err) {
+      const msg = String(err?.message ?? "");
+      if (/wrong passphrase or corrupted ciphertext|Vault decrypt failed/.test(msg)) {
+        const paths = getProfilePaths(profile);
+        if (existsSync(paths.vault)) {
+          const quarantine = `${paths.vault}.unreadable.${Date.now()}.bak`;
+          try {
+            renameSync(paths.vault, quarantine);
+          } catch {
+            // best-effort — if rename fails the next write still overwrites.
+          }
+          console.error(
+            `[vault] WARN existing vault.enc for profile '${profile}' could not be decrypted with any available unseal material; ` +
+            `quarantined at ${quarantine} and starting fresh. Possible cause: keychain key rotation or PERPLEXITY_VAULT_PASSPHRASE change. ` +
+            `Original error: ${msg}`
+          );
+        }
+        obj = {};
+      } else {
+        throw err;
+      }
+    }
     obj[key] = value;
     await writeVaultObject(profile, obj);
   }

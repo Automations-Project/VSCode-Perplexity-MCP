@@ -188,6 +188,86 @@ describe("Vault interface", () => {
     await v.deleteAll("work");
     expect(await v.get("work", "cookies")).toBeNull();
   });
+
+  it("read falls back across unseal materials when keychain key changes after write", async () => {
+    // Reproduces the 2026-05-04 user scenario: vault.enc was written when
+    // only the env-var passphrase was available (keytar wasn't loading on
+    // their box yet), then a later extension upgrade got keytar working and
+    // the read path started preferring the keychain key — which can't
+    // decrypt the passphrase-encrypted blob. The fallback chain in
+    // readVaultObject must transparently retry with the passphrase.
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "alpha-passphrase";
+    __resetKeyCache();
+
+    // 1. Write under a "no keychain" world so the passphrase wins.
+    vi.doMock("keytar", () => ({ default: undefined }));
+    vi.resetModules();
+    const noKc = await import("../src/vault.js");
+    noKc.__resetKeyCache();
+    const { createProfile: cpFresh1 } = await import("../src/profiles.js");
+    cpFresh1("work");
+    const v1 = new noKc.Vault();
+    await v1.set("work", "cookies", JSON.stringify([{ value: "from-passphrase" }]));
+
+    // 2. Re-load the module with a keytar that DOES return a (different) key.
+    //    Old behaviour: getUnsealMaterial returns this key, decrypt fails.
+    //    New behaviour: fallback chain tries keychain first, fails, tries
+    //    passphrase, succeeds.
+    vi.doMock("keytar", () => ({
+      default: {
+        getPassword: async () => "11".repeat(32),
+        setPassword: async () => undefined,
+        deletePassword: async () => undefined,
+      },
+    }));
+    vi.resetModules();
+    const withKc = await import("../src/vault.js");
+    withKc.__resetKeyCache();
+    const v2 = new withKc.Vault();
+    const got = await v2.get("work", "cookies");
+    expect(JSON.parse(got)).toEqual([{ value: "from-passphrase" }]);
+
+    vi.doUnmock("keytar");
+    vi.resetModules();
+  });
+
+  it("set quarantines an undecryptable vault.enc and writes a fresh one", async () => {
+    // Variant of the above: vault was written with passphrase X, the
+    // passphrase has since rotated to Y, AND keytar is unavailable. No
+    // unseal material in the chain can decrypt the old blob. Vault.set must
+    // not fail the login — it should quarantine the dead blob and write a
+    // fresh one so the user recovers automatically.
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "alpha";
+    __resetKeyCache();
+    vi.doMock("keytar", () => ({ default: undefined }));
+    vi.resetModules();
+    const m1 = await import("../src/vault.js");
+    m1.__resetKeyCache();
+    const { createProfile: cpFresh2 } = await import("../src/profiles.js");
+    cpFresh2("work");
+    const v1 = new m1.Vault();
+    await v1.set("work", "cookies", "[]");
+
+    // Rotate the passphrase. No keytar anywhere — the only material we have
+    // can't decrypt the old blob.
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "beta";
+    vi.resetModules();
+    const m2 = await import("../src/vault.js");
+    m2.__resetKeyCache();
+    const v2 = new m2.Vault();
+    await v2.set("work", "cookies", JSON.stringify([{ name: "session-token", value: "fresh" }]));
+    const got = await v2.get("work", "cookies");
+    expect(JSON.parse(got)).toEqual([{ name: "session-token", value: "fresh" }]);
+
+    const { readdirSync: rd } = await import("node:fs");
+    const files = rd(join2(TMP, "profiles", "work"));
+    expect(files, `unreadable backup not found, dir contents: ${files.join(",")}`).toSatisfy(
+      (fs) => fs.some((f) => f.startsWith("vault.enc.unreadable.") && f.endsWith(".bak"))
+    );
+
+    vi.doUnmock("keytar");
+    vi.resetModules();
+  });
 });
 
 describe("vault primitive error paths — key validation", () => {
