@@ -723,6 +723,7 @@ export type WebviewMessage =
       id: string;
     }
   | { type: "auth:login-start"; id: string; payload: { profile: string; mode: "auto" | "manual"; email?: string } }
+  | { type: "auth:cancel"; id: string; payload: { profile: string } }
   | { type: "auth:otp-submit"; id: string; payload: { profile: string; otp: string } }
   | { type: "auth:logout"; id: string; payload: { profile: string; purge?: boolean } }
   | { type: "auth:dismiss-expired"; payload: { profile: string; bumpHours: number } }

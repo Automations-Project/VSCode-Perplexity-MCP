@@ -118,15 +118,28 @@ export async function spawnRunner(
     timeoutMs?: number;
     onMessage?: (msg: unknown) => void;
     onSend?: (child: ChildProcess) => void;
+    /** Caller-supplied AbortSignal. Aborting kills the child and rejects the
+     *  promise with `Error("login_cancelled")` (or whatever reason the caller
+     *  attached). Used by `cancelLogin()` to break out of a hung browser-based
+     *  flow without waiting for `timeoutMs`. */
+    signal?: AbortSignal;
   } = {},
 ): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
+    if (opts.signal?.aborted) {
+      // Honour pre-aborted signals — caller may have cancelled before we got
+      // here. Reject without spawning so we don't leak a child process.
+      const reason = (opts.signal.reason as Error | undefined) ?? new Error("login_cancelled");
+      return reject(reason);
+    }
+
     const child: ChildProcess = fork(scriptPath, [], {
       env: { ...process.env, ...env },
       stdio: ["pipe", "pipe", "pipe", "ipc"],
     });
 
     let stdout = "";
+    let settled = false;
     child.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
     child.stderr?.on("data", (d: Buffer) => {
       if (process.env.PERPLEXITY_DEBUG === "1") process.stderr.write(`[runner] ${d}`);
@@ -135,15 +148,42 @@ export async function spawnRunner(
     if (opts.onMessage) child.on("message", opts.onMessage);
     opts.onSend?.(child);
 
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      if (abortListener && opts.signal) opts.signal.removeEventListener("abort", abortListener);
+    };
+
     const timer = opts.timeoutMs
       ? setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          cleanup();
           child.kill("SIGTERM");
+          // Escalate to SIGKILL after a 5s grace period so a runner that
+          // ignores SIGTERM (e.g. stuck in a synchronous Playwright call)
+          // still releases the inflight lock.
+          setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 5_000).unref();
           reject(new Error(`Runner timed out after ${opts.timeoutMs}ms`));
         }, opts.timeoutMs)
       : null;
 
+    const abortListener = opts.signal
+      ? () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          child.kill("SIGTERM");
+          setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 5_000).unref();
+          const reason = (opts.signal!.reason as Error | undefined) ?? new Error("login_cancelled");
+          reject(reason);
+        }
+      : null;
+    if (opts.signal && abortListener) opts.signal.addEventListener("abort", abortListener);
+
     child.on("close", () => {
-      if (timer) clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      cleanup();
       const lines = stdout.trim().split("\n").filter(Boolean);
       const last = lines[lines.length - 1];
       if (!last) return reject(new Error("Runner produced no output"));
@@ -155,7 +195,9 @@ export async function spawnRunner(
     });
 
     child.on("error", (err) => {
-      if (timer) clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      cleanup();
       reject(err);
     });
   });
@@ -166,7 +208,16 @@ export class AuthManager implements vscode.Disposable {
   public readonly onDidChange = this._onDidChange.event;
   private _state: AuthState = { profile: "default", status: "unknown" };
   private inflight = new Map<string, Promise<unknown>>();
+  /** Per-profile AbortController. Lets `cancelLogin(profile)` break out of a
+   *  hung browser-runner without waiting for the wall-clock timeout. */
+  private loginAbortControllers = new Map<string, AbortController>();
   private readonly extensionUri: vscode.Uri;
+  /** Wall-clock cap on a single login attempt. Browser auth can legitimately
+   *  take a few minutes (Cloudflare turnstile, OTP, SSO redirects), but any
+   *  longer is almost certainly stuck — auto-clear so the user can retry
+   *  without restarting the extension. Override via env for repro/testing. */
+  private static readonly LOGIN_TIMEOUT_MS =
+    Number.parseInt(process.env.PERPLEXITY_LOGIN_TIMEOUT_MS ?? "", 10) || 5 * 60_000;
   /** Optional logger; extension.ts injects one so runner errors land in the
    *  Perplexity output channel alongside activation/daemon logs. */
   private logger?: (line: string) => void;
@@ -341,16 +392,35 @@ export class AuthManager implements vscode.Disposable {
     if (this.inflight.has(key)) {
       throw new Error(`Login already in progress for '${opts.profile}'`);
     }
-    const promise = this.runLogin(opts);
+    const controller = new AbortController();
+    this.loginAbortControllers.set(key, controller);
+    const promise = this.runLogin(opts, controller.signal);
     this.inflight.set(key, promise);
     try {
       return await promise;
     } finally {
       this.inflight.delete(key);
+      this.loginAbortControllers.delete(key);
     }
   }
 
-  private async runLogin(opts: LoginOptions): Promise<AuthLoginResult> {
+  /**
+   * Break out of an in-flight login attempt. Aborts the spawned runner via
+   * SIGTERM (escalating to SIGKILL after a 5s grace period in spawnRunner) so
+   * the inflight lock clears immediately and the user can retry without
+   * waiting for the wall-clock timeout. Returns `true` if a login was active
+   * and we sent the abort, `false` if there was nothing to cancel.
+   */
+  async cancelLogin(profile: string): Promise<boolean> {
+    const key = `login:${profile}`;
+    const controller = this.loginAbortControllers.get(key);
+    if (!controller) return false;
+    this.log(`[login:${profile}] cancel requested`);
+    controller.abort(new Error("login_cancelled"));
+    return true;
+  }
+
+  private async runLogin(opts: LoginOptions, signal: AbortSignal): Promise<AuthLoginResult> {
     this.setState({ profile: opts.profile, status: "logging-in", error: undefined, errorDetail: undefined });
 
     // Auto-enable: if the user explicitly installed Speed Boost (impit) via
@@ -367,17 +437,17 @@ export class AuthManager implements vscode.Disposable {
 
     if (wantImpit) {
       const impitPath = this.defaultRunnerPath("impit-auto" as "auto");
-      const impit = await this.runOneRunner(opts, impitPath);
+      const impit = await this.runOneRunner(opts, impitPath, signal);
       if (impit.ok) return impit;
       if (!isImpitFallbackReason(impit.reason)) return impit;
       this.log(`[login:${opts.profile}] impit runner failed (${impit.reason}); falling back to browser`);
     }
 
     const runnerPath = opts.runnerPath ?? this.defaultRunnerPath(opts.mode);
-    return this.runOneRunner(opts, runnerPath);
+    return this.runOneRunner(opts, runnerPath, signal);
   }
 
-  private async runOneRunner(opts: LoginOptions, runnerPath: string): Promise<AuthLoginResult> {
+  private async runOneRunner(opts: LoginOptions, runnerPath: string, signal: AbortSignal): Promise<AuthLoginResult> {
     // Forward the detected browser to the runner so the spawned login
     // process inherits the same browser selection (Chrome > Edge > Brave >
     // bundled). Custom-path picks pass through via PERPLEXITY_BROWSER_PATH.
@@ -414,6 +484,14 @@ export class AuthManager implements vscode.Disposable {
 
     try {
       const result = await spawnRunner(runnerPath, env, {
+        // Hard wall-clock cap so a runner that never resolves (browser
+        // never opens, user closes the window without auth, runner crashes
+        // without writing JSON) releases the inflight lock instead of
+        // permanently bouncing the next login attempt with "already in
+        // progress". 5min covers legitimate Cloudflare turnstile + OTP +
+        // SSO flows; anything beyond is stuck.
+        timeoutMs: AuthManager.LOGIN_TIMEOUT_MS,
+        signal,
         onSend: (child) => {
           child.on("message", async (msg: unknown) => {
             const m = msg as { phase?: string };

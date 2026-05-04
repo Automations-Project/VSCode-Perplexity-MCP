@@ -85,6 +85,7 @@ function App() {
   const clearNotice = useDashboardStore((store) => store.clearNotice);
   const modelsRefresh = useDashboardStore((store) => store.modelsRefresh);
   const activeProfile = useDashboardStore((store) => store.activeProfile);
+  const authState = useDashboardStore((store) => store.authState);
   const richViewEntry = useDashboardStore((store) => store.richViewEntry);
   const externalViewers = useDashboardStore((store) => store.externalViewers);
   const setRichViewEntry = useDashboardStore((store) => store.setRichViewEntry);
@@ -207,6 +208,20 @@ function App() {
             <button className="primary-button app-quick-action" onClick={() => send({ type: "profile:add-prompt" })}>
               <Sparkles size={13} />
               <span>Add account</span>
+            </button>
+          ) : authState?.status === "logging-in" || authState?.status === "awaiting_otp" ? (
+            // Cancel button replaces Login while a runner is in flight, so the
+            // user can break out of a hung browser-fallback login (e.g. CF
+            // turnstile didn't surface, or the impit→browser fallback opened
+            // a window the user closed). Hitting Login again would otherwise
+            // bounce with "Login already in progress".
+            <button
+              className="ghost-button app-quick-action app-quick-action-muted"
+              onClick={() => send({ type: "auth:cancel", payload: { profile: activeProfile } })}
+              title="Abort the in-flight login attempt and release the lock"
+            >
+              <Sparkles size={13} />
+              <span>Cancel login</span>
             </button>
           ) : snapshot?.loggedIn ? (
             <button className="ghost-button app-quick-action app-quick-action-muted" onClick={() => send({ type: "auth:login" })}>

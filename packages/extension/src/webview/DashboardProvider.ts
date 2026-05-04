@@ -480,6 +480,17 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             }
             break;
           }
+          case "auth:cancel": {
+            // Break out of a hung login: tells AuthManager to abort the
+            // spawned runner and clear the inflight lock so the next
+            // login click doesn't bounce with "already in progress".
+            const cancelled = this.authManager
+              ? await this.authManager.cancelLogin(message.payload.profile)
+              : false;
+            await this.postActionResult(message.id, cancelled);
+            await this.refresh();
+            break;
+          }
           case "auth:logout": {
             if (!this.authManager) break;
             await this.authManager.logout(message.payload);

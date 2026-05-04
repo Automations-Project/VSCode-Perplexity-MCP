@@ -8,6 +8,7 @@
  */
 export const ACTION_TYPES: ReadonlySet<string> = new Set<string>([
   "auth:login",
+  "auth:cancel",
   "configs:generate",
   "configs:remove",
   "rules:sync",

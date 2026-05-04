@@ -6,7 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { PerplexityClient } from "../client.js";
 import { getActiveName, getConfigDir } from "../profiles.js";
 import { getPackageVersion } from "../package-version.js";
-import { watchReinit } from "../reinit-watcher.js";
+import { watchActiveProfile, watchReinit } from "../reinit-watcher.js";
 import type { StartedDaemonServer } from "./server.js";
 import { startDaemonServer } from "./server.js";
 import { getTunnelBinaryPath } from "./install-tunnel.js";
@@ -274,6 +274,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Sta
     }
 
     let watcher: ReturnType<typeof watchReinit> | undefined;
+    let activeWatcher: ReturnType<typeof watchActiveProfile> | undefined;
     let server: StartedDaemonServer | undefined;
     let finalizePromise: Promise<void> | null = null;
     let finalizeResolve: (() => void) | undefined;
@@ -281,7 +282,12 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Sta
       finalizeResolve = resolve;
     });
 
-    const profile = process.env.PERPLEXITY_PROFILE || getActiveName() || "default";
+    // Track the currently-watched profile so the active-pointer watcher can
+    // rebind the per-profile reinit watcher when the user switches accounts.
+    // Without this rebind the daemon keeps watching the old profile's
+    // `.reinit` and silently misses logins on the new profile.
+    let currentWatchedProfile = process.env.PERPLEXITY_PROFILE || getActiveName() || "default";
+    const profile = currentWatchedProfile;
     const client = options.createClient ? options.createClient() : new PerplexityClient();
     let tunnelState: TunnelState = {
       status: "disabled",
@@ -391,6 +397,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Sta
         finalizePromise = (async () => {
           await disableTunnelRuntime().catch(() => undefined);
           watcher?.dispose();
+          activeWatcher?.dispose();
           if (options.signal && abortHandler) {
             options.signal.removeEventListener("abort", abortHandler);
           }
@@ -418,8 +425,33 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Sta
     };
 
     try {
-      watcher = watchReinit(profile, async () => {
+      watcher = watchReinit(currentWatchedProfile, async () => {
         await client.reinit();
+      });
+
+      // Profile-switch handler: when the user picks a different account from
+      // the dashboard `setActive()` rewrites `<configDir>/active` atomically.
+      // We catch that, rebind the per-profile `.reinit` watcher so subsequent
+      // login events on the newly-active profile propagate, then call
+      // `client.reinit()` so cookies for the new profile are picked up
+      // immediately rather than lingering on whatever browser context was
+      // loaded for the old profile.
+      activeWatcher = watchActiveProfile(configDir, async () => {
+        try {
+          const nextProfile = process.env.PERPLEXITY_PROFILE || getActiveName() || "default";
+          if (nextProfile !== currentWatchedProfile) {
+            currentWatchedProfile = nextProfile;
+            watcher?.dispose();
+            watcher = watchReinit(nextProfile, async () => {
+              await client.reinit();
+            });
+          }
+          await client.reinit();
+        } catch (err) {
+          // Don't let a single rebind failure crash the daemon — the next
+          // active-pointer write will retry. Log so it surfaces in daemon.log.
+          console.error(`[perplexity-mcp] active-profile watcher: ${(err as Error).message}`);
+        }
       });
 
       server = await startDaemonServer({

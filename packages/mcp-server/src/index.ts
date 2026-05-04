@@ -9,7 +9,7 @@ import { registerTools } from "./tools.js";
 import { registerPrompts } from "./prompts.js";
 import { registerResources } from "./resources.js";
 import { loadToolConfig, getEnabledTools } from "./tool-config.js";
-import { watchReinit } from "./reinit-watcher.js";
+import { watchActiveProfile, watchReinit } from "./reinit-watcher.js";
 import { getActiveName } from "./profiles.js";
 import { getPackageVersion } from "./package-version.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -125,7 +125,13 @@ export async function main() {
   // call. Never throws — the server still serves doctor + anonymous search.
   await runVaultPreflight();
 
-  const watcher = watchReinit(profile, async () => {
+  // Track the currently-watched profile so the active-pointer watcher can
+  // rebind the per-profile reinit watcher when the user switches accounts
+  // from the dashboard. Without this rebind the stdio server keeps watching
+  // the old profile's `.reinit` and silently misses login events on the new
+  // profile, leaving its in-memory browser context stuck on stale cookies.
+  let currentWatchedProfile = profile;
+  let watcher = watchReinit(currentWatchedProfile, async () => {
     console.error("[perplexity-mcp] .reinit sentinel fired — reloading client.");
     try {
       clientInitPromise = client.reinit();
@@ -135,13 +141,42 @@ export async function main() {
     }
   });
 
+  const activeWatcher = watchActiveProfile(undefined, async () => {
+    try {
+      const nextProfile = process.env.PERPLEXITY_PROFILE || getActiveName() || "default";
+      if (nextProfile !== currentWatchedProfile) {
+        console.error(`[perplexity-mcp] active profile changed: ${currentWatchedProfile} → ${nextProfile}; reloading client.`);
+        currentWatchedProfile = nextProfile;
+        watcher.dispose();
+        watcher = watchReinit(nextProfile, async () => {
+          console.error("[perplexity-mcp] .reinit sentinel fired — reloading client.");
+          try {
+            clientInitPromise = client.reinit();
+            await clientInitPromise;
+          } catch (err) {
+            console.error("[perplexity-mcp] reinit failed:", err);
+          }
+        });
+      }
+      clientInitPromise = client.reinit();
+      await clientInitPromise;
+    } catch (err) {
+      console.error("[perplexity-mcp] active-profile reload failed:", err);
+    }
+  });
+
+  const disposeWatchers = () => {
+    try { watcher.dispose(); } catch {}
+    try { activeWatcher.dispose(); } catch {}
+  };
+
   process.on("SIGINT", async () => {
-    watcher.dispose();
+    disposeWatchers();
     await shutdownClientWithTimeout(client);
     process.exit(0);
   });
   process.on("SIGTERM", async () => {
-    watcher.dispose();
+    disposeWatchers();
     await shutdownClientWithTimeout(client);
     process.exit(0);
   });
@@ -151,7 +186,7 @@ export async function main() {
   try {
     await waitForStdioInputClose();
   } finally {
-    watcher.dispose();
+    disposeWatchers();
     await shutdownClientWithTimeout(client);
   }
 }
