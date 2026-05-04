@@ -99,7 +99,7 @@ All overrides are optional and evaluated at call time:
 Most-used commands. Run `npx perplexity-user-mcp --help` for the full list (daemon, tunnel providers, etc.).
 
 ```bash
-npx perplexity-user-mcp                                  # start MCP stdio server
+npx perplexity-user-mcp                                  # start MCP stdio server (no output until a client connects)
 npx perplexity-user-mcp login [--profile X] [--mode auto|manual] [--plain-cookies]
 npx perplexity-user-mcp logout [--profile X] [--purge]
 npx perplexity-user-mcp status [--profile X] [--all]
@@ -117,6 +117,66 @@ npx perplexity-user-mcp sync-cloud [--profile X] [--page-size N] [--verbose]
 npx perplexity-user-mcp daemon start [--port N] [--tunnel]
 npx perplexity-user-mcp --version
 ```
+
+> **Note** — `npx perplexity-user-mcp` with no subcommand starts the stdio MCP server and waits silently for JSON-RPC on stdin. There's no progress output; if you typed it expecting a login or status prompt, that's why "nothing happened." Use the explicit subcommand (`login`, `status`, etc.) for interactive operation.
+
+## Standalone CLI walkthrough
+
+For users running the npm package directly (no VS Code extension):
+
+```bash
+# 1. Install (one-time)
+npm install -g perplexity-user-mcp
+npx perplexity-user-mcp install-speed-boost      # optional, strongly recommended for non-browser tools
+npx perplexity-user-mcp install-browser          # only if Chrome / Edge / Brave aren't already installed
+
+# 2. Log in. `--mode auto` is terminal-only (HTTP via impit, OTP prompt on stderr) and works on any
+#    box that can receive your verification email. `--mode manual` opens a visible browser window
+#    so you can sign in via Google / GitHub / Apple SSO; needs a desktop session.
+npx perplexity-user-mcp login --mode auto --email me@example.com
+npx perplexity-user-mcp status                   # confirm the cookie was persisted
+
+# 3. Wire your MCP client to `npx perplexity-user-mcp` per the config snippets below.
+```
+
+What success looks like: the runner prints `login finished (0)` on stdout and `status` reports `valid` with a tier (Pro / Max / Enterprise / Authenticated). Any non-zero exit code from `login` is a failure — check stderr for the JSON line emitted by the runner, which carries the `reason` (`cf_blocked`, `chrome_missing`, `otp_rejected`, `crash`, `timeout`).
+
+## Headless / VPS deployment
+
+`login --mode manual` and the browser fallback for `--mode auto` both launch a real Chromium and need a graphical session. On a true headless box (no X server, no DISPLAY, no Wayland) those paths fail at browser launch with a `chrome_missing` or `crash` reason. Three workable patterns:
+
+**1. Terminal-only login (preferred when impit succeeds).** Try this first — it's the simplest and works on most VPS boxes if Cloudflare doesn't gate the email endpoint:
+
+```bash
+npx perplexity-user-mcp install-speed-boost      # required: provides the impit HTTP runner
+npx perplexity-user-mcp login --mode auto --email me@example.com
+# server emails the OTP; paste the six-digit code at the prompt on stderr
+```
+
+If this fails with `cf_blocked`, fall back to one of the other patterns. (impit is opt-in; without it the auto runner falls back to the browser, which won't work headless.)
+
+**2. Pre-supplied session token.** Log in on a desktop machine via any browser, extract the `__Secure-next-auth.session-token` cookie value, and feed it to the headless server:
+
+```bash
+PERPLEXITY_SESSION_TOKEN=<long-jwt-from-the-cookie> \
+PERPLEXITY_CSRF_TOKEN=<optional-companion-cookie> \
+  npx perplexity-user-mcp                        # stdio server bypasses login entirely
+```
+
+The cookie expires when Perplexity rotates it (typically ~30 days); refresh by re-extracting from the desktop browser. This path is acceptable for personal-use VPS boxes where the env block is `chmod 600`; do not use on shared hosts.
+
+**3. Daemon + tunnel from a desktop.** Run the daemon on a desktop machine you control, expose it via Cloudflare Quick Tunnels (built-in) or ngrok, and point your headless clients at the tunnel URL:
+
+```bash
+# on the desktop:
+npx perplexity-user-mcp daemon start --tunnel
+# prints: tunnel URL https://<random>.trycloudflare.com  bearer <token>
+# on the VPS, point your MCP client at the tunnel URL with the bearer in Authorization
+```
+
+The desktop owns the browser session and the vault; the VPS only sees a bearer-authed HTTP MCP endpoint. See [the Codex CLI setup guide](https://github.com/Automations-Project/VSCode-Perplexity-MCP/blob/main/docs/codex-cli-setup.md) for an end-to-end walkthrough using the same daemon + tunnel pattern.
+
+**Why not just `login --mode manual` on the VPS?** It launches a headed Chromium that needs `$DISPLAY`. On a server distro you'd see `Failed to launch browser process` and the runner exits with `crash`. A virtual framebuffer (`xvfb-run`) would technically work but the email/OTP step still requires a way to interact with the email — pattern 1 covers that without the X11 dependency.
 
 ## MCP client configuration
 
