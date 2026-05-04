@@ -1,14 +1,24 @@
 import type React from "react";
+import amazonQLogo from "../../../mcp-tool-icons/amazon-q.svg?raw";
 import ampLogo from "../../../mcp-tool-icons/amp.svg?raw";
+import antigravityLogo from "../../../mcp-tool-icons/antigravity.svg?raw";
 import claudeCodeLogo from "../../../mcp-tool-icons/claude-code.svg?raw";
 import claudeLogo from "../../../mcp-tool-icons/claude.svg?raw";
 import clineLogo from "../../../mcp-tool-icons/cline.svg?raw";
 import codexLogo from "../../../mcp-tool-icons/codex.svg?raw";
 import continueLogo from "../../../mcp-tool-icons/continue.svg?raw";
 import cursorLogo from "../../../mcp-tool-icons/cursor.svg?raw";
+import firebaseStudioLogo from "../../../mcp-tool-icons/firebase-studio.svg?raw";
 import geminiLogo from "../../../mcp-tool-icons/gemini.svg?raw";
 import githubCopilotLogo from "../../../mcp-tool-icons/github-copilot.svg?raw";
+import gooseLogo from "../../../mcp-tool-icons/goose.svg?raw";
+import kiroLogo from "../../../mcp-tool-icons/kiro.svg?raw";
+import lmStudioLogo from "../../../mcp-tool-icons/lmstudio.svg?raw";
+import openCodeLogo from "../../../mcp-tool-icons/opencode.svg?raw";
 import rooCodeLogo from "../../../mcp-tool-icons/roocode.svg?raw";
+import traeLogo from "../../../mcp-tool-icons/trae.svg?raw";
+import vscodeLogo from "../../../mcp-tool-icons/vscode.svg?raw";
+import warpLogo from "../../../mcp-tool-icons/warp.svg?raw";
 import windsurfLogo from "../../../mcp-tool-icons/windsurf.svg?raw";
 import zedLogo from "../../../mcp-tool-icons/zed.svg?raw";
 
@@ -70,6 +80,19 @@ export const ZedIcon = createBrandIcon(zedLogo);
 export const GeminiIcon = createBrandIcon(geminiLogo);
 export const RooCodeIcon = createBrandIcon(rooCodeLogo);
 export const ContinueIcon = createBrandIcon(continueLogo);
+export const VscodeIcon = createBrandIcon(vscodeLogo);
+export const AntigravityIcon = createBrandIcon(antigravityLogo);
+export const KiroIcon = createBrandIcon(kiroLogo);
+export const FirebaseStudioIcon = createBrandIcon(firebaseStudioLogo);
+export const AmazonQIcon = createBrandIcon(amazonQLogo);
+export const GooseIcon = createBrandIcon(gooseLogo);
+export const WarpIcon = createBrandIcon(warpLogo);
+export const TraeIcon = createBrandIcon(traeLogo);
+export const LmStudioIcon = createBrandIcon(lmStudioLogo);
+export const OpenCodeIcon = createBrandIcon(openCodeLogo);
+// 2026-05 expansion: VS 2022, Copilot CLI, Factory, Qwen Code, Kilo Code don't
+// ship dedicated SVGs in mcp-tool-icons/ yet — reuse closest-fit brand or fall
+// back to GenericIdeIcon. Replace with proper SVGs when added.
 
 const IDE_ICON_MAP: Record<string, () => React.ReactNode> = {
   cursor: CursorIcon,
@@ -83,10 +106,29 @@ const IDE_ICON_MAP: Record<string, () => React.ReactNode> = {
   rooCode: RooCodeIcon,
   continueDev: ContinueIcon,
   copilot: CopilotIcon,
+  vscode: VscodeIcon,
   zed: ZedIcon,
   geminiCli: GeminiIcon,
+  antigravity: AntigravityIcon,
+  kiro: KiroIcon,
+  firebaseStudio: FirebaseStudioIcon,
+  amazonQ: AmazonQIcon,
+  goose: GooseIcon,
+  warp: WarpIcon,
+  trae: TraeIcon,
   aider: AiderIcon,
   augment: AugmentIcon,
+  // 2026-05 expansion. Visual Studio 2022 reuses the VS Code mark (close-enough
+  // visual identity since both are Microsoft IDEs); Copilot CLI reuses the
+  // GitHub Copilot mark. Factory, Qwen Code, Kilo Code fall back to the generic
+  // icon until first-party SVGs are added.
+  vs2022: VscodeIcon,
+  copilotCli: CopilotIcon,
+  openCode: OpenCodeIcon,
+  factoryDroid: GenericIdeIcon,
+  qwenCode: GenericIdeIcon,
+  kiloCode: GenericIdeIcon,
+  lmStudio: LmStudioIcon,
 };
 
 export function getIdeIcon(ideKey: string): () => React.ReactNode {

@@ -288,7 +288,8 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
           case "configs:remove": {
             try {
               debug(`configs:remove target=${message.payload.target}`);
-              removeTarget(message.payload.target);
+              const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+              removeTarget(message.payload.target, { workspaceRoot: wsRoot });
               await this.postNotice("info", `MCP config removed from ${message.payload.target}.`);
               await this.refresh();
               await this.postActionResult(message.id, true);
@@ -1553,7 +1554,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
     const settings = getSettingsSnapshot();
     const bundledServerPath = vscode.Uri.joinPath(this.context.extensionUri, "dist", "mcp", "server.mjs").fsPath;
     const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    const ideStatus = getIdeStatuses(bundledServerPath, settings.chromePath);
+    const ideStatus = getIdeStatuses(bundledServerPath, settings.chromePath, { workspaceRoot: wsRoot });
     debug(`buildState: ideStatuses=${JSON.stringify(Object.fromEntries(Object.entries(ideStatus).map(([k, v]) => [k, { detected: v.detected, configured: v.configured }])))}`);
     debug(`buildState: wsRoot=${wsRoot ?? "(none)"}`);
     return {
@@ -1899,7 +1900,8 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
         "mcp",
         "server.mjs",
       ).fsPath;
-      const ideStatus = getIdeStatuses(bundledServerPath, settings.chromePath);
+      const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      const ideStatus = getIdeStatuses(bundledServerPath, settings.chromePath, { workspaceRoot: wsRoot });
       const daemonPort = status.health?.port ?? status.record?.port ?? null;
       const tunnelUrl = status.health?.tunnel?.url ?? status.record?.tunnelUrl ?? null;
       const daemonBearer = status.record?.bearerToken ?? null;

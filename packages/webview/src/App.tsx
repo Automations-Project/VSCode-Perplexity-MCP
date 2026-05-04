@@ -133,6 +133,9 @@ function App() {
   const snapshot = state?.snapshot;
   const filteredHistory = filterHistory(state?.history ?? [], deferredHistoryFilter);
   const modelGroups = buildModelGroups(state, deferredModelFilter);
+  const openTab = useCallback((tab: AppTab) => {
+    startTransition(() => setActiveTab(tab));
+  }, [setActiveTab]);
 
   return (
     <div className="app-shell">
@@ -181,7 +184,7 @@ function App() {
               <button
                 key={tab.id}
                 className={`nav-item ${activeTab === tab.id ? "nav-item-active" : ""}`}
-                onClick={() => startTransition(() => setActiveTab(tab.id))}
+                onClick={() => openTab(tab.id)}
               >
                 <Icon size={14} />
                 <span>{tab.label}</span>
@@ -244,7 +247,9 @@ function App() {
             ) : null}
 
             {!state ? <div className="glass-panel hero-panel">Waiting for extension state...</div> : null}
-            {state && activeTab === "dashboard" ? <DashboardView state={state} send={send} /> : null}
+            {state && activeTab === "dashboard" ? (
+              <DashboardView state={state} send={send} onOpenTab={openTab} />
+            ) : null}
             {state && activeTab === "models" ? (
               <ModelsView filter={modelFilter} setFilter={setModelFilter} groups={modelGroups} state={state} send={send} />
             ) : null}

@@ -729,6 +729,12 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
   font-weight: 600;
 }
 
+.metric-card-action {
+  margin-top: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
 .dashboard-status-text {
   font-size: 0.78rem;
   color: var(--text-secondary);
@@ -2875,6 +2881,26 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
 /* ── Section Headers ──────────────────────── */
 .section-header {
   margin-bottom: 10px;
+}
+
+.section-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.section-header-copy {
+  min-width: 0;
+  flex: 1 1 150px;
+}
+
+.section-header-action {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 1 auto;
 }
 
 .section-header .eyebrow {

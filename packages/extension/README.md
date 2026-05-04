@@ -59,7 +59,7 @@ A VS Code extension that embeds the **Perplexity MCP runtime** directly in your 
 - **Zero API key** — authenticates via your browser session, uses your existing Perplexity plan.
 - **Embedded MCP server** — registered via `mcpServerDefinitionProviders`; agents (Copilot, Cursor, etc.) pick it up automatically.
 - **Webview dashboard** — login flows, profile management, session status, all inside VS Code.
-- **Auto-config for 15+ IDEs** — one click writes MCP configs and rulesets for Cursor, Windsurf, Claude Desktop, Cline, Amp, Codex CLI, and more.
+- **Auto-config for 20+ IDEs** — one click writes MCP configs and rulesets for Cursor, Windsurf, Claude Desktop, Cline, Amp, Codex CLI, Visual Studio 2022, OpenCode, GitHub Copilot CLI, Factory Droid, Qwen Code, and more.
 - **Daemon mode** — keep a long-lived HTTP MCP server running with Cloudflare or ngrok tunnels.
 
 ---
@@ -99,11 +99,17 @@ Run **`Perplexity: Configure IDEs`** from the Command Palette to auto-write MCP 
 |:-------|:--------------|
 | **Cursor** | `.cursor/rules/*.mdc`, `mcp.json` |
 | **Claude Desktop / Claude Code** | `claude_desktop_config.json`, `CLAUDE.md` |
-| **Windsurf** | `mcp_config.json`, `.windsurfrules` |
-| **Cline** | MCP settings, `.clinerules` |
-| **Amp** | `.github/instructions/*` |
-| **Codex CLI** | `mcp.json`, `AGENTS.md` |
-| …and 9 more | See [full IDE list](https://github.com/Automations-Project/VSCode-Perplexity-MCP#supported-ides--mcp-clients) |
+| **Windsurf / Windsurf Next** | `mcp_config.json`, `.windsurf/rules/*` |
+| **Cline** | MCP settings, `.clinerules/*` |
+| **Amp** | `.github/instructions/*`, `AGENTS.md` |
+| **Codex CLI** | `~/.codex/config.toml`, `AGENTS.md` |
+| **VS Code MCP / Visual Studio 2022** | `.vscode/mcp.json` / `<sln>/.mcp.json` (root key `servers`) |
+| **OpenCode** | `~/.config/opencode/opencode.json` (root key `mcp`), `AGENTS.md` |
+| **GitHub Copilot CLI** | `~/.copilot/mcp-config.json`, `AGENTS.md` |
+| **Factory Droid** | `~/.factory/mcp.json`, `AGENTS.md` |
+| **Qwen Code** | `~/.qwen/settings.json`, `AGENTS.md` |
+| **Gemini CLI / Firebase Studio / Kiro** | `~/.gemini/settings.json`, `.idx/mcp.json`, `~/.kiro/settings/mcp.json` |
+| …and more | See [full IDE list](https://github.com/Automations-Project/VSCode-Perplexity-MCP#supported-ides--mcp-clients) |
 
 ---
 

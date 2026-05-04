@@ -18,6 +18,7 @@ import {
   PERPLEXITY_MCP_SERVER_KEY,
   PERPLEXITY_RULES_SECTION_START,
   PERPLEXITY_RULES_SECTION_END,
+  type IdeMeta,
   type IdeStatus,
   type IdeTarget,
   type McpTransportId,
@@ -33,8 +34,13 @@ import {
 
 interface McpConfigFile {
   mcpServers?: Record<string, unknown>;
+  servers?: Record<string, unknown>;
+  context_servers?: Record<string, unknown>;
+  mcp?: Record<string, unknown>;
   [key: string]: unknown;
 }
+
+type JsonConfigRootKey = NonNullable<IdeMeta["jsonConfigRootKey"]>;
 
 export interface IdeConfigOptions {
   target: IdeTarget;
@@ -117,10 +123,14 @@ export type ApplyIdeConfigResult =
       transportId: McpTransportId;
     };
 
-export function getIdeConfigPath(target: IdeTarget, options?: { homeDir?: string; platform?: NodeJS.Platform }): string {
+export function getIdeConfigPath(
+  target: IdeTarget,
+  options?: { homeDir?: string; platform?: NodeJS.Platform; workspaceRoot?: string }
+): string {
   const home = options?.homeDir ?? homedir();
   const platform = options?.platform ?? process.platform;
   const appData = process.env.APPDATA ?? join(home, "AppData", "Roaming");
+  const workspaceRoot = options?.workspaceRoot;
 
   switch (target) {
     case "cursor":
@@ -148,15 +158,56 @@ export function getIdeConfigPath(target: IdeTarget, options?: { homeDir?: string
       return join(home, ".continue", "config.yaml");
     case "copilot":
       return join(home, ".github", "copilot-instructions.md");
+    case "vscode":
+      return workspaceRoot ? join(workspaceRoot, ".vscode", "mcp.json") : join(home, ".vscode", "mcp.json");
     case "zed":
       if (platform === "darwin") return join(home, "Library", "Application Support", "Zed", "settings.json");
       return join(home, ".local", "share", "zed", "settings.json");
     case "geminiCli":
       return join(home, ".gemini", "settings.json");
+    case "antigravity":
+      return join(home, ".gemini", "antigravity", "mcp_config.json");
+    case "kiro":
+      return join(home, ".kiro", "settings", "mcp.json");
+    case "firebaseStudio":
+      return workspaceRoot ? join(workspaceRoot, ".idx", "mcp.json") : join(home, ".idx", "mcp.json");
+    case "amazonQ":
+      return join(home, ".aws", "amazonq", "default.json");
+    case "goose":
+      if (platform === "win32") return join(appData, "Block", "goose", "config", "config.yaml");
+      return join(home, ".config", "goose", "config.yaml");
+    case "trae":
+      return workspaceRoot ? join(workspaceRoot, ".trae", "mcp.json") : join(home, ".trae", "mcp.json");
+    case "warp":
+      // Warp's MCP is GUI-only; this path is a detection sentinel, not a write
+      // target. `~/.warp/` is created by Warp on first launch (mac/linux), so
+      // checking dirname-existence answers "is Warp installed for this user".
+      return join(home, ".warp", "mcp.json");
     case "aider":
       return join(home, ".aider.conf.yml");
     case "augment":
       return join(home, ".augment", "rules");
+    case "vs2022":
+      // Per Microsoft docs, VS 2022 reads `<sln>/.mcp.json` first (source-controlled
+      // option). User-global fallback is `%USERPROFILE%\.mcp.json` (dot-prefixed).
+      return workspaceRoot ? join(workspaceRoot, ".mcp.json") : join(home, ".mcp.json");
+    case "copilotCli":
+      return join(home, ".copilot", "mcp-config.json");
+    case "openCode":
+      // User-scoped path; Vite-style $HOME/.config tree on all platforms per docs.
+      return join(home, ".config", "opencode", "opencode.json");
+    case "factoryDroid":
+      return join(home, ".factory", "mcp.json");
+    case "qwenCode":
+      return join(home, ".qwen", "settings.json");
+    case "kiloCode":
+      // Detection sentinel; kilo.jsonc not auto-written (needs JSONC writer).
+      return join(home, ".config", "kilo", "kilo.jsonc");
+    case "lmStudio":
+      // ui-only; detection sentinel pointing at LM Studio's app data dir.
+      if (platform === "win32") return join(appData, "LM Studio", "mcp.json");
+      if (platform === "darwin") return join(home, ".cache", "lm-studio", "mcp.json");
+      return join(home, ".cache", "lm-studio", "mcp.json");
   }
 }
 
@@ -233,10 +284,45 @@ export function buildServerConfig(serverPath: string, options?: { nodePath?: str
   };
 }
 
+function getJsonConfigRootKey(meta: IdeMeta | undefined): JsonConfigRootKey {
+  return meta?.jsonConfigRootKey ?? "mcpServers";
+}
+
+function normalizeJsonServerConfig(meta: IdeMeta, serverConfig: McpServerEntry): Record<string, unknown> {
+  if (meta.jsonServerEntryFormat === "opencode") {
+    return normalizeOpenCodeServerConfig(serverConfig);
+  }
+
+  const normalized: Record<string, unknown> = { ...serverConfig };
+  if (meta.jsonServerTypeField && !("type" in normalized)) {
+    normalized.type = "command" in serverConfig ? "stdio" : "http";
+  }
+  return normalized;
+}
+
+function normalizeOpenCodeServerConfig(serverConfig: McpServerEntry): Record<string, unknown> {
+  if ("url" in serverConfig) {
+    return {
+      type: "remote",
+      url: serverConfig.url,
+      enabled: true,
+      ...(serverConfig.headers ? { headers: serverConfig.headers } : {}),
+    };
+  }
+
+  return {
+    type: "local",
+    command: [serverConfig.command, ...serverConfig.args],
+    enabled: true,
+    ...(serverConfig.env ? { environment: serverConfig.env } : {}),
+  };
+}
+
 export function mergeMcpConfig(
   existingConfig: unknown,
   serverName: string,
-  serverConfig: Record<string, unknown>
+  serverConfig: Record<string, unknown>,
+  rootKey: JsonConfigRootKey = "mcpServers"
 ): McpConfigFile {
   const safeExisting =
     existingConfig && typeof existingConfig === "object" && !Array.isArray(existingConfig)
@@ -244,13 +330,13 @@ export function mergeMcpConfig(
       : {};
 
   const existingServers =
-    safeExisting.mcpServers && typeof safeExisting.mcpServers === "object" && !Array.isArray(safeExisting.mcpServers)
-      ? safeExisting.mcpServers
+    safeExisting[rootKey] && typeof safeExisting[rootKey] === "object" && !Array.isArray(safeExisting[rootKey])
+      ? (safeExisting[rootKey] as Record<string, unknown>)
       : {};
 
   return {
     ...safeExisting,
-    mcpServers: {
+    [rootKey]: {
       ...existingServers,
       [serverName]: serverConfig
     }
@@ -259,7 +345,8 @@ export function mergeMcpConfig(
 
 export function removeMcpEntry(
   existingConfig: unknown,
-  serverName: string
+  serverName: string,
+  rootKey: JsonConfigRootKey = "mcpServers"
 ): McpConfigFile {
   const safeExisting =
     existingConfig && typeof existingConfig === "object" && !Array.isArray(existingConfig)
@@ -267,15 +354,15 @@ export function removeMcpEntry(
       : {};
 
   const existingServers =
-    safeExisting.mcpServers && typeof safeExisting.mcpServers === "object" && !Array.isArray(safeExisting.mcpServers)
-      ? { ...safeExisting.mcpServers }
+    safeExisting[rootKey] && typeof safeExisting[rootKey] === "object" && !Array.isArray(safeExisting[rootKey])
+      ? { ...(safeExisting[rootKey] as Record<string, unknown>) }
       : {};
 
   delete existingServers[serverName];
 
   return {
     ...safeExisting,
-    mcpServers: existingServers
+    [rootKey]: existingServers
   };
 }
 
@@ -743,10 +830,13 @@ export async function applyIdeConfig(
       writeTextAtomic(configPath, merged);
     } else {
       const existingConfig = readExistingConfig(configPath);
+      const rootKey = getJsonConfigRootKey(meta);
+      const jsonEntry = normalizeJsonServerConfig(meta, entry);
       const mergedConfig = mergeMcpConfig(
         existingConfig,
         serverName,
-        entry as Record<string, unknown>
+        jsonEntry,
+        rootKey
       );
       writeJsonAtomic(configPath, mergedConfig);
     }
@@ -1018,7 +1108,7 @@ export function removeIdeConfig(target: IdeTarget, options?: { configPath?: stri
       writeTextAtomic(configPath, cleaned);
     } else {
       const existingConfig = readExistingConfig(configPath);
-      const cleaned = removeMcpEntry(existingConfig, serverName);
+      const cleaned = removeMcpEntry(existingConfig, serverName, getJsonConfigRootKey(meta));
       writeJsonAtomic(configPath, cleaned);
     }
   } catch {
@@ -1052,7 +1142,7 @@ export function removeIdeConfig(target: IdeTarget, options?: { configPath?: stri
 
 export function detectIdeStatus(
   target: IdeTarget,
-  options?: { configPath?: string; serverName?: string }
+  options?: { configPath?: string; serverName?: string; workspaceRoot?: string }
 ): IdeStatus {
   const meta = IDE_METADATA[target];
   if (!meta) {
@@ -1067,7 +1157,7 @@ export function detectIdeStatus(
     };
   }
 
-  const configPath = options?.configPath ?? getIdeConfigPath(target);
+  const configPath = options?.configPath ?? getIdeConfigPath(target, { workspaceRoot: options?.workspaceRoot });
   const serverName = options?.serverName ?? PERPLEXITY_MCP_SERVER_KEY;
   const detected = existsSync(dirname(configPath)) || existsSync(configPath);
 
@@ -1127,23 +1217,31 @@ export function detectIdeStatus(
       }
     } else if (meta.configFormat === "json") {
       const config = JSON.parse(readFileSync(configPath, "utf8")) as McpConfigFile;
+      const rootKey = getJsonConfigRootKey(meta);
+      const servers = config[rootKey];
       configured =
-        !!config.mcpServers &&
-        typeof config.mcpServers === "object" &&
-        !Array.isArray(config.mcpServers) &&
-        Object.prototype.hasOwnProperty.call(config.mcpServers, serverName);
-      if (configured && config.mcpServers) {
-        const serverEntry = config.mcpServers[serverName] as
-          | { args?: string[]; command?: string }
+        !!servers &&
+        typeof servers === "object" &&
+        !Array.isArray(servers) &&
+        Object.prototype.hasOwnProperty.call(servers, serverName);
+      if (configured && servers && typeof servers === "object" && !Array.isArray(servers)) {
+        const serverEntry = (servers as Record<string, unknown>)[serverName] as
+          | { args?: unknown; command?: unknown; url?: unknown }
           | undefined;
-        if (serverEntry?.args && Array.isArray(serverEntry.args)) {
-          configuredArgs = serverEntry.args;
+        if (Array.isArray(serverEntry?.command) && serverEntry.command.every((item): item is string => typeof item === "string")) {
+          const [command, ...args] = serverEntry.command;
+          configuredCommand = command;
+          configuredArgs = args;
+        } else {
+          if (Array.isArray(serverEntry?.args) && serverEntry.args.every((item): item is string => typeof item === "string")) {
+            configuredArgs = serverEntry.args;
+          }
+          if (typeof serverEntry?.command === "string") {
+            configuredCommand = serverEntry.command;
+          }
         }
-        if (typeof serverEntry?.command === "string") {
-          configuredCommand = serverEntry.command;
-        }
-        if (typeof (serverEntry as { url?: unknown } | undefined)?.url === "string") {
-          configuredUrl = (serverEntry as { url: string }).url;
+        if (typeof serverEntry?.url === "string") {
+          configuredUrl = serverEntry.url;
         }
       }
     }
@@ -1177,22 +1275,30 @@ export function detectIdeStatus(
   }
 }
 
-export function getIdeStatuses(_serverPath: string, _chromePath?: string): Record<string, IdeStatus> {
+export function getIdeStatuses(
+  _serverPath: string,
+  _chromePath?: string,
+  options?: { workspaceRoot?: string }
+): Record<string, IdeStatus> {
   const result: Record<string, IdeStatus> = {};
   for (const key of Object.keys(IDE_METADATA)) {
-    result[key] = detectIdeStatus(key as IdeTarget);
+    result[key] = detectIdeStatus(key as IdeTarget, { workspaceRoot: options?.workspaceRoot });
   }
   return result;
 }
 
 const AUTO_CONFIGURABLE_IDES: IdeTarget[] = [
-  "cursor", "windsurf", "windsurfNext", "claudeDesktop", "claudeCode", "codexCli", "cline", "amp"
+  "cursor", "windsurf", "windsurfNext", "claudeDesktop", "claudeCode", "codexCli",
+  "cline", "amp", "geminiCli", "kiro", "vscode", "firebaseStudio",
+  // 2026-05 expansion (primary-source-verified):
+  "vs2022", "copilotCli", "openCode", "factoryDroid", "qwenCode"
 ];
 
 export interface ConfigureTargetsOptions {
   transportByIde?: Partial<Record<IdeTarget, McpTransportId>>;
   deps?: ApplyIdeConfigDeps;
   nodePath?: string;
+  workspaceRoot?: string;
 }
 
 export async function configureTargets(
@@ -1224,12 +1330,25 @@ export async function configureTargets(
     if (!meta?.autoConfigurable) continue;
     try {
       const transportId = transportByIde[item] ?? MCP_TRANSPORT_DEFAULT;
+      if (meta.configScope === "workspace" && !options?.workspaceRoot) {
+        results.push({
+          target: item,
+          result: {
+            ok: false,
+            reason: "unsupported",
+            message: `${meta.displayName} MCP config is workspace-scoped. Open a workspace folder before generating it.`,
+            transportId,
+          },
+        });
+        continue;
+      }
       const result = await applyIdeConfig(
         {
           target: item,
           serverPath,
           ...(chromePath !== undefined ? { chromePath } : {}),
           nodePath,
+          configPath: getIdeConfigPath(item, { workspaceRoot: options?.workspaceRoot }),
           transportId,
         },
         deps
@@ -1251,13 +1370,15 @@ export async function configureTargets(
   }
 
   return {
-    statuses: getIdeStatuses(serverPath, chromePath),
+    statuses: getIdeStatuses(serverPath, chromePath, { workspaceRoot: options?.workspaceRoot }),
     results,
   };
 }
 
-export function removeTarget(target: IdeTarget): void {
-  removeIdeConfig(target);
+export function removeTarget(target: IdeTarget, options?: { workspaceRoot?: string }): void {
+  removeIdeConfig(target, {
+    configPath: getIdeConfigPath(target, { workspaceRoot: options?.workspaceRoot }),
+  });
 }
 
 /**
@@ -1530,7 +1651,7 @@ export function removeRulesForIde(target: IdeTarget, workspaceRoot?: string): vo
   } else {
     const content = readFileSync(fullPath, "utf8");
     if (content.includes(PERPLEXITY_RULES_SECTION_START)) {
-      removeTarget(target);
+      rmSync(fullPath, { force: true });
     }
   }
 }

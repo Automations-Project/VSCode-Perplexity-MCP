@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import {
   IDE_METADATA,
   PERPLEXITY_MCP_SERVER_KEY,
+  type IdeMeta,
   type IdeStatus,
 } from "@perplexity-user-mcp/shared";
 import { getIdeConfigPath } from "../auto-config/index.js";
@@ -48,12 +49,10 @@ interface ParsedServerEntry {
  * `null` if the file does not contain a Perplexity entry at all - callers
  * MUST treat that as "nothing to check" (not a stale signal).
  */
-function readJsonEntry(configPath: string): ParsedServerEntry | null {
+function readJsonEntry(configPath: string, rootKey: NonNullable<IdeMeta["jsonConfigRootKey"]> = "mcpServers"): ParsedServerEntry | null {
   const raw = readFileSync(configPath, "utf8");
-  const parsed = JSON.parse(raw) as {
-    mcpServers?: Record<string, unknown>;
-  };
-  const servers = parsed.mcpServers;
+  const parsed = JSON.parse(raw) as Partial<Record<NonNullable<IdeMeta["jsonConfigRootKey"]>, Record<string, unknown>>>;
+  const servers = parsed[rootKey];
   if (!servers || typeof servers !== "object" || Array.isArray(servers)) {
     return null;
   }
@@ -101,7 +100,7 @@ export function detectStaleConfigs(input: StalenessCheckInput): StaleConfigEntry
 
     let entry: ParsedServerEntry | null;
     try {
-      entry = readJsonEntry(configPath);
+      entry = readJsonEntry(configPath, meta.jsonConfigRootKey ?? "mcpServers");
     } catch (err) {
       input.onSkip?.(ideTag, err instanceof Error ? err.message : String(err));
       continue;

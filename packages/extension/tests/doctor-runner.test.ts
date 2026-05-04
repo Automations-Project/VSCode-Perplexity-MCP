@@ -8,7 +8,7 @@ vi.mock("vscode", () => {
       fsPath: path.join(base.fsPath, ...segments),
     }),
   };
-  return { Uri };
+  return { Uri, workspace: { workspaceFolders: undefined } };
 });
 
 vi.mock("perplexity-user-mcp", () => ({

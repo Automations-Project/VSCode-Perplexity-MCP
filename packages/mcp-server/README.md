@@ -16,7 +16,7 @@ or run on demand with `npx`:
 npx perplexity-user-mcp
 ```
 
-The server speaks MCP over stdio, so normally you point your MCP client (Claude Desktop, Cursor, Windsurf, Cline, Claude Code, Amp, Codex CLI) at the binary rather than invoking it directly.
+The server speaks MCP over stdio, so normally you point your MCP client (Claude Desktop, Cursor, Windsurf, Cline, Claude Code, Amp, Codex CLI, VS Code MCP, Visual Studio 2022, OpenCode, GitHub Copilot CLI, Factory Droid, Qwen Code, Gemini CLI, Kiro, Firebase Studio, …) at the binary rather than invoking it directly.
 
 ## First run & login
 
@@ -120,7 +120,7 @@ npx perplexity-user-mcp --version
 
 ## MCP client configuration
 
-Example `mcp.json` entry (Cursor, Windsurf, Claude Code format):
+Example `mcp.json` entry (Cursor, Windsurf, Claude Code, Cline, Amp, Kiro, Firebase Studio, Antigravity, Gemini CLI, Factory Droid, Qwen Code, Copilot CLI — `mcpServers` root key):
 
 ```json
 {
@@ -134,6 +134,40 @@ Example `mcp.json` entry (Cursor, Windsurf, Claude Code format):
 ```
 
 Claude Desktop (`claude_desktop_config.json`) uses the same shape.
+
+**VS Code MCP / Visual Studio 2022** use the `servers` root key with a `type` discriminator:
+
+```json
+{
+  "servers": {
+    "perplexity": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "perplexity-user-mcp"]
+    }
+  }
+}
+```
+
+Workspace paths: `.vscode/mcp.json` (VS Code), `<sln>/.mcp.json` or `%USERPROFILE%\.mcp.json` (Visual Studio 2022).
+
+**OpenCode** uses the `mcp` root key with a local-server entry shape:
+
+```json
+{
+  "mcp": {
+    "perplexity": {
+      "type": "local",
+      "command": ["npx", "-y", "perplexity-user-mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+Path: `~/.config/opencode/opencode.json`.
+
+**Zed** uses the `context_servers` root key. **Codex CLI** uses TOML at `~/.codex/config.toml`.
 
 ## Environment variables
 

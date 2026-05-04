@@ -325,7 +325,8 @@ async function maybePromptAutoConfiguration(
   launcherPath: string
 ): Promise<void> {
   const settings = getSettingsSnapshot();
-  const statuses = getIdeStatuses(launcherPath, settings.chromePath);
+  const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const statuses = getIdeStatuses(launcherPath, settings.chromePath, { workspaceRoot: wsRoot });
   const missing: string[] = [];
 
   const autoChecks: Array<{ key: string; setting: boolean; label: string }> = [
@@ -364,6 +365,7 @@ async function maybePromptAutoConfiguration(
   const outcome = await configureTargets("all", launcherPath, settings.chromePath, {
     transportByIde: settings.mcpTransportByIde as Partial<Record<IdeTarget, McpTransportId>>,
     deps,
+    workspaceRoot: wsRoot,
   });
   for (const { target, result } of outcome.results) {
     if (!result.ok) {
@@ -959,6 +961,7 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
       async (target: string = "all") => {
         const settings = getSettingsSnapshot();
         const deps = await buildApplyIdeConfigDepsLive(context);
+        const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         const outcome = await configureTargets(
           target as IdeTarget | "all",
           launcherPath,
@@ -966,6 +969,7 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
           {
             transportByIde: settings.mcpTransportByIde as Partial<Record<IdeTarget, McpTransportId>>,
             deps,
+            workspaceRoot: wsRoot,
           }
         );
         for (const { target: t, result } of outcome.results) {

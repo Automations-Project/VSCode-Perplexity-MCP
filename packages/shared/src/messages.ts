@@ -5,7 +5,12 @@ export type IdeTarget =
   | "cursor" | "windsurf" | "windsurfNext" | "claudeDesktop" | "claudeCode"
   | "cline" | "amp" | "rooCode" | "codexCli"
   | "continueDev" | "copilot" | "zed" | "geminiCli"
-  | "aider" | "augment";
+  | "vscode" | "antigravity" | "kiro" | "firebaseStudio"
+  | "amazonQ" | "goose" | "warp" | "trae"
+  | "aider" | "augment"
+  // 2026-05 expansion: file-based MCP clients with first-party docs.
+  | "vs2022" | "copilotCli" | "openCode" | "factoryDroid" | "qwenCode"
+  | "kiloCode" | "lmStudio";
 
 /**
  * Classification of the `command` field on a stored IDE MCP config entry.

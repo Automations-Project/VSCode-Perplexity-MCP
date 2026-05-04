@@ -127,6 +127,40 @@ describe("detectIdeStatus — command-field validation", () => {
     expect(status.commandHealth).toBe("ok");
   });
 
+  it("extracts OpenCode local command arrays for status and health", () => {
+    const root = makeTempRoot();
+    const configPath = join(root, ".config", "opencode", "opencode.json");
+    mkdirSync(join(root, ".config", "opencode"), { recursive: true });
+    const nodeName = process.platform === "win32" ? "node.exe" : "node";
+    const fakeNode = join(root, nodeName);
+    const launcherPath = join(root, "start.mjs");
+    writeFileSync(fakeNode, "// fake node\n", { mode: 0o755 });
+    writeFileSync(launcherPath, "// fake launcher\n", { mode: 0o755 });
+
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          mcp: {
+            Perplexity: {
+              type: "local",
+              command: [fakeNode, launcherPath],
+              enabled: true,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const status = detectIdeStatus("openCode", { configPath });
+    expect(status.configured).toBe(true);
+    expect(status.health).toBe("configured");
+    expect(status.command).toBe(fakeNode);
+    expect(status.commandHealth).toBe("ok");
+  });
+
   it("extracts command from a TOML config (Codex CLI shape) and flags wrong-runtime", () => {
     const root = makeTempRoot();
     const configPath = join(root, ".codex", "config.toml");

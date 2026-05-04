@@ -1,5 +1,6 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, type ReactNode } from "react";
 import {
+  ArrowRight,
   BookOpen,
   Check,
   ChevronDown,
@@ -10,11 +11,11 @@ import {
   Copy,
   Database,
   ExternalLink,
-  FileCode2,
   FileText,
   Globe,
   HardDriveDownload,
   Hash,
+  Layers3,
   Link as LinkIcon,
   ListFilter,
   Minus,
@@ -25,7 +26,9 @@ import {
   RotateCcw,
   Rocket,
   Search,
+  Settings2,
   Sparkles,
+  Stethoscope,
   Trash2,
   type LucideIcon,
 } from "lucide-react";
@@ -53,6 +56,7 @@ import {
   type WebviewMessage,
 } from "@perplexity-user-mcp/shared";
 import { useDashboardStore } from "./store";
+import type { AppTab } from "./store";
 
 /** Loose send signature — action IDs are injected automatically by App.tsx. */
 export type SendFn = (message: WebviewMessage | Omit<Extract<WebviewMessage, { id: string }>, "id">) => void;
@@ -207,9 +211,11 @@ function AuthorizedClientsCard({ send }: { send: SendFn }) {
 export function DashboardView({
   state,
   send,
+  onOpenTab,
 }: {
   state: DashboardState;
   send: SendFn;
+  onOpenTab: (tab: AppTab) => void;
 }) {
   const snapshot = state.snapshot;
   const activeProfile = useDashboardStore((store) => store.activeProfile);
@@ -244,6 +250,13 @@ export function DashboardView({
           )}
           <button
             className="ghost-button"
+            onClick={() => onOpenTab("settings")}
+          >
+            <Settings2 size={13} />
+            Open IDEs
+          </button>
+          <button
+            className="ghost-button"
             onClick={() => send({ type: "configs:generate", payload: { target: "all" } })}
           >
             <HardDriveDownload size={13} />
@@ -253,10 +266,19 @@ export function DashboardView({
       </div>
 
       <div className="metric-column">
-        <MetricCard label="Computer Mode" value={snapshot.canUseComputer ? "On" : "Off"} />
+        <MetricCard
+          label="Computer Mode"
+          value={snapshot.canUseComputer ? "On" : "Off"}
+          actionLabel="Open Models"
+          actionIcon={Layers3}
+          onAction={() => onOpenTab("models")}
+        />
         <MetricCard
           label="Models"
           value={String(snapshot.modelsConfig ? snapshot.modelsConfig.config.length : 0)}
+          actionLabel="Open Models"
+          actionIcon={Layers3}
+          onAction={() => onOpenTab("models")}
         />
       </div>
 
@@ -289,6 +311,18 @@ export function DashboardView({
             description={activeProfile ? "Run the active profile's saved login mode." : "Create a profile, choose a mode once, and start sign-in."}
             onClick={() => send(activeProfile ? { type: "auth:login" } : { type: "profile:add-prompt" })}
           />
+          <ActionCard
+            icon={BookOpen}
+            title="Rules"
+            description="Sync Perplexity usage guidelines into supported AI rule files."
+            onClick={() => onOpenTab("rules")}
+          />
+          <ActionCard
+            icon={Stethoscope}
+            title="Doctor"
+            description="Open diagnostics, health checks, and issue reporting."
+            onClick={() => onOpenTab("doctor")}
+          />
         </div>
       </div>
 
@@ -297,6 +331,12 @@ export function DashboardView({
           eyebrow="Rate limits"
           title="Mode availability"
           detail=""
+          action={
+            <button className="ghost-button btn-sm" onClick={() => onOpenTab("models")}>
+              <ArrowRight size={11} />
+              Open Models
+            </button>
+          }
         />
         <div className="flex flex-col gap-2">
           {rateLimitEntries.length === 0 ? (
@@ -328,6 +368,12 @@ export function DashboardView({
           eyebrow="Recent activity"
           title="Latest queries"
           detail=""
+          action={
+            <button className="ghost-button btn-sm" onClick={() => onOpenTab("history")}>
+              <ArrowRight size={11} />
+              Open History
+            </button>
+          }
         />
         <div className="flex flex-col gap-2">
           {recentQueries.length === 0 ? (
@@ -1069,7 +1115,7 @@ export function SettingsView({
           onClick={() => send({ type: "configs:generate", payload: { target: "all" } })}
         >
           <HardDriveDownload size={13} />
-          Configure All Detected
+          Configure All Supported
         </button>
       </div>
 
@@ -1078,7 +1124,7 @@ export function SettingsView({
           <SectionHeader
             eyebrow="Detect-only IDEs"
             title="Manual configuration"
-            detail="These IDEs use TOML, YAML, or UI-only config. Detection shown below."
+            detail="These IDEs either need an in-app flow or a config shape we do not rewrite automatically yet."
           />
           <div className="flex flex-col gap-2">
             {manualOnly.map(([key, status]) => {
@@ -1096,7 +1142,7 @@ export function SettingsView({
                   </div>
                   <div className="ide-card-path-wrap">{status.path}</div>
                   <div className="ide-card-config-note">
-                    Config format: {status.configFormat} — configure manually
+                    Config format: {status.configFormat} — configure in the target app
                   </div>
                 </div>
               );
@@ -1259,10 +1305,11 @@ export function RulesView({
             <li><strong>Cursor</strong> — <code className="code-pill">.cursor/rules/perplexity-mcp.mdc</code></li>
             <li><strong>Windsurf</strong> — <code className="code-pill">.windsurf/rules/perplexity-mcp.md</code></li>
             <li><strong>Claude Code</strong> — section in <code className="code-pill">CLAUDE.md</code></li>
-            <li><strong>Codex / Amp</strong> — section in <code className="code-pill">AGENTS.md</code></li>
-            <li><strong>Copilot</strong> — <code className="code-pill">.github/instructions/</code></li>
-            <li><strong>Gemini</strong> — section in <code className="code-pill">GEMINI.md</code></li>
-            <li><strong>Cline / Roo / Augment</strong> — dedicated rule files</li>
+            <li><strong>Codex / Amp / Antigravity / Warp / Copilot CLI / OpenCode / Factory / Qwen Code</strong> — section in <code className="code-pill">AGENTS.md</code></li>
+            <li><strong>Kiro</strong> — <code className="code-pill">.kiro/steering/perplexity-mcp.md</code></li>
+            <li><strong>GitHub Copilot</strong> — <code className="code-pill">.github/instructions/</code></li>
+            <li><strong>Gemini / Firebase Studio</strong> — section in <code className="code-pill">GEMINI.md</code></li>
+            <li><strong>Cline / Roo / Augment / Zed</strong> — dedicated rule files or native rule sections</li>
           </ul>
           <p>Files using section markers (<code className="code-pill">&lt;!-- PERPLEXITY-MCP-START --&gt;</code>) only update the Perplexity section.</p>
         </div>
@@ -1279,16 +1326,23 @@ function SectionHeader({
   eyebrow,
   title,
   detail,
+  action,
 }: {
   eyebrow: string;
   title: string;
   detail: string;
+  action?: ReactNode;
 }) {
   return (
     <div className="section-header">
-      <div className="eyebrow">{eyebrow}</div>
-      <div className="title">{title}</div>
-      {detail && <div className="detail">{detail}</div>}
+      <div className="section-header-row">
+        <div className="section-header-copy">
+          <div className="eyebrow">{eyebrow}</div>
+          <div className="title">{title}</div>
+          {detail && <div className="detail">{detail}</div>}
+        </div>
+        {action ? <div className="section-header-action">{action}</div> : null}
+      </div>
     </div>
   );
 }
@@ -1312,11 +1366,29 @@ function SearchField({
   );
 }
 
-function MetricCard({ label, value }: { label: string; value: string }) {
+function MetricCard({
+  label,
+  value,
+  actionLabel,
+  actionIcon: ActionIcon,
+  onAction,
+}: {
+  label: string;
+  value: string;
+  actionLabel?: string;
+  actionIcon?: LucideIcon;
+  onAction?: () => void;
+}) {
   return (
     <div className="glass-panel metric-card">
       <div className="metric-label">{label}</div>
       <div className="metric-value">{value}</div>
+      {actionLabel && onAction ? (
+        <button className="ghost-button btn-sm metric-card-action" onClick={onAction}>
+          {ActionIcon ? <ActionIcon size={11} /> : null}
+          {actionLabel}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -1345,7 +1417,16 @@ function ActionCard({
   );
 }
 
-const POPULAR_IDES = new Set(["cursor", "claudeDesktop", "claudeCode", "codexCli", "copilot"]);
+const POPULAR_IDES = new Set([
+  "cursor",
+  "vscode",
+  "claudeDesktop",
+  "claudeCode",
+  "codexCli",
+  "antigravity",
+  "kiro",
+  "copilot",
+]);
 
 function IdeCard({
   ideKey,
@@ -1440,12 +1521,15 @@ function RulesCard({
   rule: RulesStatus;
   send: SendFn;
 }) {
+  const meta = IDE_METADATA[rule.ide];
+  const IconComponent = getIdeIcon(rule.ide);
+  const displayName = meta?.displayName ?? prettifyMode(rule.ide);
   return (
     <div className="ide-card">
       <div className="ide-card-header">
-        <span className="ide-card-name">
-          <FileCode2 size={12} className="inline mr-1 opacity-60" />
-          {prettifyMode(rule.ide)}
+        <span className="ide-card-name ide-card-name-icon">
+          <IconComponent />
+          {displayName}
         </span>
         <span className={`chip ${rule.hasPerplexitySection ? "chip-pro" : "chip-muted"}`}>
           {rule.hasPerplexitySection ? (

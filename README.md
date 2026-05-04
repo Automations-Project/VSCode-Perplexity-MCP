@@ -6,7 +6,7 @@
 
 # Perplexity MCP for 15+ IDEs
 
-**Long‑lived Perplexity browser session, auto‑config for 15+ IDEs, and a VS Code extension – all in one monorepo.**
+**Long‑lived Perplexity browser session, auto‑config for 20+ IDEs, and a VS Code extension – all in one monorepo.**
 
 <p align="center">
   <a href="https://marketplace.visualstudio.com/items?itemName=Nskha.perplexity-vscode"><img src="https://vsmarketplacebadges.dev/version-short/Nskha.perplexity-vscode.svg?style=for-the-badge&label=VS%20Code&colorB=007ACC" alt="VS Code version" /></a>
@@ -71,7 +71,7 @@
 
 A monorepo that ships the Perplexity MCP runtime two ways:
 
-- **`perplexity-vscode`** – native VS Code extension with an embedded MCP daemon, webview dashboard, and auto‑config for 15+ MCP‑capable IDEs.[^ver]
+- **`perplexity-vscode`** – native VS Code extension with an embedded MCP daemon, webview dashboard, and auto‑config for 20+ MCP‑capable IDEs.[^ver]
 - **`perplexity-user-mcp`** – the same MCP server as a standalone npm package for Cursor, Claude Desktop, Claude Code, Windsurf, Cline, Amp, Codex CLI, and any other MCP client that talks stdio.
 
 Both wrap a long‑lived **patchright** browser session against your existing Perplexity account, so the tools consume your logged‑in plan (Free / Pro / Max) instead of an API key.[^runtime]
@@ -363,6 +363,26 @@ Auto‑config writes MCP configs and rulesets for 15+ IDEs and agents; the same 
       <td><strong>Windsurf, Cline, Amp, Codex CLI</strong></td>
       <td>MCP config and rules files per target.</td>
       <td><code>mcp_config.json</code>, <code>.rules</code>, <code>.github/instructions/*</code>, etc.</td>
+    </tr>
+    <tr>
+      <td><strong>Visual Studio 2022, VS Code MCP</strong></td>
+      <td>Workspace‑scoped MCP config under <code>servers</code> root key.</td>
+      <td><code>&lt;sln&gt;/.mcp.json</code>, <code>.vscode/mcp.json</code>.</td>
+    </tr>
+    <tr>
+      <td><strong>OpenCode</strong></td>
+      <td>Auto‑written under <code>mcp</code> root key with OpenCode's local‑server entry shape.</td>
+      <td><code>~/.config/opencode/opencode.json</code>, <code>AGENTS.md</code>.</td>
+    </tr>
+    <tr>
+      <td><strong>Antigravity, Kiro, Firebase Studio, Goose, Amazon Q, LM Studio, Trae</strong></td>
+      <td>Detected and listed in the dashboard; auto‑config gated by primary‑source verification (registry only for some).</td>
+      <td><code>.idx/mcp.json</code>, <code>.kiro/settings/mcp.json</code>, <code>~/.gemini/antigravity/mcp_config.json</code>, …</td>
+    </tr>
+    <tr>
+      <td><strong>GitHub Copilot CLI, Factory Droid, Qwen Code</strong></td>
+      <td>User‑scoped MCP config + AGENTS.md rules section.</td>
+      <td><code>~/.copilot/mcp-config.json</code>, <code>~/.factory/mcp.json</code>, <code>~/.qwen/settings.json</code>.</td>
     </tr>
   </tbody>
 </table>

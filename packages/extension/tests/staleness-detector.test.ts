@@ -28,11 +28,12 @@ function makeTempRoot(): string {
 function writeJsonConfig(
   configPath: string,
   entry: { url?: string; headers?: Record<string, string>; command?: string; args?: string[] },
+  rootKey: "mcpServers" | "servers" = "mcpServers",
 ): void {
   mkdirSync(join(configPath, ".."), { recursive: true });
   writeFileSync(
     configPath,
-    JSON.stringify({ mcpServers: { Perplexity: entry } }, null, 2),
+    JSON.stringify({ [rootKey]: { Perplexity: entry } }, null, 2),
     "utf8",
   );
 }
@@ -95,6 +96,27 @@ describe("detectStaleConfigs", () => {
     });
 
     expect(stale).toEqual([{ ideTag: "cursor", reason: "url" }]);
+  });
+
+  it("VS Code servers-root config with stale port -> returned with reason 'url'", () => {
+    const root = makeTempRoot();
+    const configPath = join(root, ".vscode", "mcp.json");
+    writeJsonConfig(
+      configPath,
+      {
+        url: "http://127.0.0.1:55555/mcp",
+      },
+      "servers",
+    );
+
+    const stale = detectStaleConfigs({
+      ideStatus: { vscode: ideStatus({ path: configPath, displayName: "VS Code MCP" }) },
+      daemonPort: 49217,
+      tunnelUrl: null,
+      daemonBearer: "live-bearer",
+    });
+
+    expect(stale).toEqual([{ ideTag: "vscode", reason: "url" }]);
   });
 
   it("http-loopback config with current port but stale bearer -> returned with reason 'bearer'", () => {

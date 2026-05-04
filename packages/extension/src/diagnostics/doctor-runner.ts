@@ -58,7 +58,8 @@ export function createExtensionAwareRunDoctor(
       "server.mjs",
     ).fsPath;
     const baseDir = vscode.Uri.joinPath(context.extensionUri, "dist").fsPath;
-    const ideStatuses = getIdeStatuses(bundledServerPath, deps.getChromePath());
+    const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const ideStatuses = getIdeStatuses(bundledServerPath, deps.getChromePath(), { workspaceRoot: wsRoot });
 
     const passphrase = deps.getVaultPassphrase ? await deps.getVaultPassphrase() : undefined;
     const options = { baseDir, ideStatuses, ...extras };
