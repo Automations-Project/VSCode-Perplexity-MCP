@@ -216,8 +216,10 @@ Extra overrides:
 Perplexity serves a Cloudflare Turnstile on first run; the server opens a headed browser for you to log in, then caches `cf_clearance` + session in `~/.perplexity-mcp/`.[^login]
 
 - Profiles live under `~/.perplexity-mcp/profiles/<name>/`.
-- Cookies are encrypted into `vault.enc` (keytar with passphrase fallback).
-- Any process that mutates profile state touches a `.reinit` sentinel, which running MCP servers watch and hot‑reload from (no restart required).
+- Cookies are encrypted into `vault.enc` (keytar with passphrase fallback). On boxes without an OS keychain, run `npx perplexity-user-mcp setup-vault` to generate a strong passphrase and get OS-specific persistence snippets (PowerShell / setx / zsh / bash / systemd / MCP-client env block).
+- Any process that mutates profile state touches a `.reinit` sentinel, which running MCP servers watch and hot‑reload from (no restart required). v0.8.40+ also watches the active-pointer file, so switching the active profile in the extension dashboard propagates to running MCP servers automatically.
+- Login has a wall-clock timeout (5 min default, env-overridable) and a Cancel button in the dashboard; if the browser fallback hangs you can recover without restarting the extension.
+- Vault decryption transparently falls back across keychain ↔ env-var-passphrase, so a key rotation or extension-upgrade-induced unseal-preference flip won't lock you out of an existing vault. If no material can decrypt the blob, login quarantines it and writes a fresh one.
 
 Delete `~/.perplexity-mcp/` to start over completely, or use `PERPLEXITY_HEADLESS_ONLY=1` once a valid clearance is cached.
 

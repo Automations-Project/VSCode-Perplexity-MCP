@@ -60,6 +60,8 @@ A VS Code extension that embeds the **Perplexity MCP runtime** directly in your 
 - **Embedded MCP server** — registered via `mcpServerDefinitionProviders`; agents (Copilot, Cursor, etc.) pick it up automatically.
 - **Webview dashboard** — login flows, profile management, session status, all inside VS Code.
 - **Auto-config for 20+ IDEs** — one click writes MCP configs and rulesets for Cursor, Windsurf, Claude Desktop, Cline, Amp, Codex CLI, Visual Studio 2022, OpenCode, GitHub Copilot CLI, Factory Droid, Qwen Code, and more.
+- **Multi-account profile switching** — multiple Perplexity accounts (Free / Pro / Max) coexist; switching the active profile in the dashboard propagates to running MCP servers automatically without needing to restart your IDE.
+- **Self-healing login + vault** — login flows have a wall-clock timeout and a Cancel button; vault decryption transparently falls back across keychain ↔ env-var-passphrase to survive key rotations or extension upgrades that flip your unseal preference.
 - **Daemon mode** — keep a long-lived HTTP MCP server running with Cloudflare or ngrok tunnels.
 
 ---

@@ -6,6 +6,75 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.40] — 2026-05-04 — IDE-expansion + auth/profile/vault self-healing
+
+> **Versioning note:** 0.8.29 through 0.8.39 were local pre-release iterations and never tagged. The cumulative work below — IDE expansion, login deadlock fixes, profile-switch propagation, vault key-rotation tolerance, CLI vault setup wizard — is rolled into this release. Diagnostics from a real user session (`perplexity-mcp-diagnostics-2026-05-04T*`) drove the auth + vault fixes.
+
+### Added — IDE expansion
+
+- **7 new file-based MCP clients**, each verified against primary-source docs and unit-tested for path resolution + root-key shape:
+  - **Visual Studio 2022** (workspace `<sln>/.mcp.json` or `~/.mcp.json`, root key `servers`, stdio with `type` discriminator) — auto-configurable.
+  - **OpenCode** (`~/.config/opencode/opencode.json`, root key `mcp`, OpenCode's local-server entry shape with `type:"local"` + `command:[node,server]` + `enabled:true` + `environment` block) — auto-configurable.
+  - **GitHub Copilot CLI** (`~/.copilot/mcp-config.json`, root key `mcpServers`) — auto-configurable.
+  - **Factory Droid** (`~/.factory/mcp.json`, root key `mcpServers`) — auto-configurable.
+  - **Qwen Code** (`~/.qwen/settings.json`, root key `mcpServers`) — auto-configurable.
+  - **Kilo Code** (JSONC at `~/.config/kilo/kilo.jsonc`, root key `mcp`) — registry-only; auto-config gated until JSONC writer lands so user comments aren't stripped.
+  - **LM Studio** (`ui-only`; `mcp.json` is GUI-managed at an unstable path) — registry-only.
+- **`jsonConfigRootKey: "mcp"`** added to `IdeMeta`'s union, alongside `mcpServers` / `servers` / `context_servers`. OpenCode and Kilo Code use it.
+- **`jsonServerEntryFormat: "standard" | "opencode"`** capability lets a target opt into a non-standard server-entry shape; OpenCode's local-server format is the first user. Future shape capabilities can be added without touching the auto-config writer.
+
+### Added — CLI vault setup wizard
+
+- **`npx perplexity-user-mcp setup-vault [--profile X] [--json] [--probe-only]`** — a read-only diagnostic + setup wizard for the standalone CLI, mirroring the extension dashboard's existing `ensureVaultPassphrase` popup. Probes keychain availability + master-key persistence, env-var passphrase, and (when a profile is given) whether the on-disk `vault.enc` actually decrypts with the resolved unseal material. Recommends the right action: nothing-to-do when a path is configured, `logout --purge` when an existing blob can't be decrypted, "setup needed" when no path exists. For setup-needed cases, generates a 256-bit base64url passphrase and prints **cross-platform persistence snippets** matching `process.platform`:
+  - **Windows:** PowerShell `[Environment]::SetEnvironmentVariable(..., "User")` (persistent user-scope) + `setx` for cmd.exe.
+  - **macOS:** zsh `~/.zshrc` (default since Catalina) + bash `~/.bash_profile` (legacy).
+  - **Linux:** bash `~/.bashrc` + zsh `~/.zshrc` + `systemd Environment=` line for service deployments.
+  - **All platforms:** the cross-platform MCP-client env-block snippet (Cursor / Claude Desktop / Codex CLI all share the same JSON env shape) listed first as the recommended choice — scoped to one client only, no shell leakage.
+
+### Fixed — login deadlock + cancel + timeout
+
+- **`spawnRunner` for login now accepts `AbortSignal` and `timeoutMs`.** Previously the browser-fallback path ([packages/extension/src/mcp/auth-manager.ts](packages/extension/src/mcp/auth-manager.ts)) called `spawnRunner` with no timeout. When impit failed with `cf_blocked` and the browser runner spawned but didn't complete (Cloudflare turnstile didn't surface, user closed the window without auth, runner crashed without writing JSON), the spawn promise hung forever, the inflight-lock map kept the lock, and every retry bounced with `Login already in progress for X` — the user had to reload the extension to recover. `spawnRunner` now propagates abort via SIGTERM (escalating to SIGKILL after 5s grace) so a runner that ignores SIGTERM still releases the lock.
+- **`AuthManager.login()` registers an `AbortController` per profile** and threads it through `runLogin` → `runOneRunner` → `spawnRunner`. New `LOGIN_TIMEOUT_MS = 5*60_000` (env-overridable via `PERPLEXITY_LOGIN_TIMEOUT_MS`) caps the wall-clock — comfortably covers Cloudflare turnstile + OTP + SSO; longer than that is stuck.
+- **`AuthManager.cancelLogin(profile)`** breaks out of an in-flight login. Surfaced as a webview `auth:cancel` message + `DashboardProvider` handler + a **Cancel button in the dashboard** that replaces the Login button while status is `logging-in` or `awaiting_otp`. Clicking it aborts the runner and clears the lock immediately so the next click doesn't bounce.
+
+### Fixed — profile-switch propagation to running MCP servers
+
+- **`reinit-watcher.js` gains `watchActiveProfile(configDir, cb)`** that watches `<configDir>/active` for `setActive()`'s atomic rename. The per-profile `watchReinit` is bound to a single profile's `.reinit` file captured at daemon startup; if the user switched the active profile, that watcher would never see anything (the new profile's `.reinit` is in a different directory) and the daemon's in-memory browser context kept serving stale cookies — manifested as "UI says I'm Pro, but MCP responds as Free" / "switching profiles doesn't take effect until I restart my IDE".
+- Both [packages/mcp-server/src/daemon/launcher.ts](packages/mcp-server/src/daemon/launcher.ts) and [packages/mcp-server/src/index.ts](packages/mcp-server/src/index.ts) (stdio entrypoint) now register `watchActiveProfile` alongside `watchReinit`. On active-pointer change, the daemon disposes the old per-profile watcher, rebinds to the new active profile, and calls `client.reinit()` so cookies for the new profile load immediately. Both watchers are disposed on shutdown.
+
+### Fixed — vault self-healing across unseal-material flips
+
+- **`readVaultObject` now iterates EVERY available unseal material** in preference order (keychain key → env-var passphrase) instead of just the preferred one. AES-GCM auth failures continue the chain; structural errors (corrupt JSON, scrypt floor violation) bail immediately. The first material that successfully decrypts is pinned via `_unsealMaterialCache` so subsequent reads in the same process don't re-pay the failed derivations.
+- **`Vault.set` catches read failures** whose message matches the `Vault decrypt failed` / `wrong passphrase or corrupted ciphertext` surface, **quarantines the dead blob** to `vault.enc.unreadable.<ts>.bak` for forensic recovery, and proceeds with an empty object so the write produces a fresh blob encrypted under whichever material is currently winning. A login that's about to overwrite the cookies key anyway shouldn't be blocked by an undecryptable old blob.
+- **Reproduces from a real user session:** profile `vault.enc` was written under `PERPLEXITY_VAULT_PASSPHRASE` only (keytar wasn't loading on 0.8.38), then the 0.8.39 upgrade got keytar working and `getUnsealMaterial` flipped its preference to the keychain key — which couldn't decrypt a passphrase-encrypted blob. Login crashed with `Vault decrypt failed` during `Vault.set`'s read-merge-write step, locking the user out of even fresh logins.
+- **New exported helper `getAllUnsealMaterials()`** returns every available unseal context in preference order, mirroring `getUnsealMaterial` which still returns only the preferred one for the write path.
+
+### Fixed — proactive setup guidance (CLI + doctor)
+
+- **CLI preflight** ([packages/mcp-server/src/cli.js](packages/mcp-server/src/cli.js) `checkVaultUnseal()`) runs **before** `add-account` touches the profile dir or `login` spawns the runner. If no unseal path is available (no keychain binding, no env var, no TTY), exits 1 with a platform-aware setup hint pointing at `setup-vault`, **before** any browser opens. Bypassable via `--skip-vault-check` for setups where the daemon owns the vault.
+- **Doctor `unseal-verify` check** ([packages/mcp-server/src/checks/vault.js](packages/mcp-server/src/checks/vault.js)) — when `vault.enc` exists AND a current unseal material is available, the doctor now actually attempts `Vault.get` on it. If decrypt fails (the cross-keying scenario), emits a `unseal-verify: fail` with a recovery hint pointing at `logout --purge` and explaining that v0.8.40+ self-heals on next login. Catches the "I have valid credentials but the old vault is undecryptable" state that a simple `unseal-path: pass` line would mask.
+
+### Changed — review fixes for prior IDE expansion
+
+- **Antigravity** flipped to `autoConfigurable: false` until `~/.gemini/antigravity/mcp_config.json` is documented in first-party Antigravity docs. Was previously enabled based on third-party guides only; risked silently writing to a path the product doesn't actually read.
+- **Warp** converted to `configFormat: "ui-only"` with `stdio: false`. Warp's MCP servers are configured exclusively through the in-app Settings UI; there's no documented file-based config. The `~/.warp/mcp.json` path is now a detection sentinel only with an explanatory comment.
+- **Rules-tab copy** no longer claims VS Code writes to `.github/instructions/` — `vscode` has `rulesFormat: "none"`; only `copilot` writes there.
+- **Removed `antigravity` from `AUTO_CONFIGURABLE_IDES`** so "Configure for All" doesn't write to the unverified path.
+
+### Changed — README quick-start by environment
+
+[packages/mcp-server/README.md](packages/mcp-server/README.md) now leads with a 6-row pivot table (desktop + extension / desktop + CLI manual / desktop + CLI auto / headless VPS w/ email / headless VPS w/o browser / headless VPS + desktop daemon) so users land on the right path immediately instead of trying `manual` mode on a headless box and hitting cryptic browser-launch errors. Adds a **Multiple accounts / profiles** section walking through `add-account` / `list-accounts` / `switch-account`. Adds a **Headless / VPS deployment** section with three patterns (terminal-only login via impit+OTP, pre-supplied `PERPLEXITY_SESSION_TOKEN`, daemon+tunnel from a desktop). Documents that `npx perplexity-user-mcp` with no subcommand starts the stdio MCP server and waits silently — that's expected, not a hang.
+
+### Tests
+
+- **+19 new tests, full suite 1113 passing.**
+  - `auto-config.test.ts` — 8 new path-resolution + write-shape tests for VS 2022 / Copilot CLI / OpenCode / Factory / Qwen Code, plus the OpenCode `mcp` root-key + local-server-shape write contract.
+  - `auth-manager.login.test.ts` — 3 new tests: timeout fires + clears the inflight lock, `cancelLogin` breaks a hung runner immediately, `cancelLogin` returns false when no login is in flight.
+  - `reinit-watcher.test.js` — 2 new tests for `watchActiveProfile`: fires on `setActive`, dispose stops firing.
+  - `vault.test.js` — 2 new tests: read falls back across unseal materials when keychain key changes after a passphrase-only write, `Vault.set` quarantines an undecryptable blob and writes a fresh one.
+  - `cli.test.js` — 8 new tests: 3 vault-unseal preflight (fails fast, proceeds when env var set, `--skip-vault-check` bypasses) + 5 setup-vault (keychain-with-key, env-var-only, no-path generates passphrase + cross-platform snippets, `--probe-only` suppresses generation, broken-decrypt branch).
+- `vault.js` coverage stays at 98.34% lines / 100% functions, well above the 95% floor.
+
 ## [0.8.28] — 2026-04-28 — Pre-public impit coverage: login + export + models
 
 > **Versioning note:** 0.8.20 through 0.8.27 were local pre-release iterations and were never tagged. The cumulative work (cloud-sync timeout fixes, retrieve-via-impit, search-pilot, plus the four phases below) is rolled into this release. Plan: [docs/impit-coverage-plan.md](docs/impit-coverage-plan.md).
