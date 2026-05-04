@@ -363,6 +363,66 @@ describe("cli: account commands (stubs replaced)", () => {
   });
 });
 
+describe("cli: vault-unseal preflight", () => {
+  // The preflight has to fire BEFORE we touch the profile dir or spawn the
+  // login runner — otherwise users on a fresh box see a deep "Vault locked"
+  // stack trace at the end of an otherwise successful login flow. These
+  // tests pin the contract: no unseal path → exit 1 with an actionable
+  // setup hint, and at least one unseal path → carry on as normal.
+  let configDir;
+  beforeEach(() => {
+    configDir = mkdtempSync(join(tmpdir(), "px-cli-preflight-"));
+    process.env.PERPLEXITY_CONFIG_DIR = configDir;
+    delete process.env.PERPLEXITY_VAULT_PASSPHRASE;
+    __resetKeyCache();
+  });
+  afterEach(() => {
+    rmSync(configDir, { recursive: true, force: true });
+    delete process.env.PERPLEXITY_CONFIG_DIR;
+    delete process.env.PERPLEXITY_VAULT_PASSPHRASE;
+    vi.doUnmock("keytar");
+    vi.resetModules();
+  });
+
+  it("add-account fails fast with a setup hint when keychain + env var + TTY are all unavailable", async () => {
+    // Force keytar to "unavailable" and clear the passphrase. process.stdin
+    // has no isTTY in vitest workers, so the TTY path is also closed.
+    vi.doMock("keytar", () => ({ default: undefined }));
+    vi.resetModules();
+    const { routeCommand: rc, parseArgs: pa } = await import("../src/cli.js");
+
+    const res = await rc(pa(["add-account", "--name", "fresh", "--mode", "manual", "--json"]));
+    expect(res.code).toBe(1);
+    const parsed = JSON.parse(res.stdout.trim());
+    expect(parsed.ok).toBe(false);
+    expect(parsed.reason).toBe("no_unseal_material");
+    expect(parsed.hint).toMatch(/PERPLEXITY_VAULT_PASSPHRASE|keychain|libsecret/i);
+    // Profile must NOT have been created — the preflight runs before
+    // createProfile so a partially-set-up profile dir doesn't linger.
+    const { listProfiles } = await import("../src/profiles.js");
+    expect(listProfiles()).toEqual([]);
+  });
+
+  it("add-account proceeds when PERPLEXITY_VAULT_PASSPHRASE is set", async () => {
+    vi.doMock("keytar", () => ({ default: undefined }));
+    vi.resetModules();
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "set";
+    const { routeCommand: rc, parseArgs: pa } = await import("../src/cli.js");
+    const res = await rc(pa(["add-account", "--name", "ok", "--mode", "manual", "--json"]));
+    expect(res.code).toBe(0);
+    expect(JSON.parse(res.stdout.trim()).ok).toBe(true);
+  });
+
+  it("--skip-vault-check bypasses the preflight (useful when daemon owns the vault)", async () => {
+    vi.doMock("keytar", () => ({ default: undefined }));
+    vi.resetModules();
+    const { routeCommand: rc, parseArgs: pa } = await import("../src/cli.js");
+    const res = await rc(pa(["add-account", "--name", "bypass", "--mode", "manual", "--skip-vault-check", "--json"]));
+    expect(res.code).toBe(0);
+    expect(JSON.parse(res.stdout.trim()).ok).toBe(true);
+  });
+});
+
 describe("cli: daemon commands", () => {
   let configDir;
   let runtime;

@@ -95,5 +95,46 @@ export async function run(opts = {}) {
     }
   }
 
+  // Active-decrypt verification — only when an encrypted vault.enc actually
+  // exists. This catches the "user has both keychain + passphrase set, but
+  // vault.enc was written with one and the read path now prefers the other"
+  // failure mode that surfaces as "Vault decrypt failed: wrong passphrase
+  // or corrupted ciphertext" mid-login. A status check that just reports
+  // "OS keychain holds master key" is misleading if the key can't actually
+  // open the on-disk blob.
+  if (existsSync(enc) && (kc.hasKey || envPass)) {
+    try {
+      const { Vault, __resetKeyCache } = await import("../vault.js");
+      // Use a fresh resolution context so the doctor's verification doesn't
+      // pollute the cached unseal material for the rest of the process.
+      __resetKeyCache();
+      // Vault.get returns null for absent keys without throwing; only a
+      // genuine decrypt failure throws.
+      await new Vault().get(profile, "cookies");
+      results.push({
+        category: CATEGORY,
+        name: "unseal-verify",
+        status: "pass",
+        message: "vault.enc decrypts cleanly with the active unseal material",
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isDecryptFailure = /wrong passphrase or corrupted ciphertext|Vault decrypt failed/.test(msg);
+      results.push({
+        category: CATEGORY,
+        name: "unseal-verify",
+        status: "fail",
+        message: isDecryptFailure
+          ? "vault.enc cannot be decrypted with any available unseal material"
+          : `vault.enc unreadable: ${msg}`,
+        hint: isDecryptFailure
+          ? (kc.hasKey && envPass
+              ? "Both keychain and PERPLEXITY_VAULT_PASSPHRASE are set, but neither matches the blob. The blob was likely written under a since-rotated passphrase or a different keychain key. Run 'perplexity-user-mcp logout --purge' on this profile and log in again to write a fresh vault."
+              : "The unseal material has changed since this blob was written. Restore the original passphrase, or run 'perplexity-user-mcp logout --purge' on this profile and log in again.")
+          : "Inspect the file at the path under 'profiles' check; consider restoring from backup or purging.",
+      });
+    }
+  }
+
   return results;
 }

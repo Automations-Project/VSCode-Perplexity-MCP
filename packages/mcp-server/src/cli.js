@@ -79,6 +79,58 @@ function normalizeExportFormat(value) {
   return null;
 }
 
+/**
+ * Surface vault-unseal status BEFORE the user kicks off an interactive
+ * operation (add-account, login). Returns {ok: true} when at least one
+ * unseal path is configured (keychain key, env var, or a TTY we can prompt
+ * on). Returns {ok: false, ...} with structured guidance when none of those
+ * are available — caller decides whether to warn-then-continue or hard-stop.
+ *
+ * The runtime vault path (vault.js getUnsealMaterial) does the same chain
+ * lazily; this helper just lets the CLI front-load the diagnosis so users
+ * get a clear setup hint instead of a deep "Vault decrypt failed" stack
+ * trace at write time.
+ */
+async function checkVaultUnseal() {
+  let hasKeychain = false;
+  try {
+    const mod = await import("keytar");
+    const keytar = mod.default ?? mod;
+    // We don't care whether the entry already exists; presence of the
+    // keytar binding is enough — vault.js will generate + persist a key on
+    // first use. This matches the same probe vault.js does.
+    if (keytar && typeof keytar.getPassword === "function") {
+      hasKeychain = true;
+    }
+  } catch {
+    hasKeychain = false;
+  }
+  const envPass = !!process.env.PERPLEXITY_VAULT_PASSPHRASE;
+  const hasTty = process.stdin?.isTTY === true && process.env.PERPLEXITY_MCP_STDIO !== "1";
+  if (hasKeychain || envPass || hasTty) {
+    return { ok: true, hasKeychain, envPass, hasTty };
+  }
+  // No path. Return platform-aware setup hint.
+  const isLinux = process.platform === "linux";
+  const isMac = process.platform === "darwin";
+  const isWin = process.platform === "win32";
+  const hint = isLinux
+    ? "Install libsecret + gnome-keyring (Debian/Ubuntu: `sudo apt install libsecret-1-0 gnome-keyring`; Fedora: `sudo dnf install libsecret gnome-keyring`), OR set PERPLEXITY_VAULT_PASSPHRASE to a strong random string in your shell or MCP-client env block."
+    : isMac
+      ? "Keychain Access should be available on macOS — keytar usually loads here. If you still see this, set PERPLEXITY_VAULT_PASSPHRASE."
+      : isWin
+        ? "Credential Manager is always available on Windows — keytar usually loads here. If you still see this, set PERPLEXITY_VAULT_PASSPHRASE."
+        : "Set PERPLEXITY_VAULT_PASSPHRASE in your MCP config env.";
+  return {
+    ok: false,
+    hasKeychain: false,
+    envPass: false,
+    hasTty: false,
+    reason: "no_unseal_material",
+    hint,
+  };
+}
+
 async function openTarget(target) {
   if (process.platform === "win32") {
     const escaped = String(target).replace(/'/g, "''");
@@ -480,6 +532,23 @@ export async function routeCommand(parsed) {
   if (command === "add-account") {
     const name = flags.name ?? (await import("./profiles.js")).suggestNextDefaultName();
     const mode = flags.mode ?? "manual";
+
+    // Pre-flight the unseal chain BEFORE touching the profile dir, so users
+    // creating a new account on a fresh box get an actionable setup hint
+    // instead of a "Vault decrypt failed" / "Vault locked" surprise on the
+    // first login. Bypass with --skip-vault-check (e.g. when the daemon
+    // owns the vault and the CLI is just used for account management).
+    if (!flags["skip-vault-check"]) {
+      const unseal = await checkVaultUnseal();
+      if (!unseal.ok) {
+        const msg = `No vault unseal path configured. ${unseal.hint}`;
+        const body = flags.json
+          ? JSON.stringify({ ok: false, reason: unseal.reason, hint: unseal.hint })
+          : "";
+        return { code: 1, stdout: body + (body ? "\n" : ""), stderr: msg + "\n" };
+      }
+    }
+
     try {
       const { createProfile } = await import("./profiles.js");
       const profile = createProfile(name, { loginMode: mode });
@@ -534,6 +603,22 @@ export async function routeCommand(parsed) {
     const { fork } = await import("node:child_process");
     const mode = flags.mode ?? "manual";
     const profile = flags.profile ?? (await import("./profiles.js")).getActiveName() ?? "default";
+
+    // Same preflight as add-account: surface unseal-path setup BEFORE the
+    // browser opens, so a user on a fresh headless box doesn't complete a
+    // 30s login flow only to crash at vault.set with a stack trace. Skip
+    // when --plain-cookies is set since plaintext mode bypasses the vault.
+    if (!flags["plain-cookies"] && !flags["skip-vault-check"]) {
+      const unseal = await checkVaultUnseal();
+      if (!unseal.ok) {
+        const msg = `No vault unseal path configured for profile '${profile}'. ${unseal.hint}`;
+        const body = flags.json
+          ? JSON.stringify({ ok: false, reason: unseal.reason, hint: unseal.hint, profile })
+          : "";
+        return { code: 1, stdout: body + (body ? "\n" : ""), stderr: msg + "\n" };
+      }
+    }
+
     const env = { ...process.env, PERPLEXITY_PROFILE: profile };
     if (mode === "auto") {
       if (!flags.email) return { code: 1, stdout: "", stderr: "`--email` required for --mode auto.\n" };
