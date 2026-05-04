@@ -22,16 +22,28 @@ The server speaks MCP over stdio, so normally you point your MCP client (Claude 
 
 Login is interactive — Perplexity emails a one-time code that you have to paste back into the prompt. The MCP `perplexity_login` tool only returns instructions, because MCP tool calls cannot display interactive prompts. You log in either through the CLI or, if you have the VS Code extension, through its dashboard.
 
-Quick start from a fresh machine:
+Pick the row that matches your environment for a copy-pasteable quick start. Everything below assumes the package is installed (`npm install -g perplexity-user-mcp`).
+
+| Environment | Quick start |
+|---|---|
+| **A. Desktop + VS Code extension** | Install [the extension](https://marketplace.visualstudio.com/items?itemName=Nskha.perplexity-vscode), open the dashboard, click **Login**. The extension owns the browser, vault, and OTP prompt — no terminal needed. |
+| **B. Desktop, standalone CLI (Win / Mac / Linux with display)** | `npx perplexity-user-mcp login --mode manual` — opens a visible browser, sign in with email / Google / GitHub / Apple SSO, runner persists cookies and exits. |
+| **C. Desktop, standalone CLI, prefer terminal-only** | `npx perplexity-user-mcp install-speed-boost && npx perplexity-user-mcp login --mode auto --email me@example.com` — OTP prompt appears on stderr, paste the six-digit code from your email. |
+| **D. Headless VPS, can receive your email** | Same as **C**. Speed Boost (impit) does the email/OTP flow over HTTP with no browser. Falls back to a browser runner only on `cf_blocked`, which fails on a true headless box — see pattern **E** if that happens. |
+| **E. Headless VPS, can't run a browser** | Log in on a desktop machine, then either set `PERPLEXITY_SESSION_TOKEN` from the cookie value on the VPS, **or** copy the vault. See [Headless / VPS deployment](#headless--vps-deployment) below. |
+| **F. Headless VPS + a desktop you control** | Run `npx perplexity-user-mcp daemon start --tunnel` on the desktop; point the VPS's MCP client at the printed Cloudflare URL with the bearer token. The desktop owns the browser; the VPS only sees a bearer-authed HTTP MCP endpoint. |
+
+Common verifications after any path:
 
 ```bash
-npm install -g perplexity-user-mcp
-npx perplexity-user-mcp install-speed-boost     # optional, strongly recommended
-npx perplexity-user-mcp login --mode auto --email me@example.com
-# terminal will prompt for the OTP from your email
+npx perplexity-user-mcp status                   # expect: valid, with a tier (Pro / Max / Enterprise / Authenticated)
+npx perplexity-user-mcp doctor                   # green across the board, especially profiles + vault
 ```
 
-`--mode auto` runs the email + OTP flow over HTTP (impit-backed if Speed Boost is installed; otherwise driven through the browser). `--mode manual` opens a visible browser window so you can sign in with Google, GitHub, or Apple SSO.
+What success vs failure looks like on the CLI:
+
+- `login finished (0)` and `status` reports `valid` → you're done.
+- Non-zero exit code from `login` is a failure even if the CLI prints a "finished" line. The runner emits a JSON line on stdout with the actual `reason`: `cf_blocked`, `chrome_missing`, `otp_rejected`, `crash`, `timeout`. Read stderr for the full message — that's where the structured error surfaces.
 
 Session state lives at `~/.perplexity-mcp/` (cookies, profile, models cache). Delete that directory to start over, or use `npx perplexity-user-mcp logout --purge`.
 
@@ -120,26 +132,28 @@ npx perplexity-user-mcp --version
 
 > **Note** — `npx perplexity-user-mcp` with no subcommand starts the stdio MCP server and waits silently for JSON-RPC on stdin. There's no progress output; if you typed it expecting a login or status prompt, that's why "nothing happened." Use the explicit subcommand (`login`, `status`, etc.) for interactive operation.
 
-## Standalone CLI walkthrough
+## Multiple accounts / profiles
 
-For users running the npm package directly (no VS Code extension):
+Each Perplexity account lives in its own profile under `~/.perplexity-mcp/profiles/<name>/`. The active profile is the one tools read cookies from. Naming them after the plan tier (`pro`, `max`, `personal`, `work`) keeps things obvious.
 
 ```bash
-# 1. Install (one-time)
-npm install -g perplexity-user-mcp
-npx perplexity-user-mcp install-speed-boost      # optional, strongly recommended for non-browser tools
-npx perplexity-user-mcp install-browser          # only if Chrome / Edge / Brave aren't already installed
+npx perplexity-user-mcp add-account --name pro --mode auto --email pro-account@example.com
+# ...follow the OTP prompt, persist cookies under profiles/pro/
 
-# 2. Log in. `--mode auto` is terminal-only (HTTP via impit, OTP prompt on stderr) and works on any
-#    box that can receive your verification email. `--mode manual` opens a visible browser window
-#    so you can sign in via Google / GitHub / Apple SSO; needs a desktop session.
-npx perplexity-user-mcp login --mode auto --email me@example.com
-npx perplexity-user-mcp status                   # confirm the cookie was persisted
+npx perplexity-user-mcp add-account --name personal --mode manual
+# opens a browser, persist under profiles/personal/
 
-# 3. Wire your MCP client to `npx perplexity-user-mcp` per the config snippets below.
+npx perplexity-user-mcp list-accounts
+# * pro       [Pro]   mode=auto    lastLogin=2026-05-04...
+#   personal  [Free]  mode=manual  lastLogin=2026-05-04...
+
+npx perplexity-user-mcp switch-account personal       # switch active profile
+npx perplexity-user-mcp status                        # confirm "valid" for the new active profile
 ```
 
-What success looks like: the runner prints `login finished (0)` on stdout and `status` reports `valid` with a tier (Pro / Max / Enterprise / Authenticated). Any non-zero exit code from `login` is a failure — check stderr for the JSON line emitted by the runner, which carries the `reason` (`cf_blocked`, `chrome_missing`, `otp_rejected`, `crash`, `timeout`).
+The MCP server picks up the active profile change immediately — version 0.8.40+ watches the active-pointer file and reloads cookies on switch, so you don't need to restart the server (or your IDE) when toggling between accounts. Pre-0.8.40 you'd see the old profile's data until the daemon was restarted.
+
+If you set `PERPLEXITY_PROFILE=<name>` in an MCP client's env block, that pins the server to that one profile regardless of `switch-account` — useful when you want one IDE on `pro` and another on `personal` simultaneously.
 
 ## Headless / VPS deployment
 
