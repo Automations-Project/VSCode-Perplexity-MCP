@@ -61,7 +61,7 @@ export function parseArgs(argv) {
 
 const KNOWN_COMMANDS = new Set([
   "server", "version", "help",
-  "login", "logout", "status", "doctor", "install-browser",
+  "login", "logout", "status", "doctor", "install-browser", "setup-vault",
   "install-speed-boost", "uninstall-speed-boost", "speed-boost-status",
   "add-account", "switch-account", "list-accounts",
   "export", "open", "rebuild-history-index", "sync-cloud",
@@ -80,47 +80,106 @@ function normalizeExportFormat(value) {
 }
 
 /**
- * Surface vault-unseal status BEFORE the user kicks off an interactive
- * operation (add-account, login). Returns {ok: true} when at least one
- * unseal path is configured (keychain key, env var, or a TTY we can prompt
- * on). Returns {ok: false, ...} with structured guidance when none of those
- * are available — caller decides whether to warn-then-continue or hard-stop.
+ * Probe the full vault-unseal state for the current process.
  *
- * The runtime vault path (vault.js getUnsealMaterial) does the same chain
- * lazily; this helper just lets the CLI front-load the diagnosis so users
- * get a clear setup hint instead of a deep "Vault decrypt failed" stack
- * trace at write time.
+ * Returns a structured snapshot covering every input the runtime path
+ * (vault.js getUnsealMaterial) considers: keychain availability and
+ * whether the master key was persisted there, env-var passphrase, TTY
+ * fallback, and (when a profile is given) whether the on-disk vault.enc
+ * actually decrypts with the resolved unseal material. The setup-vault
+ * command and the add-account/login preflight share this so user-facing
+ * advice stays consistent with what the runner will actually do.
  */
-async function checkVaultUnseal() {
-  let hasKeychain = false;
+async function probeVaultState({ profile } = {}) {
+  let keychainAvailable = false;
+  let keychainHasKey = false;
   try {
     const mod = await import("keytar");
     const keytar = mod.default ?? mod;
-    // We don't care whether the entry already exists; presence of the
-    // keytar binding is enough — vault.js will generate + persist a key on
-    // first use. This matches the same probe vault.js does.
     if (keytar && typeof keytar.getPassword === "function") {
-      hasKeychain = true;
+      keychainAvailable = true;
+      try {
+        const hex = await keytar.getPassword("perplexity-user-mcp", "vault-master-key");
+        keychainHasKey = !!hex;
+      } catch {
+        // getPassword can throw on broken credstore backends (e.g. headless
+        // Linux without libsecret). The binding loaded but isn't usable —
+        // treat that as "available but no key", same posture as a fresh
+        // box. vault.js falls back to env var when keychain returns null.
+        keychainHasKey = false;
+      }
     }
   } catch {
-    hasKeychain = false;
+    keychainAvailable = false;
   }
-  const envPass = !!process.env.PERPLEXITY_VAULT_PASSPHRASE;
+  const envPassphraseSet = !!process.env.PERPLEXITY_VAULT_PASSPHRASE;
   const hasTty = process.stdin?.isTTY === true && process.env.PERPLEXITY_MCP_STDIO !== "1";
-  if (hasKeychain || envPass || hasTty) {
-    return { ok: true, hasKeychain, envPass, hasTty };
+
+  let vaultExists = false;
+  let vaultDecryptsOk = null;
+  let decryptError = null;
+  if (profile) {
+    try {
+      const { getProfilePaths } = await import("./profiles.js");
+      const { existsSync } = await import("node:fs");
+      vaultExists = existsSync(getProfilePaths(profile).vault);
+      if (vaultExists && (keychainAvailable || envPassphraseSet)) {
+        const { Vault, __resetKeyCache } = await import("./vault.js");
+        __resetKeyCache();
+        try {
+          await new Vault().get(profile, "cookies");
+          vaultDecryptsOk = true;
+        } catch (err) {
+          vaultDecryptsOk = false;
+          decryptError = err instanceof Error ? err.message : String(err);
+        }
+      }
+    } catch (err) {
+      // Probe is best-effort; don't crash the CLI just because the
+      // profile dir or modules failed to load.
+      decryptError = err instanceof Error ? err.message : String(err);
+    }
   }
-  // No path. Return platform-aware setup hint.
-  const isLinux = process.platform === "linux";
-  const isMac = process.platform === "darwin";
-  const isWin = process.platform === "win32";
+
+  return {
+    platform: process.platform,
+    keychainAvailable,
+    keychainHasKey,
+    envPassphraseSet,
+    hasTty,
+    vaultExists,
+    vaultDecryptsOk,
+    decryptError,
+  };
+}
+
+/**
+ * Surface vault-unseal status BEFORE the user kicks off an interactive
+ * operation (add-account, login). Returns {ok: true} when at least one
+ * unseal path is configured. Returns {ok: false, ...} with structured
+ * guidance when none of those are available — caller decides whether to
+ * warn-then-continue or hard-stop.
+ */
+async function checkVaultUnseal() {
+  const state = await probeVaultState();
+  if (state.keychainAvailable || state.envPassphraseSet || state.hasTty) {
+    return {
+      ok: true,
+      hasKeychain: state.keychainAvailable,
+      envPass: state.envPassphraseSet,
+      hasTty: state.hasTty,
+    };
+  }
+  const isLinux = state.platform === "linux";
+  const isMac = state.platform === "darwin";
+  const isWin = state.platform === "win32";
   const hint = isLinux
-    ? "Install libsecret + gnome-keyring (Debian/Ubuntu: `sudo apt install libsecret-1-0 gnome-keyring`; Fedora: `sudo dnf install libsecret gnome-keyring`), OR set PERPLEXITY_VAULT_PASSPHRASE to a strong random string in your shell or MCP-client env block."
+    ? "Install libsecret + gnome-keyring (Debian/Ubuntu: `sudo apt install libsecret-1-0 gnome-keyring`; Fedora: `sudo dnf install libsecret gnome-keyring`), OR run `npx perplexity-user-mcp setup-vault` to generate a passphrase and get persistence snippets for your shell / MCP-client config."
     : isMac
-      ? "Keychain Access should be available on macOS — keytar usually loads here. If you still see this, set PERPLEXITY_VAULT_PASSPHRASE."
+      ? "Keychain Access should be available on macOS — keytar usually loads here. If you still see this, run `npx perplexity-user-mcp setup-vault` for a generated passphrase + persistence snippets."
       : isWin
-        ? "Credential Manager is always available on Windows — keytar usually loads here. If you still see this, set PERPLEXITY_VAULT_PASSPHRASE."
-        : "Set PERPLEXITY_VAULT_PASSPHRASE in your MCP config env.";
+        ? "Credential Manager is always available on Windows — keytar usually loads here. If you still see this, run `npx perplexity-user-mcp setup-vault` for a generated passphrase + persistence snippets."
+        : "Run `npx perplexity-user-mcp setup-vault` for a generated passphrase + persistence snippets.";
   return {
     ok: false,
     hasKeychain: false,
@@ -128,6 +187,177 @@ async function checkVaultUnseal() {
     hasTty: false,
     reason: "no_unseal_material",
     hint,
+  };
+}
+
+/**
+ * Generate a strong random passphrase encoded as a shell-safe base64url
+ * string (no `+`, `/`, or `=` so it can be pasted into shell rcs and JSON
+ * env blocks without escaping). 32 bytes = 256 bits of entropy, matching
+ * the AES key strength so the passphrase is never the weak link.
+ */
+async function generatePassphrase() {
+  const { randomBytes } = await import("node:crypto");
+  // base64url encoding in Node ≥16.
+  return randomBytes(32).toString("base64url");
+}
+
+/**
+ * Build platform-specific persistence snippets the user can copy into
+ * their environment. Kept format-agnostic — does NOT write any file —
+ * because the safest place to put a passphrase varies by deployment
+ * (per-IDE mcp.json env block, ~/.zshrc, systemd unit, Docker secret).
+ */
+function buildPersistenceSnippets(passphrase) {
+  const platform = process.platform;
+  const snippets = [];
+
+  // 1. MCP client env block (preferred — scoped per client).
+  snippets.push({
+    title: "MCP client env block (preferred — scoped to one client only)",
+    detail: "Edit your MCP client's config (Cursor: ~/.cursor/mcp.json, Claude Desktop: claude_desktop_config.json, Codex CLI: ~/.codex/config.toml, etc.). Add an `env` field next to `command`/`args`:",
+    code: `{
+  "mcpServers": {
+    "Perplexity": {
+      "command": "npx",
+      "args": ["-y", "perplexity-user-mcp"],
+      "env": {
+        "PERPLEXITY_VAULT_PASSPHRASE": "${passphrase}"
+      }
+    }
+  }
+}`,
+  });
+
+  // 2. Shell rc — platform-specific.
+  if (platform === "win32") {
+    snippets.push({
+      title: "Windows — PowerShell user environment (persistent)",
+      detail: "Sets the variable for your user account; persists across reboots. Open PowerShell and run:",
+      code: `[Environment]::SetEnvironmentVariable("PERPLEXITY_VAULT_PASSPHRASE", "${passphrase}", "User")`,
+    });
+    snippets.push({
+      title: "Windows — cmd.exe (persistent)",
+      detail: "Equivalent for cmd.exe users:",
+      code: `setx PERPLEXITY_VAULT_PASSPHRASE "${passphrase}"`,
+    });
+  } else if (platform === "darwin") {
+    snippets.push({
+      title: "macOS — zsh (default since Catalina)",
+      detail: "Append to ~/.zshrc and restart your terminal:",
+      code: `echo 'export PERPLEXITY_VAULT_PASSPHRASE='\\''${passphrase}'\\''' >> ~/.zshrc`,
+    });
+    snippets.push({
+      title: "macOS — bash (legacy)",
+      detail: "If you use bash instead, append to ~/.bash_profile:",
+      code: `echo 'export PERPLEXITY_VAULT_PASSPHRASE='\\''${passphrase}'\\''' >> ~/.bash_profile`,
+    });
+  } else {
+    // Linux + everything else
+    snippets.push({
+      title: "Linux — bash",
+      detail: "Append to ~/.bashrc and restart your terminal (or `source ~/.bashrc`):",
+      code: `echo 'export PERPLEXITY_VAULT_PASSPHRASE='\\''${passphrase}'\\''' >> ~/.bashrc`,
+    });
+    snippets.push({
+      title: "Linux — zsh",
+      detail: "If you use zsh, append to ~/.zshrc:",
+      code: `echo 'export PERPLEXITY_VAULT_PASSPHRASE='\\''${passphrase}'\\''' >> ~/.zshrc`,
+    });
+    snippets.push({
+      title: "Linux — systemd unit (for daemon deployments)",
+      detail: "If you run perplexity-user-mcp as a systemd service, add to the [Service] block:",
+      code: `Environment=PERPLEXITY_VAULT_PASSPHRASE=${passphrase}`,
+    });
+  }
+
+  return snippets;
+}
+
+/**
+ * Render a plain-text setup-vault report. Used for the default human-
+ * readable output. JSON output uses `--json` and bypasses this entirely.
+ */
+function renderSetupVaultReport({ state, recommendation, passphrase, snippets }) {
+  const lines = [];
+  const tick = "✓";
+  const cross = "✗";
+  const warn = "!";
+  lines.push("Vault setup status:");
+  lines.push(`  ${state.keychainAvailable ? tick : cross} OS keychain ${state.keychainAvailable ? "available" : "unavailable"}${state.keychainHasKey ? " (master key persisted)" : state.keychainAvailable ? " (no master key yet — will be generated on first login)" : ""}`);
+  lines.push(`  ${state.envPassphraseSet ? tick : cross} PERPLEXITY_VAULT_PASSPHRASE ${state.envPassphraseSet ? "is set" : "is not set"}`);
+  if (state.vaultExists) {
+    if (state.vaultDecryptsOk === true) {
+      lines.push(`  ${tick} vault.enc decrypts cleanly with the active unseal material`);
+    } else if (state.vaultDecryptsOk === false) {
+      lines.push(`  ${cross} vault.enc cannot be decrypted — ${state.decryptError ?? "unknown error"}`);
+    }
+  }
+  if (state.keychainAvailable && state.envPassphraseSet) {
+    lines.push(`  ${warn} both keychain and env var are set — keychain wins at runtime; the env var is a fallback`);
+  }
+  lines.push("");
+  lines.push(`Recommendation: ${recommendation.message}`);
+
+  if (passphrase) {
+    lines.push("");
+    lines.push("Generated passphrase (256 bits, base64url):");
+    lines.push(`  ${passphrase}`);
+    lines.push("");
+    lines.push("⚠  Save this somewhere safe — losing it means losing access to vaults written under it.");
+    lines.push("");
+    lines.push("Pick ONE persistence method below:");
+    snippets.forEach((s, i) => {
+      lines.push("");
+      lines.push(`${i + 1}. ${s.title}`);
+      if (s.detail) lines.push(`   ${s.detail}`);
+      lines.push("");
+      const indent = "     ";
+      lines.push(s.code.split("\n").map((l) => indent + l).join("\n"));
+    });
+    lines.push("");
+    lines.push("After applying ONE of those, run `npx perplexity-user-mcp doctor` to verify the unseal-verify check passes.");
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * Decide what the user should do given the probed vault state.
+ *
+ * - keychain works + vault decrypts (or no vault yet) → nothing to do.
+ * - keychain works + vault fails to decrypt → tell user to logout --purge.
+ * - no keychain + env var set → done; vault will use passphrase.
+ * - no keychain + no env var → setup needed; generate + show snippets.
+ */
+function recommendVaultSetup(state) {
+  if (state.vaultExists && state.vaultDecryptsOk === false) {
+    return {
+      status: "decrypt_broken",
+      message: "Existing vault.enc cannot be decrypted with any available unseal material. The blob was likely written under a since-rotated keychain key or PERPLEXITY_VAULT_PASSPHRASE. Run `npx perplexity-user-mcp logout --purge --profile <name>` and log in again to write a fresh vault. (v0.8.40+ self-heals this on the next login by quarantining the bad blob.)",
+      generatePassphrase: false,
+    };
+  }
+  if (state.keychainAvailable) {
+    return {
+      status: "ok_keychain",
+      message: state.keychainHasKey
+        ? "OS keychain holds the master key — nothing to do."
+        : "OS keychain is available; the master key will be generated and persisted there on your first login. Nothing to do.",
+      generatePassphrase: false,
+    };
+  }
+  if (state.envPassphraseSet) {
+    return {
+      status: "ok_envvar",
+      message: "PERPLEXITY_VAULT_PASSPHRASE is set; the vault will use it. (For better UX, install an OS keychain so the env var becomes optional — see https://github.com/Automations-Project/VSCode-Perplexity-MCP for platform docs.)",
+      generatePassphrase: false,
+    };
+  }
+  return {
+    status: "setup_needed",
+    message: "No keychain available and no PERPLEXITY_VAULT_PASSPHRASE set. Generating a strong passphrase and showing persistence snippets below.",
+    generatePassphrase: true,
   };
 }
 
@@ -527,6 +757,30 @@ export async function routeCommand(parsed) {
         ? "No profiles yet. Run `add-account` to create one."
         : profiles.map((p) => `${p.name === active ? "* " : "  "}${p.name}  [${p.tier ?? "?"}]  mode=${p.loginMode ?? "?"}  lastLogin=${p.lastLogin ?? "never"}`).join("\n");
     return { code: 0, stdout: body + "\n", stderr: "" };
+  }
+
+  if (command === "setup-vault") {
+    const profile = flags.profile ?? (await import("./profiles.js")).getActiveName() ?? null;
+    const state = await probeVaultState({ profile });
+    const recommendation = recommendVaultSetup(state);
+    let passphrase = null;
+    let snippets = [];
+    if (recommendation.generatePassphrase && !flags["probe-only"]) {
+      passphrase = await generatePassphrase();
+      snippets = buildPersistenceSnippets(passphrase);
+    }
+    if (flags.json) {
+      const body = JSON.stringify({
+        ok: true,
+        state,
+        recommendation: { status: recommendation.status, message: recommendation.message },
+        passphrase: passphrase ?? null,
+        snippets: snippets.map((s) => ({ title: s.title, detail: s.detail, code: s.code })),
+      });
+      return { code: 0, stdout: body + "\n", stderr: "" };
+    }
+    const report = renderSetupVaultReport({ state, recommendation, passphrase, snippets });
+    return { code: 0, stdout: report + "\n", stderr: "" };
   }
 
   if (command === "add-account") {
@@ -965,6 +1219,13 @@ Usage:
   npx perplexity-user-mcp status [--profile X] [--all]
   npx perplexity-user-mcp doctor [--profile X] [--probe] [--all] [--report]
   npx perplexity-user-mcp install-browser
+  npx perplexity-user-mcp setup-vault [--profile X] [--json] [--probe-only]
+      Probe the vault unseal chain (OS keychain / PERPLEXITY_VAULT_PASSPHRASE)
+      and, when neither is configured, generate a strong passphrase and print
+      cross-platform persistence snippets (PowerShell / setx / zsh / bash /
+      systemd / MCP-client env block). Read-only — never writes any file.
+      Cross-platform: Windows, macOS, Linux. Add --probe-only to skip
+      passphrase generation and just report state.
   npx perplexity-user-mcp install-speed-boost [--force] [--json]
   npx perplexity-user-mcp uninstall-speed-boost [--json]
   npx perplexity-user-mcp speed-boost-status [--json]

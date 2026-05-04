@@ -396,7 +396,9 @@ describe("cli: vault-unseal preflight", () => {
     const parsed = JSON.parse(res.stdout.trim());
     expect(parsed.ok).toBe(false);
     expect(parsed.reason).toBe("no_unseal_material");
-    expect(parsed.hint).toMatch(/PERPLEXITY_VAULT_PASSPHRASE|keychain|libsecret/i);
+    // Hint must reference at least one actionable knob — either the env var,
+    // the keychain story, libsecret on Linux, or the new setup-vault command.
+    expect(parsed.hint).toMatch(/PERPLEXITY_VAULT_PASSPHRASE|keychain|keytar|libsecret|setup-vault|passphrase/i);
     // Profile must NOT have been created — the preflight runs before
     // createProfile so a partially-set-up profile dir doesn't linger.
     const { listProfiles } = await import("../src/profiles.js");
@@ -420,6 +422,130 @@ describe("cli: vault-unseal preflight", () => {
     const res = await rc(pa(["add-account", "--name", "bypass", "--mode", "manual", "--skip-vault-check", "--json"]));
     expect(res.code).toBe(0);
     expect(JSON.parse(res.stdout.trim()).ok).toBe(true);
+  });
+});
+
+describe("cli: setup-vault command", () => {
+  let configDir;
+  beforeEach(() => {
+    configDir = mkdtempSync(join(tmpdir(), "px-cli-setup-vault-"));
+    process.env.PERPLEXITY_CONFIG_DIR = configDir;
+    delete process.env.PERPLEXITY_VAULT_PASSPHRASE;
+    __resetKeyCache();
+  });
+  afterEach(() => {
+    rmSync(configDir, { recursive: true, force: true });
+    delete process.env.PERPLEXITY_CONFIG_DIR;
+    delete process.env.PERPLEXITY_VAULT_PASSPHRASE;
+    vi.doUnmock("keytar");
+    vi.resetModules();
+  });
+
+  it("reports OK when keychain has a master key persisted", async () => {
+    vi.doMock("keytar", () => ({
+      default: {
+        getPassword: async () => "ab".repeat(32),
+        setPassword: async () => undefined,
+      },
+    }));
+    vi.resetModules();
+    const { routeCommand: rc, parseArgs: pa } = await import("../src/cli.js");
+    const res = await rc(pa(["setup-vault", "--json"]));
+    expect(res.code).toBe(0);
+    const out = JSON.parse(res.stdout.trim());
+    expect(out.ok).toBe(true);
+    expect(out.state.keychainAvailable).toBe(true);
+    expect(out.state.keychainHasKey).toBe(true);
+    expect(out.recommendation.status).toBe("ok_keychain");
+    expect(out.passphrase).toBeNull();
+    expect(out.snippets).toEqual([]);
+  });
+
+  it("reports OK with env var when keychain is unavailable but PERPLEXITY_VAULT_PASSPHRASE is set", async () => {
+    vi.doMock("keytar", () => ({ default: undefined }));
+    vi.resetModules();
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "user-supplied-passphrase";
+    const { routeCommand: rc, parseArgs: pa } = await import("../src/cli.js");
+    const res = await rc(pa(["setup-vault", "--json"]));
+    expect(res.code).toBe(0);
+    const out = JSON.parse(res.stdout.trim());
+    expect(out.recommendation.status).toBe("ok_envvar");
+    expect(out.passphrase).toBeNull();
+  });
+
+  it("generates a passphrase + cross-platform persistence snippets when no unseal path is configured", async () => {
+    // The exact failure mode this command is designed for: fresh box with
+    // no keychain (broken keytar binding) and no env var. The runner would
+    // throw "Vault locked"; setup-vault gives the user something concrete
+    // to do BEFORE that happens.
+    vi.doMock("keytar", () => ({ default: undefined }));
+    vi.resetModules();
+    const { routeCommand: rc, parseArgs: pa } = await import("../src/cli.js");
+    const res = await rc(pa(["setup-vault", "--json"]));
+    expect(res.code).toBe(0);
+    const out = JSON.parse(res.stdout.trim());
+    expect(out.recommendation.status).toBe("setup_needed");
+    expect(out.passphrase).toBeTruthy();
+    // base64url shape: A-Z a-z 0-9 - _ only, no padding.
+    expect(out.passphrase).toMatch(/^[A-Za-z0-9_-]+$/);
+    // 32 random bytes encoded as base64url = ~43 chars.
+    expect(out.passphrase.length).toBeGreaterThanOrEqual(40);
+    expect(out.snippets.length).toBeGreaterThanOrEqual(3);
+    // Every snippet must reference the generated passphrase so users can
+    // copy-paste verbatim without further substitution.
+    for (const s of out.snippets) {
+      expect(s.code).toContain(out.passphrase);
+      expect(s.title).toBeTruthy();
+    }
+    // The first snippet is always the cross-platform MCP-client env block.
+    expect(out.snippets[0].title).toMatch(/MCP client env block/);
+    // At least one platform-specific snippet is included.
+    const platformTitles = out.snippets.slice(1).map((s) => s.title.toLowerCase());
+    if (process.platform === "win32") {
+      expect(platformTitles.some((t) => t.includes("powershell") || t.includes("cmd"))).toBe(true);
+    } else if (process.platform === "darwin") {
+      expect(platformTitles.some((t) => t.includes("zsh") || t.includes("bash"))).toBe(true);
+    } else {
+      expect(platformTitles.some((t) => t.includes("bash") || t.includes("zsh") || t.includes("systemd"))).toBe(true);
+    }
+  });
+
+  it("--probe-only never generates a passphrase even when one would otherwise be recommended", async () => {
+    vi.doMock("keytar", () => ({ default: undefined }));
+    vi.resetModules();
+    const { routeCommand: rc, parseArgs: pa } = await import("../src/cli.js");
+    const res = await rc(pa(["setup-vault", "--probe-only", "--json"]));
+    expect(res.code).toBe(0);
+    const out = JSON.parse(res.stdout.trim());
+    expect(out.recommendation.status).toBe("setup_needed");
+    expect(out.passphrase).toBeNull();
+    expect(out.snippets).toEqual([]);
+  });
+
+  it("flags the broken-decrypt case when a vault.enc exists but no material can decrypt it", async () => {
+    // Write a vault under one passphrase, then probe with a different one
+    // and no keychain. The recommendation must point at logout --purge
+    // rather than 'setup needed' — the user has credentials, they just
+    // don't match the on-disk blob.
+    vi.doMock("keytar", () => ({ default: undefined }));
+    vi.resetModules();
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "original";
+    const writeMod = await import("../src/vault.js");
+    writeMod.__resetKeyCache();
+    const { createProfile: cp } = await import("../src/profiles.js");
+    cp("work");
+    await new writeMod.Vault().set("work", "cookies", "[]");
+    // Switch to a different passphrase the blob wasn't encrypted with.
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "rotated";
+    vi.resetModules();
+    const { routeCommand: rc, parseArgs: pa } = await import("../src/cli.js");
+    const res = await rc(pa(["setup-vault", "--profile", "work", "--probe-only", "--json"]));
+    expect(res.code).toBe(0);
+    const out = JSON.parse(res.stdout.trim());
+    expect(out.state.vaultExists).toBe(true);
+    expect(out.state.vaultDecryptsOk).toBe(false);
+    expect(out.recommendation.status).toBe("decrypt_broken");
+    expect(out.recommendation.message).toMatch(/logout --purge/);
   });
 });
 
