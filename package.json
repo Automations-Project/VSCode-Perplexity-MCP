@@ -19,7 +19,8 @@
     "package:vsix": "npm run bump && npm run package:vsix -w perplexity-vscode",
     "test:coverage": "npm run build -w @perplexity-user-mcp/shared && vitest run --coverage",
     "bump": "node scripts/bump-version.mjs",
-    "bump:dry": "node scripts/bump-version.mjs --dry-run"
+    "bump:dry": "node scripts/bump-version.mjs --dry-run",
+    "postinstall": "node scripts/install-git-hooks.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# pre-push: refuse pushes that contain private planning artifacts.
+#
+# Repo policy: docs/superpowers/ is private (gitignored by default). Force-adding
+# a planning doc with `git add -f` is occasionally legitimate, but pushing one
+# to the public remote is almost always an accident. This hook catches the push
+# step rather than the add step so that local force-adds (e.g. for cross-clone
+# sync) still work.
+#
+# Override (single push only):
+#   PERP_ALLOW_PRIVATE_PLAN_PUSH=1 git push
+#
+# Activation per clone (one-time):
+#   git config core.hooksPath scripts/git-hooks
+# (Or run `npm install` once — the postinstall script does this for you.)
+
+set -euo pipefail
+
+if [[ "${PERP_ALLOW_PRIVATE_PLAN_PUSH:-}" == "1" ]]; then
+  exit 0
+fi
+
+readonly NULL_SHA="0000000000000000000000000000000000000000"
+readonly PROTECTED_PATH="docs/superpowers/"
+
+# stdin format (per `man githooks`): one ref-pair per line —
+#   <local_ref> <local_sha> <remote_ref> <remote_sha>
+violations=""
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # Branch deletion (local_sha is all-zeros): nothing to inspect.
+  if [[ "$local_sha" == "$NULL_SHA" ]]; then
+    continue
+  fi
+
+  if [[ "$remote_sha" == "$NULL_SHA" ]]; then
+    # New branch on the remote. Compare against main if we have it; otherwise
+    # inspect every commit reachable from local_sha (best effort).
+    if git rev-parse --verify --quiet main >/dev/null 2>&1; then
+      range="main..${local_sha}"
+    else
+      range="$local_sha"
+    fi
+  else
+    # Existing remote branch: inspect only the commits we're adding.
+    range="${remote_sha}..${local_sha}"
+  fi
+
+  # `git diff --name-only RANGE -- PATH` lists files under PATH that changed
+  # in the range, in any commit. Empty output = no violation.
+  offending=$(git diff --name-only "$range" -- "$PROTECTED_PATH" 2>/dev/null || true)
+  if [[ -n "$offending" ]]; then
+    violations+="${offending}"$'\n'
+  fi
+done
+
+if [[ -n "$violations" ]]; then
+  {
+    echo ""
+    echo "ERROR: refusing to push private planning artifacts."
+    echo ""
+    echo "The following files under '${PROTECTED_PATH}' would be published:"
+    echo ""
+    echo "$violations" | sed '/^$/d' | sort -u | sed 's/^/  /'
+    echo ""
+    echo "These are gitignored by repo policy — internal AI planning, not meant"
+    echo "for the public remote. If you really need to publish this push, run"
+    echo "once with the explicit override:"
+    echo ""
+    echo "  PERP_ALLOW_PRIVATE_PLAN_PUSH=1 git push"
+    echo ""
+  } >&2
+  exit 1
+fi
+
+exit 0
