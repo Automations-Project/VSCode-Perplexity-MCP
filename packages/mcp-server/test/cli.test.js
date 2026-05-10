@@ -685,3 +685,77 @@ describe("daemon:attach — PERPLEXITY_NO_DAEMON opt-out (Task 8.3.2)", () => {
     expect(attachSpy).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 2.4 — daemon:attach catches DaemonAttachError and emits the bullet
+// remediation on stderr only, returning exit code 2. Mirrors the launcher
+// contract from Task 2.3 (write-launcher.ts) so the CLI subcommand and the
+// generated launcher script behave identically when the daemon is unreachable.
+// ---------------------------------------------------------------------------
+describe("daemon:attach — DaemonAttachError contract (Task 2.4)", () => {
+  let savedEnv;
+
+  beforeEach(() => {
+    savedEnv = process.env.PERPLEXITY_NO_DAEMON;
+    delete process.env.PERPLEXITY_NO_DAEMON;
+    attachSpy.mockReset();
+    mainSpy.mockReset();
+  });
+
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env.PERPLEXITY_NO_DAEMON;
+    else process.env.PERPLEXITY_NO_DAEMON = savedEnv;
+  });
+
+  function makeAttachError({ withCause = true } = {}) {
+    const err = new Error("Cannot reach the extension-managed daemon: spawn ENOENT");
+    err.name = "DaemonAttachError";
+    err.code = "DAEMON_UNREACHABLE";
+    err.remediation = [
+      "Reload the VS Code window so the extension restarts the daemon.",
+      "In the VS Code Perplexity dashboard, switch this client's transport to http-loopback.",
+      "(Advanced) Set PERPLEXITY_NO_DAEMON=1 in this client's MCP env block, then run `npx perplexity-user-mcp setup-vault` once.",
+    ];
+    if (withCause) err.cause = new Error("spawn ENOENT");
+    return err;
+  }
+
+  it("returns code 2 with bullet remediation on stderr when DAEMON_UNREACHABLE", async () => {
+    attachSpy.mockRejectedValueOnce(makeAttachError());
+    const res = await routeCommand({ command: "daemon:attach", flags: {} });
+    expect(res.code).toBe(2);
+    expect(res.stdout).toBe("");
+    expect(res.stderr).toContain("cannot reach the extension-managed daemon");
+    expect(res.stderr).toContain("• Reload the VS Code window");
+    expect(res.stderr).toContain("• In the VS Code Perplexity dashboard");
+    expect(res.stderr).toContain("PERPLEXITY_NO_DAEMON=1");
+  });
+
+  it("appends underlying-error line when err.cause has a message", async () => {
+    attachSpy.mockRejectedValueOnce(makeAttachError({ withCause: true }));
+    const res = await routeCommand({ command: "daemon:attach", flags: {} });
+    expect(res.stderr).toContain("Underlying error: spawn ENOENT");
+  });
+
+  it("omits underlying-error line when err.cause is missing", async () => {
+    attachSpy.mockRejectedValueOnce(makeAttachError({ withCause: false }));
+    const res = await routeCommand({ command: "daemon:attach", flags: {} });
+    expect(res.stderr).not.toContain("Underlying error:");
+  });
+
+  it("rethrows non-DAEMON_UNREACHABLE errors unchanged", async () => {
+    const other = new Error("boom");
+    attachSpy.mockRejectedValueOnce(other);
+    await expect(routeCommand({ command: "daemon:attach", flags: {} })).rejects.toThrow("boom");
+  });
+
+  it("tolerates a missing remediation array (no crash, just header line)", async () => {
+    const err = new Error("daemon down");
+    err.code = "DAEMON_UNREACHABLE";
+    // Intentionally no err.remediation
+    attachSpy.mockRejectedValueOnce(err);
+    const res = await routeCommand({ command: "daemon:attach", flags: {} });
+    expect(res.code).toBe(2);
+    expect(res.stderr).toContain("cannot reach the extension-managed daemon");
+  });
+});
