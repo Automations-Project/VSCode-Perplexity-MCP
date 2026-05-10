@@ -72,6 +72,18 @@ interface RuntimeConfig {
   bundledVersion: string;
   /** Optional logger; falls back to a no-op for tests / pre-init paths. */
   log?: (line: string) => void;
+  /**
+   * Async provider returning env vars to merge into the daemon's spawn env.
+   * Called once per spawn (no caching). Implementations live in extension.ts
+   * and may read VS Code SecretStorage; this seam keeps daemon/runtime.ts
+   * free of any vscode import.
+   *
+   * Returned keys will be merged AFTER process.env and BEFORE the hard-coded
+   * overrides (ELECTRON_RUN_AS_NODE / PERPLEXITY_CONFIG_DIR / ...), so the
+   * provider cannot accidentally override critical spawn env. (Merge logic
+   * itself is added in a follow-up task; this task only declares the type.)
+   */
+  buildDaemonEnv?: () => Promise<Record<string, string>>;
 }
 
 let runtimeConfig: RuntimeConfig | null = null;
@@ -104,13 +116,14 @@ function reapStaleVersionedDaemon(config: RuntimeConfig): void {
   removeStaleLock(lockPath);
 }
 
-export async function ensureBundledDaemon() {
+export async function ensureBundledDaemon(options: { startTimeoutMs?: number } = {}) {
   const config = requireRuntimeConfig();
   reapStaleVersionedDaemon(config);
   return ensureDaemon({
     configDir: config.configDir,
     spawnDaemon: spawnBundledDaemon,
     treatSelfAsZombie: true,
+    ...(options.startTimeoutMs !== undefined ? { startTimeoutMs: options.startTimeoutMs } : {}),
   });
 }
 
@@ -420,11 +433,41 @@ async function spawnBundledDaemon(options: { configDir: string; host?: string; p
   } catch {
     // settings unavailable outside the extension host — fall back to default
   }
+  let extraEnv: Record<string, string> = {};
+  if (config.buildDaemonEnv) {
+    try {
+      const provided = await config.buildDaemonEnv();
+      if (provided && typeof provided === "object") {
+        for (const [k, v] of Object.entries(provided)) {
+          if (typeof k === "string" && typeof v === "string") {
+            extraEnv[k] = v;
+          } else {
+            (config.log ?? (() => undefined))(
+              `[daemon] buildDaemonEnv produced non-string entry for ${String(k)}; ignored`,
+            );
+          }
+        }
+      }
+    } catch (err) {
+      (config.log ?? (() => undefined))(
+        `[daemon] buildDaemonEnv threw: ${err instanceof Error ? err.message : String(err)}; spawning without overlay`,
+      );
+    }
+  }
+
+  // Telemetry: log only the SET/UNSET status of vault passphrase, never the value.
+  (config.log ?? (() => undefined))(
+    `[daemon] PERPLEXITY_VAULT_PASSPHRASE: ${extraEnv.PERPLEXITY_VAULT_PASSPHRASE ? "set" : "unset"}`,
+  );
+
   const child = spawn(process.execPath, args, {
     detached: true,
     stdio: ["ignore", logFd, logFd],
     env: {
       ...process.env,
+      ...extraEnv,
+      // Hard-coded overrides — must come AFTER extraEnv so a buggy provider
+      // cannot clobber them.
       // Critical: process.execPath inside a VS Code extension host points at
       // Electron, not Node. Without this flag Electron ignores the JS script
       // and starts a GUI session. ELECTRON_RUN_AS_NODE=1 tells the same

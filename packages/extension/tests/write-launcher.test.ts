@@ -58,15 +58,18 @@ describe("write-launcher (Task 8.3.3: daemon-proxy)", () => {
 
     const content = readFileSync(launcherPath, "utf8");
 
-    // Required substrings per Task 8.3.3 spec.
+    // Required substrings per Task 2.3 spec (supersedes 8.3.3): the launcher
+    // attaches to the daemon with fallbackStdio:false and no runStdioMain DI
+    // shim. The opt-out branch (PERPLEXITY_NO_DAEMON=1) still calls
+    // server.main() exactly once.
     expect(content).toContain("attachToDaemon");
-    expect(content).toContain("fallbackStdio: true");
+    expect(content).toContain("fallbackStdio: false");
     expect(content).toContain("PERPLEXITY_NO_DAEMON");
-    expect(content).toContain("runStdioMain");
+    expect(content).not.toContain("runStdioMain");
 
-    // server.main() must appear at least twice (opt-out branch + DI shim).
+    // server.main() appears exactly once now (opt-out branch only).
     const mainCalls = content.match(/server\.main\(\)/g) ?? [];
-    expect(mainCalls.length).toBeGreaterThanOrEqual(2);
+    expect(mainCalls.length).toBe(1);
 
     // Literal backtick template literal for clientId (not a JS escape — the
     // generated file must contain real backtick characters).
@@ -137,10 +140,12 @@ await import(config.serverPath);
 
     const newContent = readFileSync(launcherPath, "utf8");
     expect(newContent).not.toBe(oldContent);
-    // New launcher has the daemon-proxy markers.
+    // New launcher has the daemon-proxy markers and the Task 2.3 fail-loud
+    // contract (fallbackStdio: false, no DI shim).
     expect(newContent).toContain("attachToDaemon");
     expect(newContent).toContain("PERPLEXITY_NO_DAEMON");
-    expect(newContent).toContain("runStdioMain");
+    expect(newContent).toContain("fallbackStdio: false");
+    expect(newContent).not.toContain("runStdioMain");
   });
 
   it("writes bundled-path.json with serverPath (file URL) and fsPath", async () => {
@@ -171,5 +176,31 @@ await import(config.serverPath);
 
     expect(mod.checkLauncherHealth([launcherPath])).toBe("configured");
     expect(mod.checkLauncherHealth([])).toBe("stale");
+  });
+});
+
+import { readFileSync as readFileSyncRaw } from "node:fs";
+
+const launcherSourcePath = join(__dirname, "..", "src", "launcher", "write-launcher.ts");
+
+describe("write-launcher LAUNCHER_CONTENT (Task 2.3 — refuses silent fallback)", () => {
+  it("uses fallbackStdio: false in the default proxy branch", () => {
+    const src = readFileSyncRaw(launcherSourcePath, "utf8");
+    expect(src).toMatch(/fallbackStdio:\s*false/);
+    expect(src).not.toMatch(/fallbackStdio:\s*true/);
+  });
+
+  it("does not pass runStdioMain dependency in the default proxy branch", () => {
+    const src = readFileSyncRaw(launcherSourcePath, "utf8");
+    // The whole proxy branch (the else branch under PERPLEXITY_NO_DAEMON check)
+    // must not reference runStdioMain. Coarse check on the full source.
+    expect(src).not.toMatch(/runStdioMain/);
+  });
+
+  it("wraps attachToDaemon in try/catch with stderr+exit2 on DAEMON_UNREACHABLE", () => {
+    const src = readFileSyncRaw(launcherSourcePath, "utf8");
+    expect(src).toMatch(/DAEMON_UNREACHABLE/);
+    expect(src).toMatch(/process\.exit\(2\)/);
+    expect(src).toMatch(/process\.stderr\.write/);
   });
 });

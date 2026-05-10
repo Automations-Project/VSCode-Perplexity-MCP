@@ -3,6 +3,15 @@
 # New files are HIDDEN unless explicitly whitelisted.
 # Only production-relevant files are public.
 # ═══════════════════════════════════════════════════════
+#
+# DO NOT `git add -f` files under docs/superpowers/ unless you have a clear,
+# considered reason to publish them. Planning artifacts under that path are
+# private AI-development content. The pre-push hook in
+# scripts/git-hooks/pre-push will refuse pushes that contain them — set
+# PERP_ALLOW_PRIVATE_PLAN_PUSH=1 to override for a single push if you really
+# mean it. Activate the hook once per clone with:
+#   git config core.hooksPath scripts/git-hooks
+# (or run `npm install` — postinstall does it for you).
 
 # 1. Ignore everything
 *

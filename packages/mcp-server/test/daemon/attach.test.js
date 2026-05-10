@@ -117,10 +117,14 @@ describe("daemon attach", () => {
     expect(warning.endsWith("\n")).toBe(true);
   });
 
-  it("rejects with the underlying error when fallbackStdio is false and daemon cannot start", async () => {
+  it("rejects with DaemonAttachError when fallbackStdio is false and daemon cannot start", async () => {
     const ensureError = new Error("no daemon here");
     let mainCalls = 0;
 
+    // Task 2.2: attachToDaemon now wraps the underlying error in
+    // DaemonAttachError when fallbackStdio is false (the new default).
+    // The underlying error is preserved as `cause`; the bare-Error
+    // contract is gone.
     await expect(
       attachToDaemon({
         configDir,
@@ -136,7 +140,11 @@ describe("daemon attach", () => {
           },
         },
       }),
-    ).rejects.toBe(ensureError);
+    ).rejects.toMatchObject({
+      name: "DaemonAttachError",
+      code: "DAEMON_UNREACHABLE",
+      cause: ensureError,
+    });
     expect(mainCalls).toBe(0);
   });
 });

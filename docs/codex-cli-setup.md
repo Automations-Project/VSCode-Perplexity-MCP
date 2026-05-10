@@ -91,6 +91,14 @@ If you have the extension installed, prefer section 1 — the daemon owns the va
 
 - Credential Manager is always available. Same as macOS: section 2a works after a one-time `perplexity_login`.
 
+**Troubleshooting "Vault locked" on Windows.** The bundled keytar talks to the OS Credential Vault and works for most installs under VS Code's Electron. If your launcher runs under a different Node ABI (Claude Code on Node 24+, sandboxed runtimes, or fresh installs of `perplexity-user-mcp` on a host where `keytar` can't load) and reports "Vault locked", run:
+
+```bash
+npx perplexity-user-mcp setup-vault
+```
+
+This generates a strong passphrase, prints a `setx`/PowerShell snippet to persist it as a User-scope env var, and (when the issue is the launcher's keytar load) restores access immediately. See [vault-unseal.md](./vault-unseal.md#recovery) for the full unseal model and recovery flow.
+
 ---
 
 ## 4. Verifying the setup

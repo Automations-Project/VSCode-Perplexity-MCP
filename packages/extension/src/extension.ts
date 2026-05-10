@@ -6,6 +6,7 @@ import { MCP_PROVIDER_ID, MCP_SERVER_LABEL, type ExportFormat, type IdeTarget, t
 import { getActiveName, getProfile, listProfiles, setActive, createProfile } from "perplexity-user-mcp/profiles";
 import { createExtensionAwareRunDoctor } from "./diagnostics/doctor-runner.js";
 import { peekStoredVaultPassphrase } from "./auth/vault-passphrase.js";
+import { buildDaemonEnv } from "./auth/build-daemon-env.js";
 import { redactMessage } from "./redact.js";
 import { OutputRingBuffer } from "./diagnostics/output-buffer.js";
 import { captureDiagnostics } from "./diagnostics/capture.js";
@@ -492,7 +493,13 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
   const bundledServerPath = getBundledServerPath(context);
   const { launcherPath, configDir } = ensureLauncher(bundledServerPath);
   const bundledVersion = String((context.extension.packageJSON as { version?: string }).version ?? "0.0.0");
-  configureDaemonRuntime({ serverPath: bundledServerPath, configDir, bundledVersion, log });
+  configureDaemonRuntime({
+    serverPath: bundledServerPath,
+    configDir,
+    bundledVersion,
+    log,
+    buildDaemonEnv: () => buildDaemonEnv(context),
+  });
   log("Stable launcher: " + launcherPath);
 
   async function promptEmailForAutoLogin(profile: string): Promise<string | undefined> {

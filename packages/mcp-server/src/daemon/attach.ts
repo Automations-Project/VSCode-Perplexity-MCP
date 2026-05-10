@@ -3,6 +3,24 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ensureDaemon } from "./launcher.js";
 
+export class DaemonAttachError extends Error {
+  readonly code = "DAEMON_UNREACHABLE";
+  readonly remediation: readonly string[];
+  override readonly cause?: unknown;
+  constructor(message: string, remediation: readonly string[], cause?: unknown) {
+    super(message);
+    this.name = "DaemonAttachError";
+    this.remediation = remediation;
+    if (cause !== undefined) this.cause = cause;
+  }
+}
+
+const DEFAULT_REMEDIATION: readonly string[] = [
+  "Reload the VS Code window so the extension restarts the daemon.",
+  "In the VS Code Perplexity dashboard, switch this client's transport to http-loopback.",
+  "(Advanced) Set PERPLEXITY_NO_DAEMON=1 in this client's MCP env block, then run `npx perplexity-user-mcp setup-vault` once.",
+] as const;
+
 export interface AttachToDaemonOptions {
   configDir?: string;
   stdin?: Readable;
@@ -46,7 +64,11 @@ export async function attachToDaemon(options: AttachToDaemonOptions = {}): Promi
       await runFallback(error, options);
       return;
     }
-    throw error;
+    throw new DaemonAttachError(
+      `Cannot reach the extension-managed daemon: ${asError(error).message}`,
+      DEFAULT_REMEDIATION,
+      error,
+    );
   }
 
   const stdio = new StdioServerTransport(sourceIn, sourceOut);
@@ -111,7 +133,11 @@ export async function attachToDaemon(options: AttachToDaemonOptions = {}): Promi
       await runFallback(error, options);
       return;
     }
-    throw error;
+    throw new DaemonAttachError(
+      `Daemon attached but transport failed to start: ${asError(error).message}`,
+      DEFAULT_REMEDIATION,
+      error,
+    );
   }
   await completion;
 }

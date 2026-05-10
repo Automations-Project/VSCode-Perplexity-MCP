@@ -485,12 +485,31 @@ export async function routeCommand(parsed) {
       typeof ensureTimeoutRaw === "string" && /^\d+$/.test(ensureTimeoutRaw)
         ? Number(ensureTimeoutRaw)
         : undefined;
-    await attachToDaemon({
-      configDir: process.env.PERPLEXITY_CONFIG_DIR,
-      clientId: "daemon-attach-cli",
-      fallbackStdio: !!flags["fallback-stdio"],
-      ensureTimeoutMs,
-    });
+    try {
+      await attachToDaemon({
+        configDir: process.env.PERPLEXITY_CONFIG_DIR,
+        clientId: "daemon-attach-cli",
+        fallbackStdio: !!flags["fallback-stdio"],
+        ensureTimeoutMs,
+      });
+    } catch (err) {
+      // Phase 2 / Task 2.4: mirror the launcher's DaemonAttachError contract.
+      // Stdout is the JSON-RPC framing channel for the attached client, so the
+      // bullet remediation must land on stderr only; the script entry below
+      // converts code:2 into process.exit(2).
+      if (err && err.code === "DAEMON_UNREACHABLE") {
+        let stderr = "Perplexity MCP: cannot reach the extension-managed daemon.\n";
+        const remediation = Array.isArray(err.remediation) ? err.remediation : [];
+        for (const line of remediation) {
+          stderr += "  • " + line + "\n";
+        }
+        if (err.cause && err.cause.message) {
+          stderr += "Underlying error: " + err.cause.message + "\n";
+        }
+        return { code: 2, stdout: "", stderr };
+      }
+      throw err;
+    }
     return { code: 0, stdout: "", stderr: "" };
   }
 
