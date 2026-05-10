@@ -116,13 +116,14 @@ function reapStaleVersionedDaemon(config: RuntimeConfig): void {
   removeStaleLock(lockPath);
 }
 
-export async function ensureBundledDaemon() {
+export async function ensureBundledDaemon(options: { startTimeoutMs?: number } = {}) {
   const config = requireRuntimeConfig();
   reapStaleVersionedDaemon(config);
   return ensureDaemon({
     configDir: config.configDir,
     spawnDaemon: spawnBundledDaemon,
     treatSelfAsZombie: true,
+    ...(options.startTimeoutMs !== undefined ? { startTimeoutMs: options.startTimeoutMs } : {}),
   });
 }
 

@@ -39,11 +39,13 @@ function fakeChild() {
   return { on: vi.fn(), unref: vi.fn() } as unknown as ReturnType<typeof childProcess.spawn>;
 }
 
-// ensureBundledDaemon polls the (mocked, never-actually-running) daemon for
-// up to ~15s before throwing. Each test catches that throw and asserts on
-// the captured spawn() options — so we just need a per-test timeout that
-// exceeds the launcher's 15s deadline.
-const TEST_TIMEOUT_MS = 20_000;
+// ensureBundledDaemon would normally poll the (mocked, never-actually-
+// running) daemon for ~15s before throwing. Each test catches that throw
+// and asserts on the captured spawn() options. We pass a tiny
+// startTimeoutMs (200ms) so the polling loop fails fast — this keeps the
+// suite under ~2s instead of ~75s and avoids vitest worker-pool stress
+// on Windows + Node 24 CI runners that surfaced as flaky failures.
+const FAST_DEADLINE_MS = 200;
 
 describe("spawnBundledDaemon merges buildDaemonEnv result", () => {
   beforeEach(() => {
@@ -62,13 +64,13 @@ describe("spawnBundledDaemon merges buildDaemonEnv result", () => {
       bundledVersion: "0.8.41",
       buildDaemonEnv: async () => ({ PERPLEXITY_VAULT_PASSPHRASE: "test-pass" }),
     });
-    try { await ensureBundledDaemon(); } catch { /* health-check failure is expected */ }
+    try { await ensureBundledDaemon({ startTimeoutMs: FAST_DEADLINE_MS }); } catch { /* health-check failure is expected */ }
     expect(spawnMock).toHaveBeenCalled();
     const opts = spawnMock.mock.calls[0]?.[2] as { env: Record<string, string> };
     expect(opts.env.PERPLEXITY_VAULT_PASSPHRASE).toBe("test-pass");
     expect(opts.env.ELECTRON_RUN_AS_NODE).toBe("1");
     expect(opts.env.PERPLEXITY_CONFIG_DIR).toBe("/tmp/perp-test");
-  }, TEST_TIMEOUT_MS);
+  });
 
   it("does not set PERPLEXITY_VAULT_PASSPHRASE when provider returns {}", async () => {
     configureDaemonRuntime({
@@ -77,10 +79,10 @@ describe("spawnBundledDaemon merges buildDaemonEnv result", () => {
       bundledVersion: "0.8.41",
       buildDaemonEnv: async () => ({}),
     });
-    try { await ensureBundledDaemon(); } catch { /* expected */ }
+    try { await ensureBundledDaemon({ startTimeoutMs: FAST_DEADLINE_MS }); } catch { /* expected */ }
     const opts = spawnMock.mock.calls[0]?.[2] as { env: Record<string, string> };
     expect(opts.env.PERPLEXITY_VAULT_PASSPHRASE).toBeUndefined();
-  }, TEST_TIMEOUT_MS);
+  });
 
   it("hard-coded overrides win over provider env", async () => {
     configureDaemonRuntime({
@@ -90,11 +92,11 @@ describe("spawnBundledDaemon merges buildDaemonEnv result", () => {
       // Provider tries to clobber critical overrides — must not succeed.
       buildDaemonEnv: async () => ({ ELECTRON_RUN_AS_NODE: "0", PERPLEXITY_CONFIG_DIR: "/evil" }),
     });
-    try { await ensureBundledDaemon(); } catch { /* expected */ }
+    try { await ensureBundledDaemon({ startTimeoutMs: FAST_DEADLINE_MS }); } catch { /* expected */ }
     const opts = spawnMock.mock.calls[0]?.[2] as { env: Record<string, string> };
     expect(opts.env.ELECTRON_RUN_AS_NODE).toBe("1");
     expect(opts.env.PERPLEXITY_CONFIG_DIR).toBe("/tmp/perp-test");
-  }, TEST_TIMEOUT_MS);
+  });
 
   it("works without a provider (back-compat)", async () => {
     configureDaemonRuntime({
@@ -102,10 +104,10 @@ describe("spawnBundledDaemon merges buildDaemonEnv result", () => {
       serverPath: "/tmp/perp-test/server.mjs",
       bundledVersion: "0.8.41",
     });
-    try { await ensureBundledDaemon(); } catch { /* expected */ }
+    try { await ensureBundledDaemon({ startTimeoutMs: FAST_DEADLINE_MS }); } catch { /* expected */ }
     const opts = spawnMock.mock.calls[0]?.[2] as { env: Record<string, string> };
     expect(opts.env.ELECTRON_RUN_AS_NODE).toBe("1");
-  }, TEST_TIMEOUT_MS);
+  });
 
   it("does not mutate process.env after spawn", async () => {
     delete process.env.PERPLEXITY_VAULT_PASSPHRASE;
@@ -115,7 +117,7 @@ describe("spawnBundledDaemon merges buildDaemonEnv result", () => {
       bundledVersion: "0.8.41",
       buildDaemonEnv: async () => ({ PERPLEXITY_VAULT_PASSPHRASE: "must-not-leak" }),
     });
-    try { await ensureBundledDaemon(); } catch { /* expected */ }
+    try { await ensureBundledDaemon({ startTimeoutMs: FAST_DEADLINE_MS }); } catch { /* expected */ }
     expect(process.env.PERPLEXITY_VAULT_PASSPHRASE).toBeUndefined();
-  }, TEST_TIMEOUT_MS);
+  });
 });
