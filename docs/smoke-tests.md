@@ -521,3 +521,31 @@ The three evidence skeletons for this consolidated smoke live at:
 - [docs/smoke-evidence/2026-04-XX-v0.8.6-ubuntu22.md](smoke-evidence/)
 
 Each skeleton carries the full checklist from Phase 8.5 through Phase 8.8 (this document's last four sections), ready for the tester to tick off. Per the release process in [docs/release-process.md](release-process.md): one fully-green platform + two waived platforms is acceptable if the waived platforms document a distinct reason (hardware unavailability, not "no time").
+
+---
+
+## 0.8.41 — Vault unseal hardening for external MCP clients (issue #3)
+
+**Release gate for closure of [#3](https://github.com/Automations-Project/VSCode-Perplexity-MCP/issues/3):** at least one Win11 + external-IDE row PASS recorded below before the PR is marked ready-for-review and the issue is closed.
+
+### Smoke matrix
+
+| Date | Platform | IDE / external client | Daemon spawn telemetry | `perplexity_reason` result | Status |
+|---|---|---|---|---|---|
+| 2026-05-10 | Windows 11 Pro 26200, VS Code 1.119.0 (Node 22.22.1 internal) | VS Code dashboard (extension host) | `[daemon] PERPLEXITY_VAULT_PASSPHRASE: unset` (keytar happy-path) | Doctor: `vault: pass` (`unseal-path: OS keychain holds master key`, `unseal-verify: vault.enc decrypts cleanly`); models refresh succeeded `accountTier=Enterprise` | **PASS** |
+| 2026-05-10 | Windows 11 Pro 26200, Windsurf (VS Code 1.110.1-next, Node 22.22.0) running Claude Code as MCP host | Claude Code (this maintainer's session) routed through the bundled `stdio-daemon-proxy` | `[daemon] PERPLEXITY_VAULT_PASSPHRASE: set` (SecretStorage-passphrase fallback path — Windsurf's runtime triggered the env-var route) | `perplexity_reason "...current open question in cosmology..."` returned a substantive Pro reply with 15 citations. Daemon `pid=28768 port=10368 version=0.8.41`; live MCP roundtrip confirmed. | **PASS** |
+
+### What both rows together prove
+
+The 0.8.41 fix ships and works on **both unseal paths** in production:
+
+- **Keychain path (`unset`):** keytar in the daemon's runtime loaded successfully; the daemon read the `vault-master-key` directly from Windows Credential Manager. No env-var injection needed. (Common case for Win11 + native VS Code.)
+- **Passphrase path (`set`):** keytar in this runtime did not fully work; SecretStorage had a passphrase from a prior login; `buildDaemonEnv(context)` injected it into the daemon's spawn env; the daemon decrypted via the passphrase-derived key. (This was the path that was previously broken — the daemon never received the passphrase before 0.8.41.)
+
+The Windsurf row is the **definitive evidence for closing issue #3** because Windsurf is exactly the class of "external-IDE-with-Node-runtime-that-may-mismatch-keytar-ABI" that the issue reporter hit. The MCP client (Claude Code) sitting inside Windsurf successfully invoked an authenticated Pro tool end-to-end.
+
+### Out of scope from this smoke
+
+- Linux + headless-no-libsecret (Codex CLI path) — same code path covered by the `set` row above; deferred until a clean Linux box is available.
+- macOS — covered by the existing 0.8.x release-gate matrix; no behavior change in 0.8.41 specific to macOS.
+- Cross-IDE soak — Antigravity, Cursor outside VS Code, Codex CLI — pending; will be folded into the 0.8.42 / 0.8.43 smoke checklists as those releases ship.
