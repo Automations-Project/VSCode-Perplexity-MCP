@@ -12,7 +12,25 @@ const BUNDLED_PATH_FILE = join(CONFIG_DIR, "bundled-path.json");
 // PERPLEXITY_NO_DAEMON=1 to bypass the daemon and run an in-process stdio
 // server instead (same contract as cli.js, Task 8.3.2).
 const LAUNCHER_CONTENT = `#!/usr/bin/env node
-// Stable launcher -- never moves. Reads actual server path dynamically.
+// Stable launcher — never moves. Reads actual server path dynamically.
+//
+// Default behavior: multiplex onto the shared daemon spawned by the VS Code
+// extension. If the daemon is unreachable, FAIL LOUDLY with a structured
+// stderr remediation and exit code 2 — do NOT silently fall back to an
+// in-process stdio server in the client's runtime, because that path tries
+// to read the vault under the client's Node, which on many setups (Claude
+// Code's bundled Node, Antigravity, mismatched ABI) cannot load keytar.
+//
+// Exit codes:
+//   0 = clean shutdown
+//   1 = generic crash (Node default error handler)
+//   2 = operator-actionable misconfiguration (daemon unreachable)
+//
+// Opt-out: set PERPLEXITY_NO_DAEMON=1 to bypass the daemon and run an
+// in-process stdio server directly. ADVANCED: the vault must be unsealable
+// in this client's runtime (working keychain or PERPLEXITY_VAULT_PASSPHRASE
+// in this client's env block). Run \`npx perplexity-user-mcp setup-vault\`
+// once if you need help. See docs/troubleshooting/external-mcp-clients.md.
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -23,22 +41,31 @@ const server = await import(config.serverPath);
 
 const noDaemonRaw = (process.env.PERPLEXITY_NO_DAEMON ?? "").trim();
 if (/^(1|true)$/i.test(noDaemonRaw)) {
-  // Opt-out: run in-process stdio server. Warning to stderr only — stdout is
-  // the JSON-RPC framing channel.
-  process.stderr.write("[perplexity-mcp] PERPLEXITY_NO_DAEMON=1 set; running in-process stdio (daemon bypass)\\n");
+  // Opt-out: in-process stdio. stderr only — stdout is the JSON-RPC channel.
+  process.stderr.write("[perplexity-mcp] PERPLEXITY_NO_DAEMON=1 set; running in-process stdio (advanced)\\n");
   await server.main();
 } else {
-  // Default: multiplex onto the shared daemon. If the daemon is unreachable
-  // attach.ts falls back to runStdioMain (the DI shim below) so the client
-  // still gets a working server. The shim is mandatory because in the
-  // bundled extension layout (dist/mcp/server.mjs) attach.ts's default
-  // \`import("../index.js")\` resolves to a nonexistent sibling file.
-  await server.attachToDaemon({
-    configDir: process.env.PERPLEXITY_CONFIG_DIR,
-    clientId: \`perplexity-launcher-\${process.pid}\`,
-    fallbackStdio: true,
-    dependencies: { runStdioMain: () => server.main() },
-  });
+  // Default: attach to the shared daemon. No silent fallback.
+  try {
+    await server.attachToDaemon({
+      configDir: process.env.PERPLEXITY_CONFIG_DIR,
+      clientId: \`perplexity-launcher-\${process.pid}\`,
+      fallbackStdio: false,
+    });
+  } catch (err) {
+    if (err && err.code === "DAEMON_UNREACHABLE") {
+      process.stderr.write("Perplexity MCP: cannot reach the extension-managed daemon.\\n");
+      for (const line of err.remediation ?? []) {
+        process.stderr.write("  • " + line + "\\n");
+      }
+      if (err.cause && err.cause.message) {
+        process.stderr.write("Underlying error: " + err.cause.message + "\\n");
+      }
+      process.exit(2);
+    }
+    // Anything else: let Node's default error handler fire (exit 1, stack on stderr).
+    throw err;
+  }
 }
 `;
 
