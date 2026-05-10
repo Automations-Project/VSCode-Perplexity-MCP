@@ -23,6 +23,10 @@ env:
   # tsup's --dts worker hits Node's default ~2GB heap during the mcp-server
   # build (70+ entry points + DTS emission). Lift the cap to 4GB.
   NODE_OPTIONS: "--max-old-space-size=4096"
+  # Opt into Node 24 for GitHub-shipped JS actions (checkout, setup-node, …)
+  # ahead of the June 2nd 2026 default. Silences the deprecation warning and
+  # ensures we're on the runtime GitHub is migrating to.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 permissions:
   contents: write
