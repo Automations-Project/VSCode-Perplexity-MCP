@@ -3,6 +3,18 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ensureDaemon } from "./launcher.js";
 
+export class DaemonAttachError extends Error {
+  readonly code = "DAEMON_UNREACHABLE";
+  readonly remediation: readonly string[];
+  override readonly cause?: unknown;
+  constructor(message: string, remediation: readonly string[], cause?: unknown) {
+    super(message);
+    this.name = "DaemonAttachError";
+    this.remediation = remediation;
+    if (cause !== undefined) this.cause = cause;
+  }
+}
+
 export interface AttachToDaemonOptions {
   configDir?: string;
   stdin?: Readable;
