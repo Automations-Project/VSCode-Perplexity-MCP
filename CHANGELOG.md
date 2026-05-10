@@ -6,6 +6,47 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.41] — 2026-05-10 — Vault unseal hardening for external MCP clients
+
+> Refs [#3](https://github.com/Automations-Project/VSCode-Perplexity-MCP/issues/3). Driver: an external user (Claude Code on Win11) hit "Vault locked" because the extension-managed daemon never received the SecretStorage passphrase, AND the launcher silently fell back to direct vault access in the client's runtime.
+
+### Fixed
+
+- **Daemon spawn now receives the SecretStorage passphrase via a narrowly-scoped env builder.** The `configureDaemonRuntime` config gained an optional `buildDaemonEnv` async provider; the extension wires `() => buildDaemonEnv(context)` which calls `peekStoredVaultPassphrase`. Provider env is merged AFTER `process.env` and BEFORE the hard-coded `ELECTRON_RUN_AS_NODE` / `PERPLEXITY_CONFIG_DIR` / `PERPLEXITY_OAUTH_CONSENT_TTL_HOURS` overrides — the provider cannot clobber critical spawn env. Passphrase status is logged as `set` / `unset` only; the value never appears in logs and the extension host's ambient `process.env` is never mutated.
+- **Generated `stdio-daemon-proxy` launcher refuses silent fallback to in-process stdio.** Pre-0.8.41, when daemon attach failed, the launcher would spawn a fresh in-process MCP server in the client's Node runtime — which on Claude Code (Node 24+), Antigravity, or any non-Electron runtime would then try to read `vault.enc` with no SecretStorage access and no keytar that loads. Now the launcher catches a typed `DaemonAttachError`, writes a structured remediation to **stderr only** (stdout is the JSON-RPC framing channel), and exits 2 (operator-actionable misconfiguration).
+
+### Added
+
+- **`DaemonAttachError`** in `packages/mcp-server/src/daemon/attach.ts` with `code: "DAEMON_UNREACHABLE"`, `remediation: readonly string[]`, optional `cause`. Used by the launcher and by `cli.js`'s `daemon:attach` subcommand. `attach.ts` is forbidden from calling `process.exit` — the entrypoint layer (launcher, CLI) owns process-termination semantics.
+- **Reserved exit code `2`** for "operator-actionable misconfiguration" (distinct from `1` = generic crash). Documented in launcher comments.
+- **`docs/vault-unseal.md`** — was referenced from the "Vault locked" error message since v0.4.x but never existed. Now documents the keychain → env var → TTY unseal chain, standalone vs. extension-managed paths, per-platform notes, and recovery flow.
+- **`docs/troubleshooting/external-mcp-clients.md`** — single canonical page for users hitting "Vault locked" or "DAEMON_UNREACHABLE" from external IDEs (Claude Code, Antigravity, Codex CLI, Cursor). Linked from both READMEs.
+- Softened the Windows-keychain "just works" claim in `docs/codex-cli-setup.md` with a "what if it fails" paragraph pointing at `setup-vault` and the new recovery doc.
+- **Repo tooling:** pre-push hook (`scripts/git-hooks/pre-push`) refuses to publish `docs/superpowers/` paths. Auto-installed via `npm install` postinstall.
+
+### Changed
+
+- **CI matrix:** Node 20 → Node 22 + Node 24. Node 20 reached End-of-Life on 2026-04-30. Resolved two pre-existing Node-20-specific failures (Linux tsup DTS worker OOM + Windows leaked FSWatcher in `launcher.test.js`).
+- **`engines.node`:** `>=20` → `^22.0.0 || ^24.0.0` in both `packages/extension/package.json` and `packages/mcp-server/package.json`. Matches what we test; pattern lifted from Vite/Vitest's engines style.
+
+### Migration notes
+
+- **No breakage** for users on Win11/macOS with working keychain. Daemon runs; attach succeeds; business as usual.
+- **Behavior change** for users currently relying on the silent in-process fallback: they now see an actionable stderr remediation instead of "anonymous mode" silently. This is the intended outcome — issue #3 reporters are exactly this cohort.
+- The 0.8.40 launcher on disk gets rewritten by `ensureLauncher`'s byte-comparison logic on next extension activation. No manual user action needed.
+
+### Verification
+
+- Phase 0 keytar probe passed on Win11 + VS Code Code.exe (Electron 39.6.0, Node 22.22.0 internally) — keytar loads reliably under the daemon's spawn runtime.
+- All 4 CI matrix entries green: ubuntu-latest × {22, 24}, windows-latest × {22, 24}.
+- Manual smoke (Win11 + Claude Code Node 24+ → `perplexity_reason` returns Pro reply) gates issue #3 closure; recorded in `docs/smoke-tests.md` post-release.
+
+### Out of scope (deferred)
+
+- **Envelope v4 vault format** (multi-source unseal envelopes) — Phase 0 verification passed on the daemon's actual spawn runtime, so v4 is no longer load-bearing for closing #3. Tracked as future hardening.
+- **HTTP loopback port-drift UX** — scheduled for 0.8.43.
+- **`keytar → @napi-rs/keyring`** swap — 0.9.x hardening track.
+
 ## [0.8.40] — 2026-05-04 — IDE-expansion + auth/profile/vault self-healing
 
 > **Versioning note:** 0.8.29 through 0.8.39 were local pre-release iterations and never tagged. The cumulative work below — IDE expansion, login deadlock fixes, profile-switch propagation, vault key-rotation tolerance, CLI vault setup wizard — is rolled into this release. Diagnostics from a real user session (`perplexity-mcp-diagnostics-2026-05-04T*`) drove the auth + vault fixes.
