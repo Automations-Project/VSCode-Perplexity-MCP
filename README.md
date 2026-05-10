@@ -444,6 +444,12 @@ For deeper internals, see:
 
 ---
 
+## Troubleshooting
+
+- **External MCP clients (Claude Code, Antigravity, Codex CLI, Cursor) hitting "Vault locked":** [docs/troubleshooting/external-mcp-clients.md](docs/troubleshooting/external-mcp-clients.md)
+
+---
+
 ## Find Us
 
 <div align="center">

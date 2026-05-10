@@ -377,6 +377,11 @@ Logging in still goes through the CLI (`npx perplexity-user-mcp login`) — the 
 - A browser runtime — any of: real Chrome, Microsoft Edge, Brave, system Chromium, or patchright's bundled Chromium (see the [Browser requirement](#browser-requirement) section)
 - An active Perplexity account (free tier works; Pro/Max unlock reason/research/compute)
 
+## Troubleshooting
+
+- **External MCP clients hitting "Vault locked":** [Troubleshooting external MCP clients](../../docs/troubleshooting/external-mcp-clients.md)
+- **Vault unseal model and recovery:** [docs/vault-unseal.md](../../docs/vault-unseal.md)
+
 ## Issues
 
 Bug reports and feature requests: <https://github.com/Automations-Project/VSCode-Perplexity-MCP/issues>.
