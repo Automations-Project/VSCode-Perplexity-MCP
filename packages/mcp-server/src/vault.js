@@ -71,6 +71,7 @@ const scryptAsync = promisify(nodeScrypt);
 // sets the seam, so the floor remains enforced. Cleared by `__resetKeyCache`.
 let _kdfParamsOverride = null;
 let _kdfTestModeActive = false;
+  _keytarModuleCache = null;
 
 /**
  * TEST SEAM — drop scrypt cost during tests by setting (logN, r, p).
@@ -320,6 +321,14 @@ const KEYTAR_ACCOUNT = "vault-master-key";
 let _keyCache = null;
 let _unsealMaterialCache = null;
 
+/** Module-level keytar probe cache. `null` = not checked yet; `false` = unavailable. */
+let _keytarModuleCache = null;
+
+/** Environment escape hatch to suppress all keychain access (issue #6 bug 3). */
+function isKeychainDisabled() {
+  return process.env.PERPLEXITY_DISABLE_KEYCHAIN === "1";
+}
+
 /**
  * Reset the in-memory caches (key, unseal material, and the test-seam KDF
  * params override). Called on profile-state changes (account switch, login,
@@ -330,13 +339,19 @@ export function __resetKeyCache() {
   _unsealMaterialCache = null;
   _kdfParamsOverride = null;
   _kdfTestModeActive = false;
+  _keytarModuleCache = null;
 }
 
 async function tryKeytar() {
+  if (isKeychainDisabled()) return null;
+  if (_keytarModuleCache !== null) return _keytarModuleCache;
   try {
     const mod = await import("keytar");
-    return mod.default ?? mod;
+    const keytar = mod.default ?? mod;
+    _keytarModuleCache = keytar;
+    return keytar;
   } catch {
+    _keytarModuleCache = false;
     return null;
   }
 }
@@ -360,6 +375,31 @@ async function keyFromKeychain() {
   }
 }
 
+
+/**
+ * Probe the OS keychain for vault unseal capability. Returns whether keytar is
+ * available and whether a master key already exists. Caches the keytar
+ * availability check per-process so repeated probes do not trigger multiple
+ * macOS Keychain permission prompts (issue #6 bug 3). Respects
+ * PERPLEXITY_DISABLE_KEYCHAIN=1.
+ *
+ * @returns {Promise<{available: boolean, hasKey: boolean}>}
+ */
+export async function probeKeychainState() {
+  if (isKeychainDisabled()) {
+    return { available: false, hasKey: false };
+  }
+  const keytar = await tryKeytar();
+  if (!keytar) {
+    return { available: false, hasKey: false };
+  }
+  try {
+    const hex = await keytar.getPassword(KEYTAR_SERVICE, KEYTAR_ACCOUNT);
+    return { available: true, hasKey: !!hex };
+  } catch {
+    return { available: true, hasKey: false };
+  }
+}
 function isStdioServerMode() {
   return process.env.PERPLEXITY_MCP_STDIO === "1" || (process.stdin && process.stdin.isTTY === false);
 }
