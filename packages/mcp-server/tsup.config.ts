@@ -51,7 +51,11 @@ export default defineConfig({
   target: "node20",
   outDir: "dist",
   clean: true,
-  dts: true,
+  // tsup's rollup-dts worker thread OOMs on this package's 47 entry points
+  // under Node 22 / Windows (pre-existing; fails even on commits before 0.8.43).
+  // Declarations are generated separately with tsc --allowJs --emitDeclarationOnly
+  // in the package.json build script, which is faster and avoids the worker heap.
+  dts: false,
   // got-scraping and its transitive data-bearing deps must resolve at runtime
   // from node_modules (they load JSON data files via fs.readFileSync that tsup
   // can't inline). Same story for patchright (native Chromium).
@@ -80,10 +84,9 @@ export default defineConfig({
     "helmet",
   ],
   // Shebang is NOT emitted into source files — it tripped vitest/esbuild
-  // during test imports of cli.js. npm's `bin` linker wraps the entry with
-  // its own node invocation on install, so the shebang isn't required for
-  // `npx perplexity-user-mcp` to work. If direct execution (`./dist/cli.mjs`)
-  // ever needs to work without npm, re-add via a post-build script that
-  // targets cli.mjs specifically.
+  // during test imports of cli.js.  A post-build script (see package.json
+  // `build` and scripts/post-build-shebang.mjs) prepends the shebang to
+  // `dist/cli.mjs` and chmods it to 755 so that direct execution works
+  // on POSIX where npm creates symlinks rather than wrapper scripts.
   outExtension: () => ({ js: ".mjs" }),
 });

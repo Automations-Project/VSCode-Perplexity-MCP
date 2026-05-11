@@ -931,11 +931,17 @@ async function spawnDetachedDaemon(options: {
     args.push("--tunnel");
   }
 
+  // Strip launcher-scoped flags that must never reach the daemon's own
+  // PerplexityClient.init() — they would force headless mode or stdio bypass.
+  const env = { ...process.env };
+  delete env.PERPLEXITY_HEADLESS_ONLY;
+  delete env.PERPLEXITY_NO_DAEMON;
+
   const child = spawn(process.execPath, args, {
     detached: true,
     stdio: "ignore",
     env: {
-      ...process.env,
+      ...env,
       PERPLEXITY_CONFIG_DIR: options.configDir,
     },
   });

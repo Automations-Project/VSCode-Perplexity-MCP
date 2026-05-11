@@ -460,11 +460,17 @@ async function spawnBundledDaemon(options: { configDir: string; host?: string; p
     `[daemon] PERPLEXITY_VAULT_PASSPHRASE: ${extraEnv.PERPLEXITY_VAULT_PASSPHRASE ? "set" : "unset"}`,
   );
 
+  // Strip launcher-scoped flags that must never reach the daemon's own
+  // PerplexityClient.init() — they would force headless mode or stdio bypass.
+  const baseEnv = { ...process.env };
+  delete baseEnv.PERPLEXITY_HEADLESS_ONLY;
+  delete baseEnv.PERPLEXITY_NO_DAEMON;
+
   const child = spawn(process.execPath, args, {
     detached: true,
     stdio: ["ignore", logFd, logFd],
     env: {
-      ...process.env,
+      ...baseEnv,
       ...extraEnv,
       // Hard-coded overrides — must come AFTER extraEnv so a buggy provider
       // cannot clobber them.

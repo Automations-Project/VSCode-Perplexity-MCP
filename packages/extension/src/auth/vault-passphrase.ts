@@ -126,6 +126,9 @@ export async function peekStoredVaultPassphrase(
 export async function probeKeytarAvailable(
   context: vscode.ExtensionContext,
 ): Promise<boolean> {
+  if (process.env.PERPLEXITY_DISABLE_KEYCHAIN === "1") {
+    return false;
+  }
   // Use the bundled mcp-server probe so we agree with the runner's own
   // detection. The file lives at `dist/mcp/server.mjs` when packaged; the
   // runner scripts sit next to it. We spawn a 1-shot inline script so we don't
@@ -137,6 +140,9 @@ export async function probeKeytarAvailable(
     // prepare-package-deps copies keytar into `dist/node_modules`.
     const code = `
       (async () => {
+        if (process.env.PERPLEXITY_DISABLE_KEYCHAIN === "1") {
+          process.exit(4);
+        }
         try {
           const mod = await import("keytar");
           const kt = mod.default ?? mod;

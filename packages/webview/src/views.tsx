@@ -241,6 +241,19 @@ export function DashboardView({
               : "Run login once to unlock the server."}
           </div>
         </div>
+        {snapshot.daemonAuth && (
+          <div className="flex items-center gap-2">
+            <StatusDot
+              variant={snapshot.daemonAuth.authenticated ? "ok" : "warn"}
+              decorative
+            />
+            <div className="dashboard-status-text">
+              {snapshot.daemonAuth.authenticated
+                ? `Daemon: ${snapshot.daemonAuth.tier}`
+                : "Daemon sees anonymous session — use Refresh state to reconnect"}
+            </div>
+          </div>
+        )}
         <div className="flex flex-wrap gap-2 mt-2">
           {!snapshot.loggedIn && (
             <button className="primary-button" onClick={() => send(authAction)} title={authAction.title}>

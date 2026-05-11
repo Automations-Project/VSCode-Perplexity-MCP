@@ -1,4 +1,5 @@
 import * as crypto from "node:crypto";
+import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
@@ -55,6 +56,7 @@ import {
 import {
   listProfiles,
   getActiveName,
+  getProfilePaths,
   setActive,
   createProfile,
   deleteProfile,
@@ -119,6 +121,8 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
   private otpResolvers = new Map<string, (s: string | null) => void>();
   private onMcpServerDefinitionsChanged?: () => void;
   private daemonEventsAbort: AbortController | null = null;
+  private daemonStatusWatcher: fs.FSWatcher | null = null;
+  private daemonStatusWatchedProfile: string | null = null;
   // v0.8.5: deps factory injected from extension.ts so the auto-regen hook
   // on `postStaleness` can reuse the live ApplyIdeConfigDeps without pulling
   // the daemon runtime singletons into the webview module.
@@ -231,6 +235,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
 
     const disposeHook = (webviewView as vscode.WebviewView & { onDidDispose?: (listener: () => void) => vscode.Disposable }).onDidDispose?.(() => {
       this.stopDaemonEventStream();
+      this.stopDaemonStatusWatch();
     });
     if (disposeHook) {
       this.context.subscriptions.push(disposeHook);
@@ -249,8 +254,16 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       try {
         switch (message.type) {
           case "ready":
+            debug("Handling ready");
+            await this.refresh();
+            break;
           case "dashboard:refresh":
-            debug("Handling refresh/ready");
+            debug("Handling refresh");
+            // If the daemon is reporting anonymous but the profile has stored
+            // credentials, touch .reinit so the daemon re-runs init() and
+            // re-checks auth. The daemon-status.json watcher picks up the
+            // result and calls refresh() automatically when it completes.
+            this.triggerDaemonReinitIfStale();
             await this.refresh();
             break;
           case "auth:login":
@@ -1583,6 +1596,8 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    this.ensureDaemonStatusWatch();
+
     await this.view.webview.postMessage({
       type: "dashboard:state",
       payload: this.buildState()
@@ -2054,6 +2069,85 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
   private stopDaemonEventStream(): void {
     this.daemonEventsAbort?.abort();
     this.daemonEventsAbort = null;
+  }
+
+  // ── daemon-status.json watcher ────────────────────────────────────────────
+
+  /**
+   * Watch daemon-status.json for the active profile. When it changes (daemon
+   * finished init/reinit), push a fresh dashboard state to the webview so the
+   * daemonAuth indicator updates without the user manually clicking Refresh.
+   */
+  private startDaemonStatusWatch(): void {
+    this.stopDaemonStatusWatch();
+    const profile = getActiveName() ?? "default";
+    const statusFile = getProfilePaths(profile).daemonStatus;
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    try {
+      this.daemonStatusWatcher = fs.watch(statusFile, () => {
+        if (debounce) clearTimeout(debounce);
+        debounce = setTimeout(() => {
+          debounce = null;
+          void this.refresh();
+        }, 300);
+      });
+      this.daemonStatusWatcher.on("error", () => {
+        // File may not exist yet (daemon not started). Re-arm on next refresh.
+        this.stopDaemonStatusWatch();
+      });
+      this.daemonStatusWatchedProfile = profile;
+    } catch {
+      // daemon-status.json doesn't exist yet — watcher will be re-armed
+      // the next time refresh() is called (startDaemonStatusWatch is called
+      // from refresh() → ensureWatcher() path below).
+      this.daemonStatusWatcher = null;
+      this.daemonStatusWatchedProfile = null;
+    }
+  }
+
+  private stopDaemonStatusWatch(): void {
+    this.daemonStatusWatcher?.close();
+    this.daemonStatusWatcher = null;
+    this.daemonStatusWatchedProfile = null;
+  }
+
+  /**
+   * Called from refresh() to ensure the watcher is tracking the current
+   * active profile. Re-arms if the profile changed or the previous watch
+   * failed because the file didn't exist yet.
+   */
+  private ensureDaemonStatusWatch(): void {
+    const profile = getActiveName() ?? "default";
+    const statusFile = getProfilePaths(profile).daemonStatus;
+    // Re-arm when: watcher never started, file was missing last time, or
+    // the active profile has changed since the watcher was last started.
+    if (!this.daemonStatusWatcher || this.daemonStatusWatchedProfile !== profile) {
+      if (fs.existsSync(statusFile)) {
+        this.startDaemonStatusWatch();
+      }
+    }
+  }
+
+  /**
+   * If the daemon's last-known auth state is anonymous while the profile has
+   * stored credentials, touch the .reinit sentinel to ask the daemon to
+   * re-run init() and re-check auth. The daemon-status.json watcher will
+   * pick up the result automatically.
+   */
+  private triggerDaemonReinitIfStale(): void {
+    try {
+      const snapshot = this.buildState().snapshot;
+      if (!snapshot.loggedIn) return;
+      if (!snapshot.daemonAuth) return;
+      if (snapshot.daemonAuth.authenticated) return;
+      // Stored login but daemon is anonymous → touch .reinit
+      const profile = getActiveName() ?? "default";
+      const reinitPath = getProfilePaths(profile).reinit;
+      fs.writeFileSync(reinitPath, String(Date.now()));
+      debug("[daemonStatusSync] Touched .reinit — daemon was anonymous with stored login");
+    } catch (err) {
+      debug(`[daemonStatusSync] triggerDaemonReinitIfStale error: ${(err as Error).message}`);
+    }
   }
 
   private async readDaemonEvents(body: ReadableStream<Uint8Array>, controller: AbortController): Promise<void> {

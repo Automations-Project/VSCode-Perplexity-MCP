@@ -8,6 +8,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isMainModule } from "./is-main-module.js";
+import { probeKeychainState } from "./vault.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -91,27 +93,7 @@ function normalizeExportFormat(value) {
  * advice stays consistent with what the runner will actually do.
  */
 async function probeVaultState({ profile } = {}) {
-  let keychainAvailable = false;
-  let keychainHasKey = false;
-  try {
-    const mod = await import("keytar");
-    const keytar = mod.default ?? mod;
-    if (keytar && typeof keytar.getPassword === "function") {
-      keychainAvailable = true;
-      try {
-        const hex = await keytar.getPassword("perplexity-user-mcp", "vault-master-key");
-        keychainHasKey = !!hex;
-      } catch {
-        // getPassword can throw on broken credstore backends (e.g. headless
-        // Linux without libsecret). The binding loaded but isn't usable —
-        // treat that as "available but no key", same posture as a fresh
-        // box. vault.js falls back to env var when keychain returns null.
-        keychainHasKey = false;
-      }
-    }
-  } catch {
-    keychainAvailable = false;
-  }
+  const { available: keychainAvailable, hasKey: keychainHasKey } = await probeKeychainState();
   const envPassphraseSet = !!process.env.PERPLEXITY_VAULT_PASSPHRASE;
   const hasTty = process.stdin?.isTTY === true && process.env.PERPLEXITY_MCP_STDIO !== "1";
 
@@ -1302,8 +1284,8 @@ Environment:
   PERPLEXITY_NO_DAEMON=1        'daemon attach' runs in-process stdio (bypass daemon)
 `;
 
-/* v8 ignore start -- only runs when cli.js is executed as a script */
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+
+if (isMainModule(import.meta.url)) {
   const parsed = parseArgs(process.argv.slice(2));
   routeCommand(parsed).then((res) => {
     if (res.stdout) process.stdout.write(res.stdout);
@@ -1311,4 +1293,4 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     process.exit(res.code);
   });
 }
-/* v8 ignore stop */
+

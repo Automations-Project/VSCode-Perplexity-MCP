@@ -1,18 +1,8 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { probeKeychainState } from "../vault.js";
 
 const CATEGORY = "vault";
-
-async function tryKeychain() {
-  try {
-    const mod = await import("keytar");
-    const keytar = mod.default ?? mod;
-    const hex = await keytar.getPassword("perplexity-user-mcp", "vault-master-key");
-    return { available: true, hasKey: !!hex };
-  } catch {
-    return { available: false, hasKey: false };
-  }
-}
 
 function keychainExpected() {
   return process.platform === "win32" || process.platform === "darwin" ||
@@ -26,7 +16,7 @@ export async function run(opts = {}) {
   const enc = join(dir, "profiles", profile, "vault.enc");
   const plain = join(dir, "profiles", profile, "vault.json");
   const envPass = process.env.PERPLEXITY_VAULT_PASSPHRASE;
-  const kc = await tryKeychain();
+  const kc = await probeKeychainState();
 
   // Encryption mode (separate from unseal path so plaintext opt-out is always a warn, not a skip).
   if (existsSync(plain)) {

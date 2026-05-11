@@ -31,7 +31,7 @@ describe("stdioDaemonProxyBuilder", () => {
     expect(result).toEqual({
       command: "node",
       args: ["/home/user/.perplexity-mcp/launcher.cjs"],
-      env: { PERPLEXITY_HEADLESS_ONLY: "1" },
+      env: {},
     });
     // Critical: proxy variant must NOT force the launcher into no-daemon mode.
     expect("env" in result ? result.env : {}).not.toHaveProperty("PERPLEXITY_NO_DAEMON");
@@ -67,7 +67,6 @@ describe("stdioDaemonProxyBuilder", () => {
     expect(env.PERPLEXITY_CHROME_PATH).toBe(
       "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     );
-    expect(env.PERPLEXITY_HEADLESS_ONLY).toBe("1");
     expect(env).not.toHaveProperty("PERPLEXITY_NO_DAEMON");
   });
 
@@ -108,7 +107,7 @@ describe("stdioDaemonProxyBuilder", () => {
     expect(result).toEqual({
       command: "node",
       args: ["/home/user/.perplexity-mcp/launcher.cjs"],
-      env: { PERPLEXITY_HEADLESS_ONLY: "1" },
+      env: {},
     });
 
     const env = "env" in result ? result.env ?? {} : {};

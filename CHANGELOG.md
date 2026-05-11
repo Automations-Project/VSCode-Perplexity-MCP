@@ -6,6 +6,37 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.43] — 2026-05-12 — Auth/CLI hardening (issues #5 + #6)
+
+> Refs [#5](https://github.com/Automations-Project/VSCode-Perplexity-MCP/issues/5) and [#6](https://github.com/Automations-Project/VSCode-Perplexity-MCP/issues/6). Two stacked regressions caused the daemon to report anonymous mode after a successful login: `PERPLEXITY_HEADLESS_ONLY=1` leaked from the launcher env into the daemon's spawn env (disabling the headed bootstrap entirely), and Phase 2 used a non-persistent browser context that discarded the fresh `cf_clearance` acquired in Phase 1. Separately, a symlink-detection bug silently no-oped the CLI on POSIX Homebrew/npm global installs, and repeated keychain probes triggered macOS Keychain permission prompts on every diagnostic pass.
+
+### Fixed
+
+- **`PERPLEXITY_HEADLESS_ONLY` and `PERPLEXITY_NO_DAEMON` are now stripped from the daemon spawn env** in all three spawn sites (`daemon/launcher.ts`, `extension/src/daemon/runtime.ts`, `extension/src/auto-config/transports/stdio-daemon-proxy.ts`). These are launcher-scoped flags that must never reach the daemon's own `PerplexityClient.init()` — leaking them forced the daemon to skip the headed bootstrap (the only phase that can solve CF challenges) or bypass daemon attach entirely. Fixes the "anonymous mode despite successful login" regression.
+- **Phase 2 (headless search) now uses a persistent browser context** (`chromium.launchPersistentContext(browserData, ...)`) sharing the same profile directory as Phase 1. The fresh `cf_clearance` written to disk by the headed bootstrap is loaded automatically, eliminating the CF-challenge failure that caused every subsequent search to see anonymous mode. Vault cookies are injected selectively — only cookies not already present on disk are added, so a freshly-written `cf_clearance` from Phase 1 is never overwritten by a stale vault copy.
+- **CLI and daemon entrypoints now resolve symlinks in the direct-run guard** (`isMainModule()` in new `src/is-main-module.js`). The previous `import.meta.url === pathToFileURL(process.argv[1]).href` check silently returned `false` when the binary was invoked through a symlink (npm global install, Homebrew Cellar, `node_modules/.bin/`), causing the CLI and daemon to exit `0` with no output. Both `cli.js` and `index.ts` now use `realpathSync` on both sides with a defensive fallback.
+- **`dist/cli.mjs` now has a shebang and executable mode** after build. A new `scripts/post-build-shebang.mjs` post-build script prepends `#!/usr/bin/env node` and `chmod 755`s the file. tsup intentionally omits the shebang (it trips vitest/esbuild during test imports); the post-build script targets only `dist/cli.mjs`. No-op on Windows where npm uses `.cmd` wrappers.
+- **Keytar probe results are cached per-process** in `vault.js`. Previously `tryKeytar()` re-imported the native module on every vault read, triggering macOS Keychain permission dialogs repeatedly within a single session. The new `_keytarModuleCache` variable caches success and failure alike; `__resetKeyCache()` clears it on profile-state changes. `probeKeychainState()` is exported for shared use across `cli.js` and `checks/vault.js`, removing three duplicate inline probe implementations.
+- **`PERPLEXITY_DISABLE_KEYCHAIN=1`** environment variable disables all keychain access. Useful in headless test environments and CI where no credstore is available and the "no keychain" code path should be taken without a failed import attempt.
+- **Login runners now use a persistent browser context** (`login-browser-data/` under the active profile directory, separate from the daemon's `browser-data/`). Google SSO and Cloudflare state accumulated across login sessions — eliminating the "log in constantly" UX paper cut. The separate directory avoids Chromium singleton-lock collisions with the daemon's headed bootstrap.
+- **`getSavedCookies` now emits specific diagnostic log lines** for each empty-return path: no `vault.enc` (run login first), vault exists but `cookies` key absent, cookies value is not an array, and JSON parse failure. An `unsealFailed` flag prevents the "key absent" message from firing when the real cause is an unseal error (which is already logged by the catch path).
+
+### Added
+
+- **`src/is-main-module.js` + `src/is-main-module.d.ts`** — shared symlink-aware direct-run guard extracted from `cli.js` and `index.ts`.
+- **`scripts/post-build-shebang.mjs`** — post-build shebang injection + chmod for `dist/cli.mjs`. Runs as part of `npm run build` in `packages/mcp-server`.
+- **`probeKeychainState()`** exported from `vault.js` — single keychain probe entry point with caching and `PERPLEXITY_DISABLE_KEYCHAIN` awareness.
+
+### Changed
+
+- **Build script** (`packages/mcp-server/package.json`): `tsup` → `tsup --no-dts && tsc --allowJs --emitDeclarationOnly && node scripts/post-build-shebang.mjs`. tsup's rollup-dts worker OOMs on this package's 47+ entry points under Node 22+/Windows; `tsc --allowJs --emitDeclarationOnly` is faster and avoids the worker heap ceiling.
+- **`tsup.config.ts`**: `dts: true` → `dts: false`; comment updated to reflect the build script split.
+
+### Verification
+
+- All 130 test files pass (1151 tests, 2 intentionally skipped) on Node 22 / Windows.
+- Full typecheck clean across all four packages.
+
 ## [0.8.41] — 2026-05-10 — Vault unseal hardening for external MCP clients
 
 > Refs [#3](https://github.com/Automations-Project/VSCode-Perplexity-MCP/issues/3). Driver: an external user (Claude Code on Win11) hit "Vault locked" because the extension-managed daemon never received the SecretStorage passphrase, AND the launcher silently fell back to direct vault access in the client's runtime.

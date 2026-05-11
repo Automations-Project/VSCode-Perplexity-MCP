@@ -1,6 +1,6 @@
 {
   "name": "perplexity-user-mcp",
-  "version": "0.8.42",
+  "version": "0.8.43",
   "mcpName": "io.github.Automations-Project/perplexity-user-mcp",
   "type": "module",
   "description": "Perplexity AI MCP server — browser automation for search, reasoning, research, and compute. Not affiliated with Perplexity AI, Inc.",
@@ -126,7 +126,7 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup --no-dts && tsc --allowJs --emitDeclarationOnly && node scripts/post-build-shebang.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "cd ../.. && npx vitest run packages/mcp-server/test",
     "test:coverage": "cd ../.. && npx vitest run --coverage packages/mcp-server/test"

@@ -191,9 +191,7 @@ describe("2026-05 IDE expansion", () => {
       type: "local",
       command: ["C:/node.exe", "C:/bundle/server.mjs"],
       enabled: true,
-      environment: {
-        PERPLEXITY_HEADLESS_ONLY: "1",
-      },
+      environment: {},
     });
     expect(nextConfig.mcp?.Perplexity.args).toBeUndefined();
     expect(nextConfig.mcp?.Perplexity.env).toBeUndefined();

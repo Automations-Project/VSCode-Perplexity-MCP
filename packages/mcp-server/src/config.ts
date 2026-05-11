@@ -405,16 +405,36 @@ export async function getSavedCookies(): Promise<PlaywrightCookie[]> {
   // return [] so the caller can report "no-cookies", but log the real reason
   // so the extension output channel shows why — otherwise the user sees
   // "run Login first" for a profile they already logged into.
-  const raw = await _vault.get(activeName(), "cookies").catch((err: unknown) => {
+  const profile = activeName();
+  let unsealFailed = false;
+  const raw = await _vault.get(profile, "cookies").catch((err: unknown) => {
+    unsealFailed = true;
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[vault] getSavedCookies failed for profile ${activeName()}: ${msg}`);
+    console.error(`[vault] getSavedCookies failed for profile '${profile}': ${msg}`);
     return null;
   });
-  if (!raw) return [];
+  if (!raw) {
+    if (!unsealFailed) {
+      // Distinguish "no vault.enc" from "vault exists but has no cookies key"
+      const paths = getProfilePaths(profile);
+      if (!existsSync(paths.vault)) {
+        console.error(`[vault] getSavedCookies: no vault.enc for profile '${profile}' — run login first`);
+      } else {
+        console.error(`[vault] getSavedCookies: vault.enc exists for profile '${profile}' but 'cookies' key is absent`);
+      }
+    }
+    return [];
+  }
   try {
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
+    if (!Array.isArray(parsed)) {
+      console.error(`[vault] getSavedCookies: 'cookies' value for profile '${profile}' is not an array (${typeof parsed})`);
+      return [];
+    }
+    return parsed;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[vault] getSavedCookies: JSON parse failed for profile '${profile}': ${msg}`);
     return [];
   }
 }
