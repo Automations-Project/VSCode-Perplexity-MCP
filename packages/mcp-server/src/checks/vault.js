@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { probeKeychainState } from "../vault.js";
 
 const CATEGORY = "vault";
 

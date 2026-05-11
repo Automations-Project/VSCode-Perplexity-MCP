@@ -71,7 +71,7 @@ const scryptAsync = promisify(nodeScrypt);
 // sets the seam, so the floor remains enforced. Cleared by `__resetKeyCache`.
 let _kdfParamsOverride = null;
 let _kdfTestModeActive = false;
-  _keytarModuleCache = null;
+let _keytarModuleCache = null;
 
 /**
  * TEST SEAM — drop scrypt cost during tests by setting (logN, r, p).
@@ -321,9 +321,6 @@ const KEYTAR_ACCOUNT = "vault-master-key";
 let _keyCache = null;
 let _unsealMaterialCache = null;
 
-/** Module-level keytar probe cache. `null` = not checked yet; `false` = unavailable. */
-let _keytarModuleCache = null;
-
 /** Environment escape hatch to suppress all keychain access (issue #6 bug 3). */
 function isKeychainDisabled() {
   return process.env.PERPLEXITY_DISABLE_KEYCHAIN === "1";
@@ -348,6 +345,10 @@ async function tryKeytar() {
   try {
     const mod = await import("keytar");
     const keytar = mod.default ?? mod;
+    if (!keytar || typeof keytar.getPassword !== "function") {
+      _keytarModuleCache = false;
+      return null;
+    }
     _keytarModuleCache = keytar;
     return keytar;
   } catch {
@@ -390,7 +391,7 @@ export async function probeKeychainState() {
     return { available: false, hasKey: false };
   }
   const keytar = await tryKeytar();
-  if (!keytar) {
+  if (!keytar || typeof keytar.getPassword !== "function") {
     return { available: false, hasKey: false };
   }
   try {

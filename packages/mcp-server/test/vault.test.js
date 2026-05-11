@@ -1340,3 +1340,42 @@ describe("v3 migration", () => {
     }
   });
 });
+
+describe("probeKeychainState — caching + escape hatch (issue #6.3)", () => {
+  beforeEach(() => {
+    __resetKeyCache();
+    delete process.env.PERPLEXITY_DISABLE_KEYCHAIN;
+    vi.doUnmock("keytar");
+  });
+  afterEach(() => {
+    vi.doUnmock("keytar");
+    delete process.env.PERPLEXITY_DISABLE_KEYCHAIN;
+  });
+
+  it("returns false immediately when PERPLEXITY_DISABLE_KEYCHAIN=1", async () => {
+    const { probeKeychainState } = await import("../src/vault.js");
+    process.env.PERPLEXITY_DISABLE_KEYCHAIN = "1";
+    const result = await probeKeychainState();
+    expect(result).toEqual({ available: false, hasKey: false });
+  });
+
+  it("caches keytar load result so repeated probes don't re-import", async () => {
+    let importCount = 0;
+    vi.doMock("keytar", () => {
+      importCount++;
+      return {
+        default: {
+          getPassword: async () => null,
+          setPassword: async () => undefined,
+        },
+      };
+    });
+    const { probeKeychainState } = await import("../src/vault.js");
+    __resetKeyCache(); // clear any prior cache
+    await probeKeychainState();
+    await probeKeychainState();
+    await probeKeychainState();
+    // keytar should only be imported once because the result is cached
+    expect(importCount).toBe(1);
+  });
+});
