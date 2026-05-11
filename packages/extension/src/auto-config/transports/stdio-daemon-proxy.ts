@@ -17,8 +17,9 @@ export const stdioDaemonProxyBuilder: TransportBuilder = {
     }
 
     const env: Record<string, string> = {
-      PERPLEXITY_HEADLESS_ONLY: "1",
       // NOTE: no PERPLEXITY_NO_DAEMON — launcher multiplexes onto the shared daemon.
+      // NOTE: no PERPLEXITY_HEADLESS_ONLY — the daemon decides headless vs headed
+      // based on its own availability probe, not the IDE's env block.
     };
 
     if (typeof input.chromePath === "string" && input.chromePath.length > 0) {
