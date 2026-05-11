@@ -126,7 +126,7 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node scripts/post-build-shebang.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "cd ../.. && npx vitest run packages/mcp-server/test",
     "test:coverage": "cd ../.. && npx vitest run --coverage packages/mcp-server/test"

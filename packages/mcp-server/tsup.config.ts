@@ -80,10 +80,9 @@ export default defineConfig({
     "helmet",
   ],
   // Shebang is NOT emitted into source files — it tripped vitest/esbuild
-  // during test imports of cli.js. npm's `bin` linker wraps the entry with
-  // its own node invocation on install, so the shebang isn't required for
-  // `npx perplexity-user-mcp` to work. If direct execution (`./dist/cli.mjs`)
-  // ever needs to work without npm, re-add via a post-build script that
-  // targets cli.mjs specifically.
+  // during test imports of cli.js.  A post-build script (see package.json
+  // `build` and scripts/post-build-shebang.mjs) prepends the shebang to
+  // `dist/cli.mjs` and chmods it to 755 so that direct execution works
+  // on POSIX where npm creates symlinks rather than wrapper scripts.
   outExtension: () => ({ js: ".mjs" }),
 });
