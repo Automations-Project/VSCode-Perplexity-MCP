@@ -13,7 +13,9 @@ export interface ProfilePaths {
   vault: string;
   vaultPlain: string;
   browserData: string;
+  loginBrowserData: string;
   modelsCache: string;
+  daemonStatus: string;
   history: string;
   attachments: string;
   researches: string;

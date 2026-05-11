@@ -25,6 +25,7 @@ export function getProfilePaths(name) {
     browserData: join(dir, "browser-data"),
     loginBrowserData: join(dir, "login-browser-data"),
     modelsCache: join(dir, "models-cache.json"),
+    daemonStatus: join(dir, "daemon-status.json"),
     history: join(dir, "history"),
     attachments: join(dir, "attachments"),
     researches: join(dir, "researches"),

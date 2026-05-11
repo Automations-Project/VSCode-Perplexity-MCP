@@ -49,6 +49,21 @@ export interface SpeedBoostStatus {
   runtimeDir: string;
 }
 
+/**
+ * Runtime auth state written by the daemon after every init/reinit/shutdown.
+ * Lives at profiles/<name>/daemon-status.json. Null when the file does not
+ * exist (stdio-only installs, first run, daemon not yet started).
+ */
+export interface DaemonAuthStatus {
+  authenticated: boolean;
+  tier: "Anonymous" | "Authenticated" | "Pro" | "Max" | "Enterprise";
+  userId: string | null;
+  pid: number;
+  lastInit: string;       // ISO timestamp when init/reinit completed
+  initDurationMs: number;
+  error: string | null;   // non-null only when init/reinit threw
+}
+
 export interface AccountSnapshot {
   loggedIn: boolean;
   userId: string | null;
@@ -63,6 +78,13 @@ export interface AccountSnapshot {
   /** Which tier last satisfied a live refresh — null when no refresh has completed yet. */
   lastRefreshTier: RefreshTier | null;
   speedBoost: SpeedBoostStatus;
+  /**
+   * Live auth state from the running daemon. Null when daemon-status.json does
+   * not exist (stdio mode, first run, or daemon not yet started). When present
+   * and authenticated=false while loggedIn=true, the daemon sees anonymous mode
+   * despite stored credentials — the Refresh button can trigger a reinit.
+   */
+  daemonAuth: DaemonAuthStatus | null;
 }
 
 export interface SavedResearchSummary {

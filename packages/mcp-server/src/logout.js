@@ -11,6 +11,8 @@ export async function softLogout(name) {
     delete meta.lastLogin;
     writeFileSync(paths.meta, JSON.stringify(meta, null, 2) + "\n");
   }
+  // Clear login-browser-data so the next login attempt starts with a fresh context.
+  if (existsSync(paths.loginBrowserData)) rmSync(paths.loginBrowserData, { recursive: true, force: true });
   if (existsSync(paths.dir)) writeFileSync(paths.reinit, String(Date.now()));
 }
 

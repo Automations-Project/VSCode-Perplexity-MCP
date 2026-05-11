@@ -33,6 +33,7 @@ import { isImpitAvailable, impitFetchJson } from "./refresh.js";
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
 import { getActiveName, getConfigDir, getProfilePaths } from "./profiles.js";
+import type { DaemonAuthStatus } from "@perplexity-user-mcp/shared";
 import { clearStaleSingletonLocks } from "./fs-utils.js";
 
 function getActiveProfileName(): string {
@@ -894,69 +895,77 @@ export class PerplexityClient {
    * Set env PERPLEXITY_HEADLESS_ONLY=1 to skip the headed phase (uses disk cache).
    */
   async init(): Promise<void> {
-    const activePaths = getActivePaths();
-    if (!existsSync(activePaths.browserData)) {
-      mkdirSync(activePaths.browserData, { recursive: true });
-    }
-
-    // Fail fast with a readable message if no browser is installed at all.
-    const browser = await resolveBrowserExecutable();
-    console.error(`[perplexity-mcp] Using ${browser.source}: ${browser.path}`);
-
-    // Phase 1: Headed session — solve CF challenge + fetch account info
-    const skipHeaded = process.env.PERPLEXITY_HEADLESS_ONLY === "1";
-    if (!skipHeaded) {
-      await this.headedBootstrap();
-    } else {
-      console.error("[perplexity-mcp] Skipping headed session (PERPLEXITY_HEADLESS_ONLY=1).");
-      this.loadCachedAccountInfo();
-    }
-
-    // Phase 2: Headless browser for search operations.
-    // Use the SAME persistent browserData directory as Phase 1 so that
-    // any cf_clearance cookie acquired during the headed bootstrap is
-    // already on disk and loaded automatically.  This fixes the bug where
-    // Phase 2 used a non-persistent context and only had stale vault
-    // cookies (issue #5).
-    console.error("[perplexity-mcp] Launching headless persistent browser...");
-    const launchOpts = buildLaunchOptions(true);
-    this.context = await chromium.launchPersistentContext(
-      activePaths.browserData,
-      launchOpts,
-    );
-    this.browser = this.context.browser();
-
-    // Inject vault cookies only for cookies not already present on disk.
-    // The headed bootstrap may have refreshed cf_clearance; we must not
-    // overwrite the fresh disk cookie with the stale vault copy.
-    const saved = await getSavedCookies();
-    if (saved.length > 0) {
-      const current = await this.context.cookies();
-      const currentNames = new Set(current.map((c) => c.name));
-      const toInject = saved.filter((c) => !currentNames.has(c.name));
-      if (toInject.length > 0) {
-        await this.context.addCookies(toInject);
-        console.error(`[perplexity-mcp] Injected ${toInject.length} missing cookies from vault.`);
-      } else {
-        console.error("[perplexity-mcp] All vault cookies already present on disk; skipping injection.");
-      }
-    }
-
-    this.page = await this.context.newPage();
-
-    // Navigate to Perplexity (headless — relies on fresh cf_clearance from headed phase)
+    const _initAt = Date.now();
     try {
-      await this.page.goto(PERPLEXITY_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
-      await this.page.waitForTimeout(2000);
-    } catch (err) {
-      console.error("[perplexity-mcp] Navigation warning:", (err as Error).message);
-    }
+      const activePaths = getActivePaths();
+      if (!existsSync(activePaths.browserData)) {
+        mkdirSync(activePaths.browserData, { recursive: true });
+      }
 
-    await this.checkAuth();
+      // Fail fast with a readable message if no browser is installed at all.
+      const browser = await resolveBrowserExecutable();
+      console.error(`[perplexity-mcp] Using ${browser.source}: ${browser.path}`);
 
-    // If headed phase was skipped or failed, try loading account info from headless
-    if (!this.accountInfo.modelsConfig) {
-      await this.loadAccountInfo();
+      // Phase 1: Headed session — solve CF challenge + fetch account info
+      const skipHeaded = process.env.PERPLEXITY_HEADLESS_ONLY === "1";
+      if (!skipHeaded) {
+        await this.headedBootstrap();
+      } else {
+        console.error("[perplexity-mcp] Skipping headed session (PERPLEXITY_HEADLESS_ONLY=1).");
+        this.loadCachedAccountInfo();
+      }
+
+      // Phase 2: Headless browser for search operations.
+      // Use the SAME persistent browserData directory as Phase 1 so that
+      // any cf_clearance cookie acquired during the headed bootstrap is
+      // already on disk and loaded automatically.  This fixes the bug where
+      // Phase 2 used a non-persistent context and only had stale vault
+      // cookies (issue #5).
+      console.error("[perplexity-mcp] Launching headless persistent browser...");
+      const launchOpts = buildLaunchOptions(true);
+      this.context = await chromium.launchPersistentContext(
+        activePaths.browserData,
+        launchOpts,
+      );
+      this.browser = this.context.browser();
+
+      // Inject vault cookies only for cookies not already present on disk.
+      // The headed bootstrap may have refreshed cf_clearance; we must not
+      // overwrite the fresh disk cookie with the stale vault copy.
+      const saved = await getSavedCookies();
+      if (saved.length > 0) {
+        const current = await this.context.cookies();
+        const currentNames = new Set(current.map((c) => c.name));
+        const toInject = saved.filter((c) => !currentNames.has(c.name));
+        if (toInject.length > 0) {
+          await this.context.addCookies(toInject);
+          console.error(`[perplexity-mcp] Injected ${toInject.length} missing cookies from vault.`);
+        } else {
+          console.error("[perplexity-mcp] All vault cookies already present on disk; skipping injection.");
+        }
+      }
+
+      this.page = await this.context.newPage();
+
+      // Navigate to Perplexity (headless — relies on fresh cf_clearance from headed phase)
+      try {
+        await this.page.goto(PERPLEXITY_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
+        await this.page.waitForTimeout(2000);
+      } catch (err) {
+        console.error("[perplexity-mcp] Navigation warning:", (err as Error).message);
+      }
+
+      await this.checkAuth();
+
+      // If headed phase was skipped or failed, try loading account info from headless
+      if (!this.accountInfo.modelsConfig) {
+        await this.loadAccountInfo();
+      }
+
+      this.writeDaemonStatus(_initAt, null);
+    } catch (err: unknown) {
+      this.writeDaemonStatus(_initAt, err instanceof Error ? err.message : String(err));
+      throw err;
     }
   }
 
@@ -2600,6 +2609,43 @@ export class PerplexityClient {
     if (this.browser) {
       await this.browser.close().catch(() => {});
       this.browser = null;
+    }
+    this.authenticated = false;
+    this.userId = null;
+    this.writeDaemonStatus(Date.now(), null);
+  }
+
+  // ── Daemon status file ─────────────────────────────────────────────────────
+
+  private daemonTier(): DaemonAuthStatus["tier"] {
+    if (!this.authenticated) return "Anonymous";
+    if (this.accountInfo.isMax) return "Max";
+    if (this.accountInfo.isPro) return "Pro";
+    if (this.accountInfo.isEnterprise) return "Enterprise";
+    return "Authenticated";
+  }
+
+  /**
+   * Write daemon-status.json so the extension UI can show live auth state
+   * instead of relying on the stale models-cache.json snapshot.
+   * @param startedAt - Date.now() captured at the start of init/reinit
+   * @param error - error message if init threw, null on success or shutdown
+   */
+  private writeDaemonStatus(startedAt: number, error: string | null): void {
+    try {
+      const paths = getActivePaths();
+      const status: DaemonAuthStatus = {
+        authenticated: this.authenticated,
+        tier: this.daemonTier(),
+        userId: this.userId,
+        pid: process.pid,
+        lastInit: new Date().toISOString(),
+        initDurationMs: Date.now() - startedAt,
+        error,
+      };
+      writeFileSync(paths.daemonStatus, JSON.stringify(status, null, 2) + "\n");
+    } catch {
+      // Never let a status write crash the daemon.
     }
   }
 }

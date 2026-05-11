@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
-import type { AccountSnapshot, ModelsConfigSource, RefreshTier } from "@perplexity-user-mcp/shared";
+import type { AccountSnapshot, DaemonAuthStatus, ModelsConfigSource, RefreshTier } from "@perplexity-user-mcp/shared";
 import { MODELS_FALLBACK, MODELS_FALLBACK_CAPTURED_AT } from "@perplexity-user-mcp/shared";
 import { getConfigDir, getProfilePaths, getActiveName } from "perplexity-user-mcp/profiles";
 import type { AccountInfo } from "../browser/runtime.js";
@@ -91,6 +91,9 @@ export function getAccountSnapshot(): AccountSnapshot {
 
   const speedBoost = getImpitStatus();
 
+  // Read live daemon auth state — null when file absent (stdio mode / first run).
+  const daemonAuth = readJsonFile<DaemonAuthStatus>(paths.daemonStatus);
+
   return {
     loggedIn,
     userId: null,
@@ -109,6 +112,7 @@ export function getAccountSnapshot(): AccountSnapshot {
       installedAt: speedBoost.installedAt,
       runtimeDir: speedBoost.runtimeDir,
     },
+    daemonAuth,
   };
 }
 

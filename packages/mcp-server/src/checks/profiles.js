@@ -91,6 +91,43 @@ export async function run(opts = {}) {
         results.push({ category: CATEGORY, name: `${name}/models-cache`, status: "pass", message: `${Math.round(ageDays)}d old` });
       }
     }
+
+    const daemonStatusPath = join(pdir, "daemon-status.json");
+    if (!existsSync(daemonStatusPath)) {
+      results.push({ category: CATEGORY, name: `${name}/daemon-status`, status: "skip", message: "no daemon status file (stdio-only or not yet started)" });
+    } else {
+      try {
+        const ds = JSON.parse(readFileSync(daemonStatusPath, "utf8"));
+        if (!ds.authenticated) {
+          results.push({
+            category: CATEGORY,
+            name: `${name}/daemon-status`,
+            status: "warn",
+            message: `daemon last init: ${ds.lastInit} — authenticated: false (tier: ${ds.tier})${ds.error ? `, error: ${ds.error}` : ""}`,
+            hint: "Open the extension dashboard and click 'Refresh state' to trigger a daemon reinit.",
+          });
+        } else {
+          results.push({
+            category: CATEGORY,
+            name: `${name}/daemon-status`,
+            status: "pass",
+            message: `authenticated as ${ds.tier}, last init: ${ds.lastInit} (${ds.initDurationMs}ms)`,
+          });
+        }
+      } catch {
+        results.push({ category: CATEGORY, name: `${name}/daemon-status`, status: "warn", message: "daemon-status.json is corrupt or unreadable" });
+      }
+    }
+
+    const loginBrowserDataPath = join(pdir, "login-browser-data");
+    if (existsSync(loginBrowserDataPath)) {
+      results.push({
+        category: CATEGORY,
+        name: `${name}/login-browser-data`,
+        status: "info",
+        message: "login-browser-data directory present (leftover from a past login session; safe to ignore)",
+      });
+    }
   }
 
   return results;
