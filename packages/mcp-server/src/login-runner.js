@@ -89,7 +89,7 @@ async function main() {
   const ready = await waitForLoginReady(page);
   if (!ready) {
     const title = await page.title().catch(() => "");
-    await ctx.browser().close().catch(() => {});
+    await ctx.browser()?.close().catch(() => {});
     emit({ ok: false, reason: /just a moment/i.test(title) ? "cf_blocked" : "auto_unsupported" });
     process.exit(/just a moment/i.test(title) ? 3 : 2);
   }
@@ -102,19 +102,19 @@ async function main() {
   if (!localOrigin) await minimizePageWindow(page);
 
   if (authFlow.kind === "sso_required") {
-    await ctx.browser().close().catch(() => {});
+    await ctx.browser()?.close().catch(() => {});
     emit({ ok: false, reason: "sso_required" });
     process.exit(2);
   }
 
   if (authFlow.kind === "unsupported") {
-    await ctx.browser().close().catch(() => {});
+    await ctx.browser()?.close().catch(() => {});
     emit({ ok: false, reason: "auto_unsupported", detail: authFlow.detail });
     process.exit(2);
   }
 
   if (authFlow.kind === "email_rejected") {
-    await ctx.browser().close().catch(() => {});
+    await ctx.browser()?.close().catch(() => {});
     emit({ ok: false, reason: "email_rejected", detail: authFlow.detail });
     process.exit(2);
   }
@@ -125,7 +125,7 @@ async function main() {
     try {
       otp = await awaitOtp();
     } catch {
-      await ctx.browser().close().catch(() => {});
+      await ctx.browser()?.close().catch(() => {});
       emit({ ok: false, reason: "otp_timeout" });
       process.exit(2);
     }
@@ -148,7 +148,7 @@ async function main() {
       recordLoginSuccess(PROFILE, { tier: metadata.tier, loginMode: "auto", lastLogin: new Date().toISOString() });
       writeFileSync(paths.reinit, String(Date.now()));
 
-      await ctx.browser().close().catch(() => {});
+      await ctx.browser()?.close().catch(() => {});
       emit({ ok: true, tier: metadata.tier, modelCount: Object.keys(metadata.models?.models ?? {}).length });
       process.exit(0);
     }
@@ -159,7 +159,7 @@ async function main() {
     }
 
     if (attempt === MAX_RETRIES) {
-      await ctx.browser().close().catch(() => {});
+      await ctx.browser()?.close().catch(() => {});
       emit({ ok: false, reason: "otp_rejected" });
       process.exit(2);
     }

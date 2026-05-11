@@ -74,7 +74,7 @@ async function main() {
   if (Date.now() - cfStart >= CF_TIMEOUT_MS) {
     const title = await page.title().catch(() => "");
     if (/just a moment/i.test(title)) {
-      await ctx.browser().close().catch(() => {});
+      await ctx.browser()?.close().catch(() => {});
       emit({ ok: false, reason: "cf_blocked" });
       process.exit(3);
     }
@@ -94,7 +94,7 @@ async function main() {
 
   // Test hook: force a browser close to exercise the cancelled path.
   if (process.env.PERPLEXITY_TEST_BROWSER_CLOSE_AFTER_MS) {
-    setTimeout(() => ctx.browser().close().catch(() => {}), Number(process.env.PERPLEXITY_TEST_BROWSER_CLOSE_AFTER_MS));
+    setTimeout(() => ctx.browser()?.close().catch(() => {}), Number(process.env.PERPLEXITY_TEST_BROWSER_CLOSE_AFTER_MS));
   }
 
   const started = Date.now();
@@ -110,7 +110,7 @@ async function main() {
     if (sessionCookie) break;
   }
   if (!sessionCookie) {
-    await ctx.browser().close().catch(() => {});
+    await ctx.browser()?.close().catch(() => {});
     emit({ ok: false, reason: "timeout" });
     process.exit(2);
   }
@@ -130,7 +130,7 @@ async function main() {
 
   writeFileSync(paths.reinit, String(Date.now()));
 
-  await ctx.browser().close().catch(() => {});
+  await ctx.browser()?.close().catch(() => {});
   emit({ ok: true, tier: metadata.tier, modelCount: Object.keys(metadata.models?.models ?? {}).length });
   process.exit(0);
 }
