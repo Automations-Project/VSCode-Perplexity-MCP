@@ -122,6 +122,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
   private onMcpServerDefinitionsChanged?: () => void;
   private daemonEventsAbort: AbortController | null = null;
   private daemonStatusWatcher: fs.FSWatcher | null = null;
+  private daemonStatusWatchedProfile: string | null = null;
   // v0.8.5: deps factory injected from extension.ts so the auto-regen hook
   // on `postStaleness` can reuse the live ApplyIdeConfigDeps without pulling
   // the daemon runtime singletons into the webview module.
@@ -2094,17 +2095,20 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
         // File may not exist yet (daemon not started). Re-arm on next refresh.
         this.stopDaemonStatusWatch();
       });
+      this.daemonStatusWatchedProfile = profile;
     } catch {
       // daemon-status.json doesn't exist yet — watcher will be re-armed
       // the next time refresh() is called (startDaemonStatusWatch is called
       // from refresh() → ensureWatcher() path below).
       this.daemonStatusWatcher = null;
+      this.daemonStatusWatchedProfile = null;
     }
   }
 
   private stopDaemonStatusWatch(): void {
     this.daemonStatusWatcher?.close();
     this.daemonStatusWatcher = null;
+    this.daemonStatusWatchedProfile = null;
   }
 
   /**
@@ -2115,9 +2119,9 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
   private ensureDaemonStatusWatch(): void {
     const profile = getActiveName() ?? "default";
     const statusFile = getProfilePaths(profile).daemonStatus;
-    // Re-arm if watcher is null (never started, file missing at last attempt,
-    // or profile changed). A live watcher needs no action.
-    if (!this.daemonStatusWatcher) {
+    // Re-arm when: watcher never started, file was missing last time, or
+    // the active profile has changed since the watcher was last started.
+    if (!this.daemonStatusWatcher || this.daemonStatusWatchedProfile !== profile) {
       if (fs.existsSync(statusFile)) {
         this.startDaemonStatusWatch();
       }
