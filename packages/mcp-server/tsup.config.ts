@@ -51,7 +51,11 @@ export default defineConfig({
   target: "node20",
   outDir: "dist",
   clean: true,
-  dts: true,
+  // tsup's rollup-dts worker thread OOMs on this package's 47 entry points
+  // under Node 22 / Windows (pre-existing; fails even on commits before 0.8.43).
+  // Declarations are generated separately with tsc --allowJs --emitDeclarationOnly
+  // in the package.json build script, which is faster and avoids the worker heap.
+  dts: false,
   // got-scraping and its transitive data-bearing deps must resolve at runtime
   // from node_modules (they load JSON data files via fs.readFileSync that tsup
   // can't inline). Same story for patchright (native Chromium).
