@@ -19,7 +19,6 @@ import {
   findBrowser,
   findChromeExecutable,
   resolveBrowserExecutable,
-  getOrCreateContext,
   getSavedCookies,
   type BrowserChannel,
   type ASIFile,
@@ -914,25 +913,33 @@ export class PerplexityClient {
     }
 
     // Phase 2: Headless browser for search operations.
-    console.error("[perplexity-mcp] Launching headless browser...");
+    // Use the SAME persistent browserData directory as Phase 1 so that
+    // any cf_clearance cookie acquired during the headed bootstrap is
+    // already on disk and loaded automatically.  This fixes the bug where
+    // Phase 2 used a non-persistent context and only had stale vault
+    // cookies (issue #5).
+    console.error("[perplexity-mcp] Launching headless persistent browser...");
     const launchOpts = buildLaunchOptions(true);
-    this.browser = await chromium.launch({
-      headless: launchOpts.headless,
-      args: launchOpts.args,
-      ...(launchOpts.executablePath ? { executablePath: launchOpts.executablePath } : {}),
-      ...(launchOpts.channel ? { channel: launchOpts.channel } : {}),
-      ignoreDefaultArgs: launchOpts.ignoreDefaultArgs,
-    });
-    this.context = await getOrCreateContext(this.browser, {
-      viewport: launchOpts.viewport,
-      userAgent: launchOpts.userAgent,
-    });
+    this.context = await chromium.launchPersistentContext(
+      activePaths.browserData,
+      launchOpts,
+    );
+    this.browser = this.context.browser();
 
-    // Inject saved cookies (session + cf_clearance from login)
+    // Inject vault cookies only for cookies not already present on disk.
+    // The headed bootstrap may have refreshed cf_clearance; we must not
+    // overwrite the fresh disk cookie with the stale vault copy.
     const saved = await getSavedCookies();
     if (saved.length > 0) {
-      await this.context.addCookies(saved);
-      console.error(`[perplexity-mcp] Injected ${saved.length} saved cookies into browser context.`);
+      const current = await this.context.cookies();
+      const currentNames = new Set(current.map((c) => c.name));
+      const toInject = saved.filter((c) => !currentNames.has(c.name));
+      if (toInject.length > 0) {
+        await this.context.addCookies(toInject);
+        console.error(`[perplexity-mcp] Injected ${toInject.length} missing cookies from vault.`);
+      } else {
+        console.error("[perplexity-mcp] All vault cookies already present on disk; skipping injection.");
+      }
     }
 
     this.page = await this.context.newPage();
