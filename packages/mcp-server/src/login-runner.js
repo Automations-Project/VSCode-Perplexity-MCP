@@ -58,6 +58,7 @@ async function main() {
   }
 
   const PROFILE = resolveProfile();
+  const paths = getProfilePaths(PROFILE);
   const localOrigin = isLocalOrigin(ORIGIN);
 
   let executablePath;
@@ -71,13 +72,13 @@ async function main() {
     }
   }
 
-  const browser = await chromium.launch({
+  const ctx = await chromium.launchPersistentContext(paths.loginBrowserData, {
     headless: localOrigin,
+    ignoreHTTPSErrors: true,
     ...(executablePath ? { executablePath } : {}),
     ...(channel && ["chrome", "msedge", "chromium"].includes(channel) ? { channel } : {}),
     args: localOrigin ? [] : ["--start-minimized"],
   });
-  const ctx = await browser.newContext({ ignoreHTTPSErrors: true });
   const page = await ctx.newPage();
 
   try {
@@ -88,7 +89,7 @@ async function main() {
   const ready = await waitForLoginReady(page);
   if (!ready) {
     const title = await page.title().catch(() => "");
-    await browser.close().catch(() => {});
+    await ctx.browser().close().catch(() => {});
     emit({ ok: false, reason: /just a moment/i.test(title) ? "cf_blocked" : "auto_unsupported" });
     process.exit(/just a moment/i.test(title) ? 3 : 2);
   }
@@ -101,19 +102,19 @@ async function main() {
   if (!localOrigin) await minimizePageWindow(page);
 
   if (authFlow.kind === "sso_required") {
-    await browser.close().catch(() => {});
+    await ctx.browser().close().catch(() => {});
     emit({ ok: false, reason: "sso_required" });
     process.exit(2);
   }
 
   if (authFlow.kind === "unsupported") {
-    await browser.close().catch(() => {});
+    await ctx.browser().close().catch(() => {});
     emit({ ok: false, reason: "auto_unsupported", detail: authFlow.detail });
     process.exit(2);
   }
 
   if (authFlow.kind === "email_rejected") {
-    await browser.close().catch(() => {});
+    await ctx.browser().close().catch(() => {});
     emit({ ok: false, reason: "email_rejected", detail: authFlow.detail });
     process.exit(2);
   }
@@ -124,7 +125,7 @@ async function main() {
     try {
       otp = await awaitOtp();
     } catch {
-      await browser.close().catch(() => {});
+      await ctx.browser().close().catch(() => {});
       emit({ ok: false, reason: "otp_timeout" });
       process.exit(2);
     }
@@ -142,13 +143,12 @@ async function main() {
       if (metadata.sessionData?.user?.email) await vault.set(PROFILE, "email", metadata.sessionData.user.email);
       if (metadata.sessionData?.user?.id) await vault.set(PROFILE, "userId", metadata.sessionData.user.id);
 
-      const paths = getProfilePaths(PROFILE);
       if (!existsSync(paths.dir)) mkdirSync(paths.dir, { recursive: true });
       writeFileSync(paths.modelsCache, JSON.stringify(metadata.cache, null, 2));
       recordLoginSuccess(PROFILE, { tier: metadata.tier, loginMode: "auto", lastLogin: new Date().toISOString() });
       writeFileSync(paths.reinit, String(Date.now()));
 
-      await browser.close().catch(() => {});
+      await ctx.browser().close().catch(() => {});
       emit({ ok: true, tier: metadata.tier, modelCount: Object.keys(metadata.models?.models ?? {}).length });
       process.exit(0);
     }
@@ -159,7 +159,7 @@ async function main() {
     }
 
     if (attempt === MAX_RETRIES) {
-      await browser.close().catch(() => {});
+      await ctx.browser().close().catch(() => {});
       emit({ ok: false, reason: "otp_rejected" });
       process.exit(2);
     }
