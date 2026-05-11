@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { pathToFileURL } from "node:url";
+import { isMainModule } from "./is-main-module.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { PerplexityClient } from "./client.js";
@@ -191,7 +191,7 @@ export async function main() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModule(import.meta.url)) {
   runEntrypoint().catch(async (error) => {
     console.error("[perplexity-mcp] Fatal error:", error);
     await shutdownClientWithTimeout(client);

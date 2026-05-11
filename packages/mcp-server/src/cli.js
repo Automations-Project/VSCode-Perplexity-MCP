@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isMainModule } from "./is-main-module.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -1302,8 +1303,8 @@ Environment:
   PERPLEXITY_NO_DAEMON=1        'daemon attach' runs in-process stdio (bypass daemon)
 `;
 
-/* v8 ignore start -- only runs when cli.js is executed as a script */
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+
+if (isMainModule(import.meta.url)) {
   const parsed = parseArgs(process.argv.slice(2));
   routeCommand(parsed).then((res) => {
     if (res.stdout) process.stdout.write(res.stdout);
@@ -1311,4 +1312,4 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     process.exit(res.code);
   });
 }
-/* v8 ignore stop */
+
