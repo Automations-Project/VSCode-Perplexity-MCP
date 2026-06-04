@@ -35,6 +35,7 @@ import { join } from "path";
 import { getActiveName, getConfigDir, getProfilePaths } from "./profiles.js";
 import type { DaemonAuthStatus } from "@perplexity-user-mcp/shared";
 import { clearStaleSingletonLocks } from "./fs-utils.js";
+import { OFFSCREEN_POSITION_ARG } from "./browser-window.js";
 
 function getActiveProfileName(): string {
   return process.env.PERPLEXITY_PROFILE || getActiveName() || "default";
@@ -106,12 +107,21 @@ const USER_AGENT =
  * for best Cloudflare fingerprinting, falling back to patchright's bundled
  * Chromium. The resolved `channel` is passed through so Patchright can apply
  * channel-specific stealth tweaks (important for msedge on Windows).
+ *
+ * @internal Exported only so unit tests can assert the headed/headless arg
+ * branches; not part of the supported `perplexity-user-mcp/client` API.
  */
-function buildLaunchOptions(headless: boolean): Record<string, any> {
+export function buildLaunchOptions(headless: boolean): Record<string, any> {
   const browser = findBrowser();
   const opts: Record<string, any> = {
     headless,
-    args: STEALTH_ARGS,
+    // The headed branch is the CF-solving bootstrap (Phase 1 / daemon session
+    // refresh). It paints a real window, which the user sees flash while they
+    // work (issue #9). Position it off-screen so the background refresh is
+    // invisible — like the already-headless search path. Headless launches
+    // have no window, so the positioning arg is omitted there. We move the
+    // window rather than shrink/hide it; see OFFSCREEN_POSITION_ARG.
+    args: headless ? STEALTH_ARGS : [...STEALTH_ARGS, OFFSCREEN_POSITION_ARG],
     viewport: headless ? { width: 1920, height: 1080 } : { width: 800, height: 600 },
     userAgent: USER_AGENT,
     // Strip --enable-automation (Playwright default) which is a CF red flag

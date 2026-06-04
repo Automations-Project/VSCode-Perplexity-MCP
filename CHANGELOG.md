@@ -6,6 +6,23 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.45] — 2026-06-04 — Invisible headed cookie-grab (issue #9)
+
+> Ref [#9](https://github.com/Automations-Project/VSCode-Perplexity-MCP/issues/9). On macOS the bundled Chromium flashed a visible window for ~1–2s during login / re-login / "Refresh state" and during the daemon's background session refresh, before minimizing or closing. `--start-minimized` was already passed but Chromium paints the window before honoring it, and the daemon's CF-solving bootstrap had no positioning at all. Both headed paths now paint the window **off-screen** from the first frame, matching the already-invisible headless search experience. The interactive manual-login window (which the user must see to solve a real Cloudflare challenge or enter an OTP in-page) is intentionally left visible.
+
+### Fixed
+
+- **The headed auto-OTP login window no longer flashes visible** ([`login-runner.js`](packages/mcp-server/src/login-runner.js)). It launches with `--window-position=-32000,-32000` so the window is created off-screen instead of relying on the post-paint CDP minimize that `--start-minimized` + `minimizePageWindow()` performed too late on macOS. This window never needs user interaction (the OTP arrives over IPC from the extension UI and Cloudflare auto-solves on a clean IP; a real CF challenge bails to the manual runner), so off-screen is always safe.
+- **The daemon's headed CF-solving bootstrap no longer flashes visible** ([`client.ts`](packages/mcp-server/src/client.ts) `headedBootstrap` / `buildLaunchOptions`). The headed Phase-1 launch now appends the same off-screen position arg. Previously it had no positioning and stayed fully visible for the entire bootstrap, which is the "flash while the daemon refreshes the session" the issue describes. Headless launches (search) are unchanged — they have no window.
+
+### Added
+
+- **`src/browser-window.{js,d.ts}`** now exports `OFFSCREEN_POSITION_ARG` (`--window-position=-32000,-32000`) and `loginLaunchArgs(localOrigin)`, the single source of truth for the off-screen flag shared by both headed launch sites. The window is *moved* off-screen rather than shrunk (`--window-size=1,1`) or run truly headless, because an abnormal viewport or headless fingerprint is a Cloudflare/Turnstile bot tell — the real headed fingerprint is exactly what keeps the cookie-grab passing CF.
+
+### Verification
+
+- New unit tests: `test/browser-window.test.js` (4) and `test/client-launch-options.test.js` (2) assert the headed paths include the off-screen arg, the headless paths do not, `--start-minimized` is retained as a Windows backstop, and `--window-size=1,1` is never added. Full mcp-server unit suite (583 tests) and the `login-runner` integration test (5) pass on Node 22 / Windows; typecheck clean across all four packages.
+
 ## [0.8.43] — 2026-05-12 — Auth/CLI hardening (issues #5 + #6)
 
 > Refs [#5](https://github.com/Automations-Project/VSCode-Perplexity-MCP/issues/5) and [#6](https://github.com/Automations-Project/VSCode-Perplexity-MCP/issues/6). Two stacked regressions caused the daemon to report anonymous mode after a successful login: `PERPLEXITY_HEADLESS_ONLY=1` leaked from the launcher env into the daemon's spawn env (disabling the headed bootstrap entirely), and Phase 2 used a non-persistent browser context that discarded the fresh `cf_clearance` acquired in Phase 1. Separately, a symlink-detection bug silently no-oped the CLI on POSIX Homebrew/npm global installs, and repeated keychain probes triggered macOS Keychain permission prompts on every diagnostic pass.

@@ -9,7 +9,7 @@ import { Vault } from "./vault.js";
 import { resolveBrowserExecutable } from "./config.js";
 import { getProfilePaths, getActiveName, recordLoginSuccess } from "./profiles.js";
 import { redact } from "./redact.js";
-import { minimizePageWindow } from "./browser-window.js";
+import { minimizePageWindow, loginLaunchArgs } from "./browser-window.js";
 import {
   buildRuntimeEndpoints,
   collectSessionMetadata,
@@ -77,7 +77,7 @@ async function main() {
     ignoreHTTPSErrors: true,
     ...(executablePath ? { executablePath } : {}),
     ...(channel && ["chrome", "msedge", "chromium"].includes(channel) ? { channel } : {}),
-    args: localOrigin ? [] : ["--start-minimized"],
+    args: loginLaunchArgs(localOrigin),
   });
   const page = await ctx.newPage();
 
