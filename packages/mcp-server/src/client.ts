@@ -1257,15 +1257,20 @@ export class PerplexityClient {
     // otherwise fixed at spawn time and a plain reinit stays anonymous.
     if (opts.passphrase) {
       process.env.PERPLEXITY_VAULT_PASSPHRASE = opts.passphrase;
-    }
-    // Always clear the vault unseal cache: a profile switch (or a freshly
-    // supplied passphrase) must not be blocked by the previous profile's
-    // pinned `_unsealMaterialCache`/`_keyCache` (issue: daemon vault-locked).
-    try {
-      const vault = await import("./vault.js");
-      vault.__resetKeyCache();
-    } catch {
-      // best-effort — never let a cache reset crash reinit
+      // Reset the vault unseal cache ONLY when a (possibly new) passphrase is
+      // supplied. The OS-keychain master key is shared across ALL profiles
+      // (KEYTAR_ACCOUNT = "vault-master-key"), so a keychain unseal stays valid
+      // across a profile switch — clearing it would needlessly re-read the
+      // keychain AND re-import keytar, which on macOS re-triggers Keychain
+      // permission prompts (issue #6 bug 3). Only passphrase material can
+      // change between profiles, and only the extension's POST /daemon/reinit
+      // ever supplies a fresh one, so the reset is scoped to that path.
+      try {
+        const vault = await import("./vault.js");
+        vault.__resetKeyCache();
+      } catch {
+        // best-effort — never let a cache reset crash reinit
+      }
     }
     await this.shutdown().catch(() => {});
     this.browser = null;
