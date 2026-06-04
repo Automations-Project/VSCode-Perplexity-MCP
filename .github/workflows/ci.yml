@@ -7,10 +7,14 @@ on:
 
 env:
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
-  # tsup's --dts worker hits Node's default ~2GB heap during the mcp-server
-  # build (70+ entry points + DTS emission). Lift the cap to 4GB; both
-  # ubuntu-latest and windows-latest runners have ~7GB RAM available.
-  NODE_OPTIONS: "--max-old-space-size=4096"
+  # NOTE: NODE_OPTIONS=--max-old-space-size is deliberately NOT set at the
+  # workflow level. The vitest `forks` pool spawns several worker child
+  # processes that inherit this env; a 4GB-per-worker cap let the
+  # windows-latest + Node 24 runner OOM-kill workers ("Worker exited
+  # unexpectedly"), which failed the run AND dropped per-file coverage below
+  # threshold (issue: Windows CI flakiness). The heap bump is scoped to the
+  # build/typecheck steps only — see below; the test step runs with Node's
+  # default per-worker heap.
   # Opt into Node 24 for GitHub-shipped JS actions (checkout, setup-node, …)
   # ahead of the June 2nd 2026 default. Silences the deprecation warning and
   # ensures we're on the runtime GitHub is migrating to.
@@ -47,8 +51,16 @@ jobs:
           elif [ "$RUNNER_OS" = "macOS" ]; then
             npm install --no-save --workspaces=false @tailwindcss/oxide-darwin-arm64 @tailwindcss/oxide-darwin-x64
           fi
+      # tsup's --dts worker + tsc across 4 packages can exceed Node's default
+      # heap on the mcp-server build (70+ entry points + DTS emission). Lift the
+      # cap to 4GB for these single-process steps ONLY — never the multi-worker
+      # test step (see env note above).
       - run: npm run build
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
       - run: npm run typecheck
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
       - name: Test with coverage
         run: |
           mkdir -p .test-artifacts
