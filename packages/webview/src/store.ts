@@ -55,6 +55,16 @@ interface DashboardStore {
   daemonAuditTail: DaemonAuditEntry[];
   daemonTokenRotatedAt: string | null;
   /**
+   * Transient "the daemon is reinitializing" flag. Set when the user triggers a
+   * profile switch or "Refresh state" — both re-supply the vault passphrase and
+   * hot-reload the daemon, a headed reinit that takes ~30s. Cleared when the
+   * daemon next reports `authenticated`, or by a timeout in DashboardView. Lets
+   * the UI show a "Reconnecting…" spinner instead of a stale "anonymous" badge.
+   */
+  reconnecting: { active: boolean; since: number };
+  startReconnecting: () => void;
+  stopReconnecting: () => void;
+  /**
    * Live revealed bearer. Populated ONLY by the `daemon:bearer:reveal:response`
    * ExtensionMessage (which itself requires a modal-confirmed
    * `daemon:bearer:reveal` request on the extension-host side). Cleared
@@ -178,6 +188,9 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
   daemonStatus: null,
   daemonAuditTail: [],
   daemonTokenRotatedAt: null,
+  reconnecting: { active: false, since: 0 },
+  startReconnecting: () => set({ reconnecting: { active: true, since: Date.now() } }),
+  stopReconnecting: () => set({ reconnecting: { active: false, since: 0 } }),
   revealedBearer: null,
   setRevealedBearer: (r) => set({ revealedBearer: r }),
   clearRevealedBearer: () => set({ revealedBearer: null }),
@@ -198,7 +211,13 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
   setDoctorReportingOptOut: (v) => set((s) => ({ doctor: { ...s.doctor, reportingOptOut: v } })),
   hydrate: (message) => {
     if (message.type === "dashboard:state") {
-      set({ state: message.payload });
+      set((store) => {
+        const authed = !!message.payload?.snapshot?.daemonAuth?.authenticated;
+        // Clear the "reconnecting" spinner once the daemon reports it's back.
+        return authed && store.reconnecting.active
+          ? { state: message.payload, reconnecting: { active: false, since: 0 } }
+          : { state: message.payload };
+      });
       return;
     }
 

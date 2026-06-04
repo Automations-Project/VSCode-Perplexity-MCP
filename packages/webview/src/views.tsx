@@ -219,6 +219,16 @@ export function DashboardView({
 }) {
   const snapshot = state.snapshot;
   const activeProfile = useDashboardStore((store) => store.activeProfile);
+  const reconnecting = useDashboardStore((store) => store.reconnecting);
+  const stopReconnecting = useDashboardStore((store) => store.stopReconnecting);
+  // Safety net: never spin forever. If the daemon hasn't reported back in 60s
+  // (reinit failed / vault still locked), drop the spinner so the real status
+  // message shows again.
+  useEffect(() => {
+    if (!reconnecting.active) return;
+    const t = setTimeout(() => stopReconnecting(), 60_000);
+    return () => clearTimeout(t);
+  }, [reconnecting.active, reconnecting.since, stopReconnecting]);
   const authAction = activeProfile ? { type: "auth:login" as const, label: "Login", title: "Use the active profile's saved login mode." } : { type: "profile:add-prompt" as const, label: "Add account", title: "Create a profile and start sign-in." };
   const recentQueries = state.history.slice(0, 3);
   const rateLimitEntries = Object.entries(snapshot.rateLimits?.modes ?? {}) as Array<
@@ -244,6 +254,17 @@ export function DashboardView({
         {snapshot.daemonAuth && (() => {
           const da = snapshot.daemonAuth;
           if (!da) return null;
+          // While a switch/refresh-triggered reinit is in flight and the daemon
+          // is not yet authenticated, show a spinner so the ~30s headed reinit
+          // reads as "working", not "stuck".
+          if (reconnecting.active && !da.authenticated) {
+            return (
+              <div className="flex items-center gap-2">
+                <RefreshCcw size={13} className="animate-spin" />
+                <div className="dashboard-status-text">Reconnecting the daemon to this profile… this can take ~30s.</div>
+              </div>
+            );
+          }
           let text: string;
           if (da.authenticated) {
             text = `Daemon: ${da.tier}`;

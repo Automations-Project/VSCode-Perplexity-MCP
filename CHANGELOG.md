@@ -6,6 +6,14 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.51] — 2026-06-04 — "Reconnecting…" spinner during daemon reinit
+
+> Follow-up UX for the 0.8.49 passphrase fix. After a profile switch or "Refresh state" the extension re-supplies the vault passphrase and hot-reloads the daemon — a headed reinit that takes ~30s. The daemon badge kept showing the stale "anonymous" message during that window, so it looked stuck even though it was working (confirmed in the field: the daemon goes green ~30s after a switch).
+
+### Added
+
+- **Reconnecting spinner on the daemon badge** ([`views.tsx`](packages/webview/src/views.tsx), [`store.ts`](packages/webview/src/store.ts), [`App.tsx`](packages/webview/src/App.tsx)). A transient `reconnecting` store flag is set when `profile:switch` / `dashboard:refresh` is sent and cleared when the daemon next reports `authenticated` (or a 60s safety timeout). While active and the daemon is not yet authenticated, the badge shows a spinning **"Reconnecting the daemon to this profile… this can take ~30s."** instead of the stale anonymous/vault-locked status — so the wait reads as progress, not a hang.
+
 ## [0.8.49] — 2026-06-04 — Daemon unlocks passphrase-protected profiles on switch/refresh
 
 > Reported via a diagnostics bundle: after switching to a **passphrase-protected** profile, the dashboard showed "Session active and ready" while the daemon showed "Daemon sees anonymous session — use Refresh state to reconnect", and Refresh did not help. Root cause: the long-lived daemon is spawned with `PERPLEXITY_VAULT_PASSPHRASE` read from SecretStorage **once at spawn**; a profile switch only touched `.reinit`, which re-ran `init()` with the *stale/absent* passphrase, so the daemon could not unseal the new profile's vault (`Vault locked: no keychain, no env var, no TTY`). The vault unseal cache also pinned the first profile's material (`Vault decrypt failed: wrong passphrase`). The extension could read the vault (the user had typed the passphrase) — hence the two badges disagreed.

@@ -42,6 +42,12 @@ function nextActionId(prefix: string): string {
  * auto-generated and the action is registered as pending in the store.
  */
 function send(message: WebviewMessage | Omit<Extract<WebviewMessage, { id: string }>, "id">): void {
+  // Profile switch + "Refresh state" both re-supply the vault passphrase and
+  // hot-reload the daemon (a headed reinit that takes ~30s). Flag it so the
+  // daemon badge shows a "Reconnecting…" spinner instead of looking stuck.
+  if (message.type === "profile:switch" || message.type === "dashboard:refresh") {
+    useDashboardStore.getState().startReconnecting();
+  }
   if (ACTION_TYPES.has(message.type) && !("id" in message && message.id)) {
     const id = nextActionId(message.type);
     const full = { ...message, id } as WebviewMessage;
