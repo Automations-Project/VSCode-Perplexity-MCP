@@ -26,6 +26,7 @@ describe("getSavedCookies diagnostic logging (issue #5.3)", () => {
     delete process.env.PERPLEXITY_CONFIG_DIR;
     delete process.env.PERPLEXITY_PROFILE;
     delete process.env.PERPLEXITY_VAULT_PASSPHRASE;
+    delete process.env.PERPLEXITY_DISABLE_KEYCHAIN;
     console.error = originalConsoleError;
   });
 
@@ -51,5 +52,35 @@ describe("getSavedCookies diagnostic logging (issue #5.3)", () => {
     const cookies = await getSavedCookies();
     expect(cookies).toEqual([]);
     expect(capturedErrors.some((c) => c.includes("'cookies' key is absent"))).toBe(true);
+  });
+
+  it("wasLastVaultLocked() is false when there is no vault (not locked — just not logged in)", async () => {
+    const { getSavedCookies, wasLastVaultLocked } = await import("../src/config.js");
+    await getSavedCookies();
+    expect(wasLastVaultLocked()).toBe(false);
+  });
+
+  it("wasLastVaultLocked() is true when vault.enc exists but cannot be unsealed", async () => {
+    const { createProfile } = await import("../src/profiles.js");
+    const { Vault, __resetKeyCache } = await import("../src/vault.js");
+    createProfile("default");
+    // Write a cookies blob encrypted with a passphrase (keychain disabled so
+    // the blob is purely passphrase-protected).
+    process.env.PERPLEXITY_DISABLE_KEYCHAIN = "1";
+    process.env.PERPLEXITY_VAULT_PASSPHRASE = "secret";
+    __resetKeyCache();
+    const v = new Vault();
+    await v.set("default", "cookies", JSON.stringify([{ name: "x", value: "y" }]));
+
+    // Now drop the passphrase (and keychain) — the daemon-style "Vault locked"
+    // path: vault.enc exists but there is no unseal material.
+    delete process.env.PERPLEXITY_VAULT_PASSPHRASE;
+    __resetKeyCache();
+
+    vi.resetModules();
+    const { getSavedCookies, wasLastVaultLocked } = await import("../src/config.js");
+    const cookies = await getSavedCookies();
+    expect(cookies).toEqual([]);
+    expect(wasLastVaultLocked()).toBe(true);
   });
 });

@@ -574,6 +574,31 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
     });
   });
 
+  // Re-supply the vault passphrase to the RUNNING daemon and hot-reload the
+  // client. LOOPBACK ONLY (never reachable over the tunnel) because the body
+  // carries the vault passphrase; the audit middleware logs only method+path,
+  // never the body, so the passphrase is not persisted. The extension host
+  // calls this on profile-switch and on "Refresh state" so passphrase-
+  // protected profiles can unseal without a full daemon restart (issue: daemon
+  // stuck anonymous because PERPLEXITY_VAULT_PASSPHRASE was fixed at spawn).
+  app.post("/daemon/reinit", requireBearer, async (req: any, res: any, next: any) => {
+    try {
+      if (req._pplx?.source === "tunnel") {
+        res.status(403).json({ ok: false, error: "loopback_only" });
+        return;
+      }
+      const passphrase =
+        typeof req.body?.passphrase === "string" && req.body.passphrase.length > 0
+          ? req.body.passphrase
+          : undefined;
+      const client = await getClient();
+      await client.reinit(passphrase ? { passphrase } : {});
+      res.json({ ok: true, authenticated: !!client.authenticated });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post("/daemon/enable-tunnel", requireBearer, async (_req: any, res: any, next: any) => {
     try {
       await options.onEnableTunnel?.();

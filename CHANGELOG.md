@@ -6,6 +6,28 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.49] — 2026-06-04 — Daemon unlocks passphrase-protected profiles on switch/refresh
+
+> Reported via a diagnostics bundle: after switching to a **passphrase-protected** profile, the dashboard showed "Session active and ready" while the daemon showed "Daemon sees anonymous session — use Refresh state to reconnect", and Refresh did not help. Root cause: the long-lived daemon is spawned with `PERPLEXITY_VAULT_PASSPHRASE` read from SecretStorage **once at spawn**; a profile switch only touched `.reinit`, which re-ran `init()` with the *stale/absent* passphrase, so the daemon could not unseal the new profile's vault (`Vault locked: no keychain, no env var, no TTY`). The vault unseal cache also pinned the first profile's material (`Vault decrypt failed: wrong passphrase`). The extension could read the vault (the user had typed the passphrase) — hence the two badges disagreed.
+
+### Fixed
+
+- **The daemon now re-receives the vault passphrase on profile-switch / "Refresh state"** instead of staying anonymous. New **loopback-only, bearer-authed `POST /daemon/reinit {passphrase}`** ([`daemon/server.ts`](packages/mcp-server/src/daemon/server.ts)) sets `PERPLEXITY_VAULT_PASSPHRASE` in the running daemon, clears the vault unseal cache, and hot-reloads the client — no daemon restart, no dropped MCP connections. The endpoint is blocked from tunnel callers by the H11 admin allowlist (404) plus an in-handler loopback check (defense-in-depth); the audit log records only method+path, never the body.
+- **`client.reinit({ passphrase })`** ([`client.ts`](packages/mcp-server/src/client.ts)) sets the env (when supplied) and **always `vault.__resetKeyCache()`** before re-init, so a profile switch is never blocked by the previous profile's pinned `_unsealMaterialCache`/`_keyCache`. The daemon's own active-profile-switch reinit benefits automatically.
+- **The extension re-supplies the passphrase** ([`DashboardProvider.ts`](packages/extension/src/webview/DashboardProvider.ts)): "Refresh state", webview `profile:switch`, and the command-palette `Perplexity.switchAccount` / `Perplexity.addAccount` now POST the SecretStorage passphrase to `/daemon/reinit` (non-spawning — it only targets an already-running daemon; falls back to touching `.reinit` if the HTTP path is unavailable or returns non-2xx).
+
+### Added
+
+- **`DaemonAuthStatus.reason`** (`ok` / `vault-locked` / `not-logged-in`) in [shared](packages/shared/src/models.ts), surfaced from `getSavedCookies()` → `wasLastVaultLocked()` → `init()` → `writeDaemonStatus()`. The dashboard's daemon badge is now **reason-aware** ([`views.tsx`](packages/webview/src/views.tsx)) — it distinguishes "daemon can't unlock this profile's vault" from "not logged in" instead of always saying "use Refresh state".
+
+### Known follow-up
+
+- An animated "reconnecting…" loader while a daemon reinit is in flight is deferred (needs transient webview-store state). One vault passphrase per machine is intentional (global SecretStorage key); per-profile passphrases are out of scope.
+
+### Verification
+
+- New unit tests: `test/daemon/reinit-http.test.js` (bearer required, passphrase forwarded, empty/missing handled), `/daemon/reinit` added to the tunnel-admin-allowlist suite (tunnel→404, loopback→handler), and `wasLastVaultLocked()` coverage in `test/config-getSavedCookies.test.js`. Adversarial review (4 dimensions) — all confirmed findings fixed (command-palette wiring, `res.ok` fallback, no-spawn). Full typecheck + build clean across all four packages. **Live daemon + passphrase-profile-switch flow on Windows still needs the manual smoke** (the SecretStorage→daemon round-trip can't be exercised without a real daemon).
+
 ## [0.8.46] — 2026-06-04 — Fix browser-data singleton-lock deadlock (issue #8)
 
 > Ref [#8](https://github.com/Automations-Project/VSCode-Perplexity-MCP/issues/8). Regression from the 0.8.43 issue-#5 fix (commit `c841124`): Phase 2 (headless search) switched from an *ephemeral* `chromium.launch()` to a long-lived `launchPersistentContext(browser-data)` so it could reuse the on-disk `cf_clearance` written by Phase 1. The side effect — the daemon now holds the `browser-data` Chromium process-singleton lock for its entire lifetime, and Chromium forbids a second `launchPersistentContext` on the same `--user-data-dir`. Three independent callers still targeted that dir: the Doctor probe (a separate process that ran its own `init()` against `browser-data`), the daemon's own Phase 1→Phase 2 transition, and the reinit cycle. On Windows each collision surfaced as `exitCode 21` / "Target page, context or browser has been closed", leaving the daemon stuck in anonymous mode in a self-reinforcing deadlock that only a full restart cleared. The fix makes the daemon the **single owner** of `browser-data` and hardens the lock handling — without reverting the `cf_clearance` reuse.

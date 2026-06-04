@@ -372,7 +372,21 @@ export interface PlaywrightCookie {
 
 const _vault = new Vault();
 
+// Tracks whether the most recent getSavedCookies() returned [] because the
+// vault could not be UNSEALED (passphrase missing/wrong in this process), as
+// opposed to the profile simply having no saved session. init() reads this to
+// record a machine-readable reason in daemon-status.json so the UI can tell
+// "daemon can't unlock this profile" apart from "not logged in" (issue:
+// daemon vault-locked after profile switch).
+let _lastVaultLocked = false;
+
+/** True when the last getSavedCookies() returned [] because vault unseal failed. */
+export function wasLastVaultLocked(): boolean {
+  return _lastVaultLocked;
+}
+
 export async function getSavedCookies(): Promise<PlaywrightCookie[]> {
+  _lastVaultLocked = false;
   // 1. Env var override (unchanged behavior)
   if (process.env.PERPLEXITY_SESSION_TOKEN) {
     const cookies: PlaywrightCookie[] = [{
@@ -423,6 +437,7 @@ export async function getSavedCookies(): Promise<PlaywrightCookie[]> {
         console.error(`[vault] getSavedCookies: vault.enc exists for profile '${profile}' but 'cookies' key is absent`);
       }
     }
+    _lastVaultLocked = unsealFailed;
     return [];
   }
   try {

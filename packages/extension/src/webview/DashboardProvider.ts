@@ -517,6 +517,10 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
           case "profile:switch": {
             setActive(message.payload.name);
             this.onMcpServerDefinitionsChanged?.();
+            // The active profile changed → re-supply its vault passphrase to
+            // the running daemon so it can unlock the new profile (otherwise it
+            // stays anonymous with the previous profile's passphrase).
+            void this.reinitDaemonWithPassphrase();
             await this.postActionResult(message.id, true);
             await this.postProfileList();
             await this.refresh();
@@ -2130,9 +2134,8 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
 
   /**
    * If the daemon's last-known auth state is anonymous while the profile has
-   * stored credentials, touch the .reinit sentinel to ask the daemon to
-   * re-run init() and re-check auth. The daemon-status.json watcher will
-   * pick up the result automatically.
+   * stored credentials, re-supply the vault passphrase to the daemon and ask
+   * it to re-run init(). The daemon-status.json watcher picks up the result.
    */
   private triggerDaemonReinitIfStale(): void {
     try {
@@ -2140,13 +2143,62 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       if (!snapshot.loggedIn) return;
       if (!snapshot.daemonAuth) return;
       if (snapshot.daemonAuth.authenticated) return;
-      // Stored login but daemon is anonymous → touch .reinit
-      const profile = getActiveName() ?? "default";
-      const reinitPath = getProfilePaths(profile).reinit;
-      fs.writeFileSync(reinitPath, String(Date.now()));
-      debug("[daemonStatusSync] Touched .reinit — daemon was anonymous with stored login");
+      // Stored login but daemon is anonymous → re-supply the passphrase + reinit.
+      void this.reinitDaemonWithPassphrase();
     } catch (err) {
       debug(`[daemonStatusSync] triggerDaemonReinitIfStale error: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Re-supply the current SecretStorage vault passphrase to the RUNNING daemon
+   * and hot-reload it (POST /daemon/reinit, loopback + bearer). This is what
+   * makes the daemon unlock passphrase-protected profiles whose passphrase was
+   * not in the daemon's spawn env (the daemon-anonymous-after-profile-switch
+   * bug). Fire-and-forget: the daemon-status watcher refreshes the UI when the
+   * reinit completes. Falls back to touching .reinit (keychain-unlockable
+   * profiles need no passphrase) if the daemon isn't reachable over HTTP.
+   */
+  /**
+   * Public entry for profile changes made OUTSIDE the webview (the command-
+   * palette Perplexity.switchAccount / Perplexity.addAccount). Fire-and-forget.
+   */
+  public reinitDaemonAfterProfileChange(): void {
+    void this.reinitDaemonWithPassphrase();
+  }
+
+  private async reinitDaemonWithPassphrase(): Promise<void> {
+    try {
+      // Non-spawning: only POST to a daemon that is ALREADY running. Using
+      // ensureBundledDaemon() here would spawn a daemon on stdio-only installs
+      // (review finding). getBundledDaemonStatus() never spawns.
+      const status = await getBundledDaemonStatus().catch(() => null);
+      const record = status?.running ? status.record : null;
+      if (!record?.port || !record?.bearerToken) {
+        throw new Error("no running daemon");
+      }
+      const passphrase = await peekStoredVaultPassphrase(this.context);
+      const res = await fetch(`http://127.0.0.1:${record.port}/daemon/reinit`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${record.bearerToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(passphrase ? { passphrase } : {}),
+      });
+      // A non-2xx (403/500/…) must trigger the fallback, not be silently
+      // ignored — fetch only rejects on network errors (review finding).
+      if (!res.ok) throw new Error(`/daemon/reinit returned HTTP ${res.status}`);
+      debug(`[daemonStatusSync] POST /daemon/reinit -> ${res.status} (passphrase ${passphrase ? "sent" : "none"})`);
+    } catch (err) {
+      // HTTP path unavailable — fall back to the .reinit sentinel so a
+      // keychain-unlockable profile still reinits.
+      try {
+        const profile = getActiveName() ?? "default";
+        fs.writeFileSync(getProfilePaths(profile).reinit, String(Date.now()));
+        debug("[daemonStatusSync] /daemon/reinit path unavailable; touched .reinit instead");
+      } catch { /* ignore */ }
+      debug(`[daemonStatusSync] reinitDaemonWithPassphrase: ${(err as Error).message}`);
     }
   }
 

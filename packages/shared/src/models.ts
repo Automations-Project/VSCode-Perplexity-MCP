@@ -62,6 +62,18 @@ export interface DaemonAuthStatus {
   lastInit: string;       // ISO timestamp when init/reinit completed
   initDurationMs: number;
   error: string | null;   // non-null only when init/reinit threw
+  /**
+   * Machine-readable reason the daemon is unauthenticated, so the UI can be
+   * honest instead of always saying "use Refresh state to reconnect":
+   *  - "ok"            authenticated (or status not applicable)
+   *  - "vault-locked"  the profile's vault could not be unsealed by the daemon
+   *                    (passphrase missing/wrong in the daemon process) — a
+   *                    plain reinit will NOT recover; the passphrase must be
+   *                    re-supplied (see POST /daemon/reinit).
+   *  - "not-logged-in" no saved session for this profile (run login).
+   * Optional for back-compat with statuses written by older daemons.
+   */
+  reason?: "ok" | "vault-locked" | "not-logged-in";
 }
 
 export interface AccountSnapshot {

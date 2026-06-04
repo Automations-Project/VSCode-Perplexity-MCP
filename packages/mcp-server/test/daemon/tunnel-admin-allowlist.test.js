@@ -11,6 +11,7 @@ function createMockClient() {
     accountInfo: null,
     init: async () => undefined,
     shutdown: async () => undefined,
+    reinit: async () => undefined,
   };
 }
 
@@ -54,6 +55,7 @@ describe("H11 tunnel admin allowlist", () => {
     { method: "POST", path: "/daemon/heartbeat",     body: JSON.stringify({}),                   contentType: "application/json" },
     { method: "POST", path: "/daemon/rotate-token",  body: "" },
     { method: "POST", path: "/daemon/shutdown",      body: "" },
+    { method: "POST", path: "/daemon/reinit",        body: JSON.stringify({ passphrase: "test" }), contentType: "application/json" },
     { method: "POST", path: "/daemon/enable-tunnel", body: "" },
     { method: "POST", path: "/daemon/disable-tunnel", body: "" },
     { method: "POST", path: "/daemon/oauth-consent", body: JSON.stringify({ consentId: "x", approved: true }), contentType: "application/json" },

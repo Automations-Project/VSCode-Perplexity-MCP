@@ -241,19 +241,28 @@ export function DashboardView({
               : "Run login once to unlock the server."}
           </div>
         </div>
-        {snapshot.daemonAuth && (
-          <div className="flex items-center gap-2">
-            <StatusDot
-              variant={snapshot.daemonAuth.authenticated ? "ok" : "warn"}
-              decorative
-            />
-            <div className="dashboard-status-text">
-              {snapshot.daemonAuth.authenticated
-                ? `Daemon: ${snapshot.daemonAuth.tier}`
-                : "Daemon sees anonymous session — use Refresh state to reconnect"}
+        {snapshot.daemonAuth && (() => {
+          const da = snapshot.daemonAuth;
+          if (!da) return null;
+          let text: string;
+          if (da.authenticated) {
+            text = `Daemon: ${da.tier}`;
+          } else if (da.reason === "vault-locked") {
+            // The daemon couldn't unseal this profile's vault. "Refresh state"
+            // now re-sends the passphrase to the daemon, so it IS the fix.
+            text = "Daemon can't unlock this profile's vault — click Refresh state to re-send your passphrase.";
+          } else if (da.reason === "not-logged-in") {
+            text = "Daemon sees an anonymous session — run login to connect.";
+          } else {
+            text = "Daemon sees an anonymous session — use Refresh state to reconnect.";
+          }
+          return (
+            <div className="flex items-center gap-2">
+              <StatusDot variant={da.authenticated ? "ok" : "warn"} decorative />
+              <div className="dashboard-status-text">{text}</div>
             </div>
-          </div>
-        )}
+          );
+        })()}
         <div className="flex flex-wrap gap-2 mt-2">
           {!snapshot.loggedIn && (
             <button className="primary-button" onClick={() => send(authAction)} title={authAction.title}>

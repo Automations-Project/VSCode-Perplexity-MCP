@@ -20,6 +20,7 @@ import {
   findChromeExecutable,
   resolveBrowserExecutable,
   getSavedCookies,
+  wasLastVaultLocked,
   type BrowserChannel,
   type ASIFile,
   type SearchResult,
@@ -1248,8 +1249,24 @@ export class PerplexityClient {
    * vault cookies are picked up. Called by the `.reinit` sentinel watcher
    * after a child login-runner completes.
    */
-  async reinit(): Promise<void> {
+  async reinit(opts: { passphrase?: string } = {}): Promise<void> {
     console.error("[perplexity-mcp] Reinit requested — closing current context and reloading cookies.");
+    // When the extension re-supplies the vault passphrase (e.g. after a profile
+    // switch to a passphrase-protected account), update the process env so the
+    // daemon can unseal the new profile's vault. The daemon's passphrase is
+    // otherwise fixed at spawn time and a plain reinit stays anonymous.
+    if (opts.passphrase) {
+      process.env.PERPLEXITY_VAULT_PASSPHRASE = opts.passphrase;
+    }
+    // Always clear the vault unseal cache: a profile switch (or a freshly
+    // supplied passphrase) must not be blocked by the previous profile's
+    // pinned `_unsealMaterialCache`/`_keyCache` (issue: daemon vault-locked).
+    try {
+      const vault = await import("./vault.js");
+      vault.__resetKeyCache();
+    } catch {
+      // best-effort — never let a cache reset crash reinit
+    }
     await this.shutdown().catch(() => {});
     this.browser = null;
     this.context = null;
@@ -2652,6 +2669,15 @@ export class PerplexityClient {
   private writeDaemonStatus(startedAt: number, error: string | null): void {
     try {
       const paths = getActivePaths();
+      // Machine-readable reason so the UI can distinguish "daemon can't unlock
+      // this profile's vault" (a plain reinit won't recover — the passphrase
+      // must be re-supplied) from "not logged in". Derived from the last
+      // getSavedCookies() unseal outcome (issue: daemon vault-locked).
+      const reason: DaemonAuthStatus["reason"] = this.authenticated
+        ? "ok"
+        : wasLastVaultLocked()
+          ? "vault-locked"
+          : "not-logged-in";
       const status: DaemonAuthStatus = {
         authenticated: this.authenticated,
         tier: this.daemonTier(),
@@ -2660,6 +2686,7 @@ export class PerplexityClient {
         lastInit: new Date().toISOString(),
         initDurationMs: Date.now() - startedAt,
         error,
+        reason,
       };
       writeFileSync(paths.daemonStatus, JSON.stringify(status, null, 2) + "\n");
     } catch {

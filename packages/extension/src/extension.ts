@@ -878,6 +878,10 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
       if (pick) {
         setActive(pick);
         serverDefinitionsChanged.fire();
+        // Re-supply the new profile's vault passphrase to the running daemon
+        // (same fix as the webview profile:switch — otherwise a passphrase-
+        // protected account stays anonymous in the daemon).
+        dashboard.reinitDaemonAfterProfileChange();
         await dashboard.refresh();
       }
     })
@@ -892,6 +896,7 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
         createProfile(config.name, { loginMode: config.mode });
         setActive(config.name);
         serverDefinitionsChanged.fire();
+        dashboard.reinitDaemonAfterProfileChange();
         await dashboard.refresh();
         await dashboard.postNotice("info", `Created profile '${config.name}'. Starting login…`);
       } catch (err) {
