@@ -25,16 +25,6 @@ export default defineConfig({
         : []),
     ],
     environment: "node",
-    // CI (notably windows-latest + Node 24) intermittently OOM-killed
-    // forks-pool workers ("Worker exited unexpectedly"), which both failed the
-    // run and dropped per-file coverage below threshold. Cap concurrent forks
-    // in CI to bound peak memory (combined with not inheriting a 4GB-per-worker
-    // heap — see .github/workflows/ci.yml). Local runs keep vitest's default
-    // parallelism for speed.
-    pool: "forks",
-    ...(process.env.CI
-      ? { poolOptions: { forks: { maxForks: 2, minForks: 1 } } }
-      : {}),
     coverage: {
       provider: "v8",
       reporter: ["text", "html", "json-summary"],
