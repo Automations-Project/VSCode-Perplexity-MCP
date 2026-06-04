@@ -34,7 +34,7 @@ import { writeFileSync, readFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
 import { getActiveName, getConfigDir, getProfilePaths } from "./profiles.js";
 import type { DaemonAuthStatus } from "@perplexity-user-mcp/shared";
-import { clearStaleSingletonLocks } from "./fs-utils.js";
+import { clearStaleSingletonLocks, launchWithRetry } from "./fs-utils.js";
 import { OFFSCREEN_POSITION_ARG } from "./browser-window.js";
 
 function getActiveProfileName(): string {
@@ -933,9 +933,13 @@ export class PerplexityClient {
       // cookies (issue #5).
       console.error("[perplexity-mcp] Launching headless persistent browser...");
       const launchOpts = buildLaunchOptions(true);
-      this.context = await chromium.launchPersistentContext(
-        activePaths.browserData,
-        launchOpts,
+      // Clear stale locks + retry: on Windows the Phase 1 headed context
+      // (just closed above) does not release the browser-data profile lock
+      // synchronously, so this Phase 2 launch on the SAME --user-data-dir can
+      // momentarily collide (issue #8). The retry absorbs that release lag.
+      this.context = await launchWithRetry(
+        () => chromium.launchPersistentContext(activePaths.browserData, launchOpts),
+        { beforeAttempt: () => clearStaleSingletonLocks(activePaths.browserData) },
       );
       this.browser = this.context.browser();
 
@@ -991,8 +995,12 @@ export class PerplexityClient {
     let ctx: BrowserContext | null = null;
     try {
       const browserData = getActivePaths().browserData;
-      clearStaleSingletonLocks(browserData);
-      ctx = await chromium.launchPersistentContext(browserData, buildLaunchOptions(false));
+      // Clear stale locks + retry to ride out a brief profile-lock release lag
+      // after a prior context close on the same browser-data dir (issue #8).
+      ctx = await launchWithRetry(
+        () => chromium.launchPersistentContext(browserData, buildLaunchOptions(false)),
+        { beforeAttempt: () => clearStaleSingletonLocks(browserData) },
+      );
 
       const page = ctx.pages()[0] || await ctx.newPage();
       await page.goto(PERPLEXITY_URL, { waitUntil: "domcontentloaded", timeout: 30000 });

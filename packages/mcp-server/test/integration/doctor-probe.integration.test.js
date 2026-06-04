@@ -10,6 +10,7 @@ describe("doctor probe integration", () => {
     const { run } = await import("../../src/checks/probe.js");
     const checks = await run({
       probe: true,
+      daemonOwnsOverride: () => false, // exercise the result path, not the single-owner guard
       searchOverride: async () => ({ sources: [{ url: `${mock.url}/x` }, { url: `${mock.url}/y` }], elapsedMs: 187 }),
     });
     expect(checks[0].status).toBe("pass");
@@ -21,6 +22,7 @@ describe("doctor probe integration", () => {
     const { run } = await import("../../src/checks/probe.js");
     const checks = await run({
       probe: true,
+      daemonOwnsOverride: () => false, // exercise the result path, not the single-owner guard
       timeoutMs: 20,
       searchOverride: async ({ timeoutMs }) => {
         await new Promise((r) => setTimeout(r, timeoutMs + 5));

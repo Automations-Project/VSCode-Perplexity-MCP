@@ -6,6 +6,25 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.46] — 2026-06-04 — Fix browser-data singleton-lock deadlock (issue #8)
+
+> Ref [#8](https://github.com/Automations-Project/VSCode-Perplexity-MCP/issues/8). Regression from the 0.8.43 issue-#5 fix (commit `c841124`): Phase 2 (headless search) switched from an *ephemeral* `chromium.launch()` to a long-lived `launchPersistentContext(browser-data)` so it could reuse the on-disk `cf_clearance` written by Phase 1. The side effect — the daemon now holds the `browser-data` Chromium process-singleton lock for its entire lifetime, and Chromium forbids a second `launchPersistentContext` on the same `--user-data-dir`. Three independent callers still targeted that dir: the Doctor probe (a separate process that ran its own `init()` against `browser-data`), the daemon's own Phase 1→Phase 2 transition, and the reinit cycle. On Windows each collision surfaced as `exitCode 21` / "Target page, context or browser has been closed", leaving the daemon stuck in anonymous mode in a self-reinforcing deadlock that only a full restart cleared. The fix makes the daemon the **single owner** of `browser-data` and hardens the lock handling — without reverting the `cf_clearance` reuse.
+
+### Fixed
+
+- **The Doctor probe no longer launches a competing browser against `browser-data` when a daemon is live** ([`checks/probe.js`](packages/mcp-server/src/checks/probe.js)). New `liveDaemonOwnsProfile()` reads the daemon lockfile (`daemon/lockfile.js` `read` + `isStale` + `isProcessAlive`); when a live daemon owns the profile, the probe returns a `skip` (the daemon's real auth state is already surfaced by the `profiles` check's `daemon-status`) instead of opening a second persistent context that would collide on the profile singleton lock. This was the deterministic Doctor-failure in the report, and it also removes one of the racers that could knock the daemon out of its own reinit.
+- **Both daemon `browser-data` launches now clear stale locks and retry with backoff** ([`client.ts`](packages/mcp-server/src/client.ts) Phase 1 `headedBootstrap` and Phase 2 `init`). On Windows `context.close()` resolving does not release the profile lock synchronously, so the Phase 1→Phase 2 transition (and a reinit immediately after login) could momentarily collide on the same `--user-data-dir`. The new `launchWithRetry()` rides out that release lag instead of failing the whole `init()` into anonymous mode.
+- **`clearStaleSingletonLocks` now also clears the Windows `lockfile`** ([`fs-utils.js`](packages/mcp-server/src/fs-utils.js)). It previously removed only the POSIX `SingletonLock`/`SingletonCookie`/`SingletonSocket` files, so on Windows — where the ProcessSingleton lock is `lockfile` in the user-data-dir root — a stale lock was never cleared and `launchPersistentContext` kept failing. (`Default/LOCK` is a LevelDB lock, not the process singleton, and is deliberately left alone.)
+
+### Added
+
+- **`launchWithRetry()` and `isLockContentionError()`** in [`fs-utils.js`](packages/mcp-server/src/fs-utils.js) (+ `fs-utils.d.ts`). A generic, fully-injectable (sleep/beforeAttempt/isRetriable) bounded-retry helper that retries **only** transient Chromium profile-lock collisions and rethrows everything else immediately. `isLockContentionError` matches the Windows `exitCode 21` / "Target page, context or browser has been closed" / process-singleton signatures.
+- **`liveDaemonOwnsProfile()`** exported from [`checks/probe.js`](packages/mcp-server/src/checks/probe.js) — single source of truth for "does a live daemon own this profile's browser session", with a `daemonOwnsOverride` test seam.
+
+### Verification
+
+- New unit tests: `test/fs-utils.test.js` (+7: Windows `lockfile` clearing, `launchWithRetry` backoff/retry/rethrow/no-retry, `isLockContentionError` signatures) and `test/probe-daemon-owner.test.js` (live/absent/stale daemon detection; probe skips without launching when a daemon is live). `test/checks/probe.test.js` made hermetic against a real running daemon via `daemonOwnsOverride`. Full mcp-server unit suite (595 tests) passes; typecheck clean across all four packages. **Live daemon/login flow on Windows still needs the manual VSIX smoke** — the lock-release timing can only be exercised against a real Chrome + daemon.
+
 ## [0.8.45] — 2026-06-04 — Invisible headed cookie-grab (issue #9)
 
 > Ref [#9](https://github.com/Automations-Project/VSCode-Perplexity-MCP/issues/9). On macOS the bundled Chromium flashed a visible window for ~1–2s during login / re-login / "Refresh state" and during the daemon's background session refresh, before minimizing or closing. `--start-minimized` was already passed but Chromium paints the window before honoring it, and the daemon's CF-solving bootstrap had no positioning at all. Both headed paths now paint the window **off-screen** from the first frame, matching the already-invisible headless search experience. The interactive manual-login window (which the user must see to solve a real Cloudflare challenge or enter an OTP in-page) is intentionally left visible.

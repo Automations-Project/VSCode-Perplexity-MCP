@@ -1,4 +1,35 @@
+import { read as readDaemonLock, isStale as daemonLockIsStale } from "../daemon/lockfile.js";
+import { getActiveName } from "../profiles.js";
+
 const CATEGORY = "probe";
+
+/**
+ * True when a LIVE daemon owns the SAME profile's browser session the probe
+ * would launch against. The daemon holds the `browser-data` profile via a
+ * long-lived launchPersistentContext; an independent probe launching its own
+ * context on the SAME --user-data-dir collides on the Chromium singleton lock
+ * (issue #8 — Windows exitCode 21). When this returns true the probe must NOT
+ * launch its own browser; the daemon's real auth state is already surfaced by
+ * the `profiles` check (daemon-status.json).
+ *
+ * The daemon.lock is global (one daemon) and records no profile, but the
+ * daemon follows the active-profile pointer — it only holds the lock for the
+ * ACTIVE profile. The probe's PerplexityClient launches against
+ * `PERPLEXITY_PROFILE || active`, so a probe explicitly targeting a DIFFERENT
+ * profile uses a different browser-data dir and will NOT collide. Guard only
+ * when the probe's effective profile matches the active profile.
+ */
+export function liveDaemonOwnsProfile() {
+  try {
+    const record = readDaemonLock();
+    if (!record || daemonLockIsStale(record)) return false;
+    const active = getActiveName() ?? "default";
+    const probeProfile = process.env.PERPLEXITY_PROFILE ?? active;
+    return probeProfile === active;
+  } catch {
+    return false;
+  }
+}
 
 async function defaultSearch({ timeoutMs }) {
   const { PerplexityClient } = await import("../client.js");
@@ -47,6 +78,22 @@ async function defaultSearch({ timeoutMs }) {
 export async function run(opts = {}) {
   if (!opts.probe) {
     return [{ category: CATEGORY, name: "probe-search", status: "skip", message: "skipped (pass --probe to enable)" }];
+  }
+  // Single-owner guard (issue #8): if a live daemon already holds the
+  // profile's browser-data session, do NOT launch a competing persistent
+  // context — it would collide on the Chromium profile singleton lock
+  // (Windows exitCode 21 / "Target page, context or browser has been closed")
+  // and could even knock the daemon out of its own reinit. The daemon's real
+  // auth state is reported separately by the `profiles` check (daemon-status).
+  const daemonOwns = opts.daemonOwnsOverride ?? liveDaemonOwnsProfile;
+  if (daemonOwns()) {
+    return [{
+      category: CATEGORY,
+      name: "probe-search",
+      status: "skip",
+      message: "skipped — a live daemon owns this profile's browser session",
+      hint: "An independent probe would collide with the daemon on the browser-data profile lock (issue #8). The daemon's live auth state is shown under the 'profiles' check (daemon-status). To run a standalone probe, stop the daemon first, then re-run with --probe.",
+    }];
   }
   const timeoutMs = opts.timeoutMs ?? 10_000;
   const search = opts.searchOverride ?? defaultSearch;

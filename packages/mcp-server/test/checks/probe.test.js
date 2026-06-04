@@ -10,6 +10,7 @@ describe("checks/probe", () => {
   it("passes with injected search stub returning sources", async () => {
     const checks = await runProbe({
       probe: true,
+      daemonOwnsOverride: () => false,
       searchOverride: async () => ({ sources: [{ url: "https://example" }], elapsedMs: 42 }),
     });
     const c = checks.find((c) => c.name === "probe-search");
@@ -21,6 +22,7 @@ describe("checks/probe", () => {
   it("fails when search returns no sources", async () => {
     const checks = await runProbe({
       probe: true,
+      daemonOwnsOverride: () => false,
       searchOverride: async () => ({ sources: [], elapsedMs: 500 }),
     });
     expect(checks.find((c) => c.name === "probe-search").status).toBe("fail");
@@ -29,6 +31,7 @@ describe("checks/probe", () => {
   it("warns when an authenticated probe completes but returns no sources", async () => {
     const checks = await runProbe({
       probe: true,
+      daemonOwnsOverride: () => false,
       searchOverride: async () => ({
         authenticated: true,
         answer: "Paris is the capital of France.",
@@ -43,6 +46,7 @@ describe("checks/probe", () => {
   it("fails when search throws (network / auth)", async () => {
     const checks = await runProbe({
       probe: true,
+      daemonOwnsOverride: () => false,
       searchOverride: async () => { throw new Error("403"); },
     });
     expect(checks.find((c) => c.name === "probe-search").status).toBe("fail");
