@@ -273,6 +273,31 @@ Path: `~/.config/opencode/opencode.json`.
 - `perplexity_login` — returns login instructions (interactive login runs via the CLI / extension)
 - `perplexity_doctor` — run diagnostic checks across browser, profile, auth, and network and return a Markdown report (pass `probe:true` for a live search probe)
 
+## Prompts (custom slash-commands)
+
+The server also exposes MCP **prompts** — reusable templates that show up as `/slash-commands` in clients that support them (Claude Desktop, Cursor, …). Five are built in:
+
+- `perplexity.researchPlan` `{topic}` · `perplexity.reasoningPlan` `{question}`
+- `perplexity-fact-check` `{claim}` · `perplexity-compare` `{optionA} {optionB}` · `perplexity-latest` `{topic}`
+
+You can add your own (and override/reset the built-ins) without touching code — they're read from `~/.perplexity-mcp/prompts.json`:
+
+```json
+{
+  "overrides": {},
+  "custom": [
+    {
+      "name": "my-summary",
+      "description": "Summarize a URL with citations",
+      "arguments": [{ "name": "url", "description": "Page to summarize", "required": true }],
+      "template": "Use perplexity_search to read {url} and summarize the key points with citations."
+    }
+  ]
+}
+```
+
+`{arg}` placeholders are substituted with the values the client passes. Built-in names live under `overrides`; everything else is a `custom` entry. The **VS Code extension's "Prompts" tab** is a visual editor for this file. Clients cache the prompt list at connect-time, so reconnect (or reload the window) after editing to pick up changes; the embedded daemon refreshes on its next connection automatically.
+
 ## Search sources and advanced queries
 
 Search-style tools support Perplexity source focus through a `sources` argument:

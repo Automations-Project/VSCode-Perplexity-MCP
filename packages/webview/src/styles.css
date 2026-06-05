@@ -3779,3 +3779,145 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+/* ── Prompts tab ──────────────────────────── */
+.prompts-notice {
+  display: flex;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--fg-info) 30%, transparent);
+  background: var(--bg-info);
+  font-size: 0.7rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.prompts-notice-icon {
+  color: var(--fg-info);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.prompts-notice-strong {
+  color: var(--fg-info);
+  font-weight: 600;
+}
+
+.prompts-notice-list {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  list-style: disc;
+}
+
+.prompts-notice-muted {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-muted);
+}
+
+.prompts-label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.prompts-hint {
+  margin-top: 4px;
+  font-size: 0.66rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.prompts-error {
+  margin-top: 4px;
+  font-size: 0.66rem;
+  color: var(--fg-err);
+}
+
+.prompts-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-start;
+  padding: 0;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.prompts-back:hover {
+  color: var(--text-primary);
+}
+
+.prompts-editor-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.prompts-args-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.prompts-arg-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.prompts-arg-name {
+  flex: 0 0 110px;
+}
+
+.prompts-arg-desc {
+  flex: 1;
+}
+
+.prompts-arg-req {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-size: 0.66rem;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.prompts-arg-req input {
+  accent-color: var(--accent);
+}
+
+.prompts-arg-remove {
+  flex-shrink: 0;
+  padding: 4px;
+}
+
+.prompts-template {
+  resize: vertical;
+  min-height: 150px;
+  line-height: 1.5;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+.prompts-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.prompts-card-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}

@@ -88,6 +88,10 @@
       "types": "./dist/config.d.ts",
       "import": "./dist/config.mjs"
     },
+    "./prompts-config": {
+      "types": "./dist/prompts-config.d.ts",
+      "import": "./dist/prompts-config.mjs"
+    },
     "./refresh": {
       "types": "./dist/refresh.d.ts",
       "import": "./dist/refresh.mjs"

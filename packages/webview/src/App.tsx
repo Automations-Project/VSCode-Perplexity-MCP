@@ -1,4 +1,4 @@
-import { BookOpen, Bot, Clock3, Compass, Layers3, RefreshCcw, Settings2, ShieldCheck, Sparkles, Stethoscope } from "lucide-react";
+import { BookOpen, Bot, Clock3, Compass, Layers3, RefreshCcw, Settings2, ShieldCheck, Sparkles, SquareSlash, Stethoscope } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { startTransition, useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
 import type { ExtensionMessage, HistoryItem, WebviewMessage } from "@perplexity-user-mcp/shared";
@@ -19,12 +19,14 @@ import { ProfileSwitcher } from "./components/ProfileSwitcher";
 import { OtpModal } from "./components/OtpModal";
 import { ExpiredBanner } from "./components/ExpiredBanner";
 import { DoctorTab } from "./components/DoctorTab";
+import { PromptsTab } from "./components/PromptsTab";
 import { RichView } from "./components/RichView";
 
 const tabs: Array<{ id: AppTab; label: string; icon: typeof Compass }> = [
   { id: "dashboard", label: "Home", icon: Compass },
   { id: "settings", label: "IDEs", icon: Settings2 },
   { id: "rules", label: "Rules", icon: BookOpen },
+  { id: "prompts", label: "Prompts", icon: SquareSlash },
   { id: "models", label: "Models", icon: Layers3 },
   { id: "doctor", label: "Doctor", icon: Stethoscope },
   { id: "history", label: "History", icon: Clock3 },
@@ -287,6 +289,7 @@ function App() {
             ) : null}
             {state && activeTab === "settings" ? <SettingsView state={state} send={send} /> : null}
             {state && activeTab === "rules" ? <RulesView state={state} send={send} /> : null}
+            {state && activeTab === "prompts" ? <PromptsTab prompts={state.prompts?.prompts ?? []} send={send} /> : null}
             {activeTab === "doctor" ? (
               <DoctorTabWrapper send={send} />
             ) : null}

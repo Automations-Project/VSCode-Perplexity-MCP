@@ -16,7 +16,7 @@ import type {
 } from "@perplexity-user-mcp/shared";
 import type { AuthorizedClientRow } from "./components/AuthorizedClients";
 
-export type AppTab = "dashboard" | "models" | "history" | "settings" | "rules" | "doctor";
+export type AppTab = "dashboard" | "models" | "history" | "settings" | "rules" | "doctor" | "prompts";
 
 interface NoticeState {
   level: "info" | "warning" | "error";
@@ -260,6 +260,13 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
 
     if (message.type === "viewers:list") {
       set({ externalViewers: message.payload.viewers });
+      return;
+    }
+
+    if (message.type === "prompts:state") {
+      // Custom-commands list lives inside DashboardState so it hydrates with
+      // the initial state; merge the fresh list in after save/delete/reset.
+      set((store) => (store.state ? { state: { ...store.state, prompts: message.payload } } : {}));
       return;
     }
 

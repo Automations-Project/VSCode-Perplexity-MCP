@@ -1,5 +1,6 @@
 import type { AccountSnapshot, HistoryItem } from "./models.js";
 import type { IdeCapabilities, McpTransportId } from "./constants.js";
+import type { PromptDef, PromptsState } from "./prompts.js";
 
 export type IdeTarget =
   | "cursor" | "windsurf" | "windsurfNext" | "claudeDesktop" | "claudeCode"
@@ -133,6 +134,8 @@ export interface DashboardState {
   ideStatus: Record<string, IdeStatus>;
   rulesStatus: RulesStatus[];
   settings: ExtensionSettingsSnapshot;
+  /** User-defined + built-in MCP prompts ("custom commands") for the Prompts tab. */
+  prompts: PromptsState;
 }
 
 export type DaemonTunnelStatus = "disabled" | "starting" | "enabled" | "crashed";
@@ -585,7 +588,10 @@ export type ExtensionMessage =
   // v0.8.5: tunnel performance dashboard. Pushed from the extension host
   // whenever `postDaemonState` runs (after staleness). Webview treats null as
   // the pre-hydrate state and renders nothing.
-  | { type: "tunnel:performance"; payload: TunnelPerformanceSnapshot };
+  | { type: "tunnel:performance"; payload: TunnelPerformanceSnapshot }
+  // Custom-commands ("Prompts" tab): pushed on initial load and after every
+  // save/delete/reset so the webview reflects the merged built-in + user list.
+  | { type: "prompts:state"; payload: PromptsState };
 
 export type WebviewMessage =
   | {
@@ -776,4 +782,11 @@ export type WebviewMessage =
   | { type: "browser:refresh-detection"; id: string }
   | { type: "browser:pick-custom"; id: string }
   | { type: "browser:install-bundled"; id: string }
-  | { type: "browser:remove-bundled"; id: string };
+  | { type: "browser:remove-bundled"; id: string }
+  // Custom-commands ("Prompts" tab). `prompts:save` upserts a custom prompt or
+  // overrides a built-in; `prompts:delete` removes a custom prompt; `prompts:reset`
+  // clears a built-in's override. Each round-trips through `action:result` and is
+  // followed by a fresh `prompts:state` push.
+  | { type: "prompts:save"; id: string; payload: { prompt: PromptDef } }
+  | { type: "prompts:delete"; id: string; payload: { name: string } }
+  | { type: "prompts:reset"; id: string; payload: { name: string } };

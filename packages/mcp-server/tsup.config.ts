@@ -4,6 +4,7 @@ export default defineConfig({
     index: "src/index.ts",
     client: "src/client.ts",
     config: "src/config.ts",
+    "prompts-config": "src/prompts-config.ts",
     refresh: "src/refresh.ts",
     "history-store": "src/history-store.js",
     "cloud-sync": "src/cloud-sync.js",

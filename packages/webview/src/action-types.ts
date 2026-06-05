@@ -86,4 +86,10 @@ export const ACTION_TYPES: ReadonlySet<string> = new Set<string>([
   "browser:pick-custom",
   "browser:install-bundled",
   "browser:remove-bundled",
+  // Prompts tab (custom commands). Each save/delete/reset round-trips through
+  // DashboardProvider, which writes prompts.json and emits action:result plus a
+  // fresh prompts:state push.
+  "prompts:save",
+  "prompts:delete",
+  "prompts:reset",
 ]);

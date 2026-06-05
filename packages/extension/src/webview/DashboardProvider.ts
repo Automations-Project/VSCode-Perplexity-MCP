@@ -27,6 +27,8 @@ import {
   getRulesStatuses
 } from "../auto-config/index.js";
 import type { IdeTarget } from "@perplexity-user-mcp/shared";
+import { mergePrompts, readPromptsConfig, writePromptsConfig } from "perplexity-user-mcp/prompts-config";
+import { deletePromptHandler, resetPromptHandler, savePromptHandler } from "./prompts-handler.js";
 import { getAccountSnapshot, setLastRefreshTier } from "../auth/session.js";
 import { ensureVaultPassphrase, peekStoredVaultPassphrase } from "../auth/vault-passphrase.js";
 import { withScopedVaultPassphrase } from "../auth/scoped-env.js";
@@ -1386,6 +1388,26 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
             }
             break;
           }
+          case "prompts:save":
+          case "prompts:delete":
+          case "prompts:reset": {
+            try {
+              const deps = { read: () => readPromptsConfig(), write: (cfg: ReturnType<typeof readPromptsConfig>) => writePromptsConfig(cfg) };
+              const outcome =
+                message.type === "prompts:save"
+                  ? savePromptHandler(message.payload.prompt, deps)
+                  : message.type === "prompts:delete"
+                    ? deletePromptHandler(message.payload.name, deps)
+                    : resetPromptHandler(message.payload.name, deps);
+              await this.postActionResult(message.id, outcome.ok, outcome.ok ? undefined : outcome.error);
+              if (outcome.ok) {
+                await this.postPromptsState();
+              }
+            } catch (err) {
+              await this.postActionResult(message.id, false, (err as Error).message);
+            }
+            break;
+          }
           case "browser:select": {
             try {
               if (!this.authManager) {
@@ -1592,7 +1614,16 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       ideStatus,
       rulesStatus: wsRoot ? getRulesStatuses(wsRoot) : [],
       settings,
+      prompts: { prompts: mergePrompts(readPromptsConfig()) },
     };
+  }
+
+  /** Push the merged built-in + user prompt list to the webview. */
+  private async postPromptsState(): Promise<void> {
+    await this.view?.webview.postMessage({
+      type: "prompts:state",
+      payload: { prompts: mergePrompts(readPromptsConfig()) },
+    } satisfies ExtensionMessage);
   }
 
   async refresh(): Promise<void> {
