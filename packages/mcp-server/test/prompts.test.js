@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerPrompts } from "../src/prompts.js";
 import { BUILTIN_PROMPTS, writePromptsConfig } from "../src/prompts-config.js";
 
@@ -85,5 +86,34 @@ describe("registerPrompts", () => {
       },
     };
     expect(() => registerPrompts(server)).not.toThrow();
+  });
+
+  it("registers a no-argument custom prompt via the no-argsSchema form", () => {
+    writePromptsConfig(
+      { overrides: {}, custom: [{ name: "no-args", description: "static", arguments: [], template: "fixed text" }] },
+      dir,
+    );
+    const server = mockServer();
+    registerPrompts(server);
+    const noArgs = server.calls.find((c) => c.name === "no-args");
+    expect(noArgs).toBeDefined();
+    expect(noArgs.config.argsSchema).toBeUndefined();
+    expect(noArgs.cb().messages[0].content.text).toBe("fixed text");
+  });
+
+  it("registers cleanly against a real McpServer (no swallowed per-prompt errors)", () => {
+    // Built-ins exercise the argsSchema (Zod-shape) form; the custom prompt
+    // exercises the no-argsSchema form. registerPrompts catches+logs per-prompt
+    // failures, so assert console.error was never called to prove the real SDK
+    // accepted every registration.
+    writePromptsConfig(
+      { overrides: {}, custom: [{ name: "no-args", description: "static", arguments: [], template: "fixed text" }] },
+      dir,
+    );
+    const server = new McpServer({ name: "test", version: "0.0.0" });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(() => registerPrompts(server)).not.toThrow();
+    expect(errSpy).not.toHaveBeenCalled();
+    errSpy.mockRestore();
   });
 });

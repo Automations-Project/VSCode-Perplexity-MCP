@@ -48,15 +48,21 @@ export function registerPrompts(server: McpServer): void {
     });
 
     try {
-      server.registerPrompt(
-        prompt.name,
-        {
-          title: prompt.name,
-          description: prompt.description,
-          argsSchema: buildArgsSchema(prompt.arguments),
-        },
-        (args) => render(args as Record<string, unknown>),
-      );
+      // No-arg prompts use the SDK's two-arg form (no argsSchema); arg-bearing
+      // prompts pass a Zod shape built from their declared arguments.
+      if (prompt.arguments.length === 0) {
+        server.registerPrompt(prompt.name, { title: prompt.name, description: prompt.description }, () => render());
+      } else {
+        server.registerPrompt(
+          prompt.name,
+          {
+            title: prompt.name,
+            description: prompt.description,
+            argsSchema: buildArgsSchema(prompt.arguments),
+          },
+          (args) => render(args as Record<string, unknown>),
+        );
+      }
     } catch (err) {
       console.error(`[perplexity-mcp] failed to register prompt '${prompt.name}':`, err);
     }
