@@ -19,7 +19,7 @@ function ReconnectNotice() {
         <span className="prompts-notice-strong">Reconnect required after changes. </span>
         MCP clients cache prompts at connect-time. After saving:
         <ul className="prompts-notice-list">
-          <li><b>Cursor / Windsurf</b> — Reload Window</li>
+          <li><b>Cursor / Devin Desktop (Windsurf)</b> — Reload Window</li>
           <li><b>Claude Code</b> — restart the session or run <code className="code-pill">/mcp</code></li>
           <li><b>Claude Desktop</b> — restart the app</li>
         </ul>

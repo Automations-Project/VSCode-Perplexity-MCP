@@ -66,6 +66,14 @@ export interface IdeMeta {
   autoConfigurable: boolean;
   rulesFormat?: "mdc" | "md" | "md-section" | "yaml" | "toml" | "none";
   rulesPath?: string;
+  /**
+   * Deprecated-but-still-honored rules paths written alongside `rulesPath` and
+   * recognized on detect/remove. Used when a client rebrands its rules
+   * directory but keeps reading the old one (e.g. Windsurf → Devin Desktop:
+   * primary `.devin/rules/`, legacy `.windsurf/rules/`). Only applies to
+   * file-based `rulesFormat`s (`md`/`mdc`), not `md-section`.
+   */
+  legacyRulesPaths?: string[];
   capabilities: IdeCapabilities;
 }
 
@@ -90,11 +98,18 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     },
   },
   windsurf: {
-    displayName: "Windsurf",
+    // Windsurf was rebranded to "Devin Desktop" by Cognition on 2026-06-02 (an
+    // in-place OTA rename). The `windsurf` target key is preserved for back-compat
+    // with existing user settings (autoConfigureWindsurf, mcpTransportByIde) and
+    // the unchanged `.codeium/windsurf/mcp_config.json` path.
+    displayName: "Devin Desktop (Windsurf)",
     configFormat: "json",
     autoConfigurable: true,
     rulesFormat: "md",
-    rulesPath: ".windsurf/rules/perplexity-mcp.md",
+    // Devin Desktop prefers `.devin/rules/`; `.windsurf/rules/` is still read as
+    // a legacy fallback (and by pre-rebrand Windsurf), so we write/recognize both.
+    rulesPath: ".devin/rules/perplexity-mcp.md",
+    legacyRulesPaths: [".windsurf/rules/perplexity-mcp.md"],
     capabilities: {
       stdio: true,
       httpBearerLoopback: true,
@@ -106,11 +121,12 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
     },
   },
   windsurfNext: {
-    displayName: "Windsurf Next",
+    displayName: "Devin Desktop Next (Windsurf Next)",
     configFormat: "json",
     autoConfigurable: true,
     rulesFormat: "md",
-    rulesPath: ".windsurf/rules/perplexity-mcp.md",
+    rulesPath: ".devin/rules/perplexity-mcp.md",
+    legacyRulesPaths: [".windsurf/rules/perplexity-mcp.md"],
     capabilities: {
       stdio: true,
       httpBearerLoopback: true,

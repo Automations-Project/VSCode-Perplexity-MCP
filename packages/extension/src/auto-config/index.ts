@@ -1614,16 +1614,23 @@ export function syncRulesForIde(target: IdeTarget, workspaceRoot?: string): Rule
         content = getCursorRulesContent();
         writeTextAtomic(fullPath, content + "\n");
         break;
-      case "md":
+      case "md": {
         if (target === "copilot") {
           content = getCopilotRulesContent();
-        } else if (target === "windsurf") {
+        } else if (target === "windsurf" || target === "windsurfNext") {
           content = getWindsurfRulesContent();
         } else {
           content = getPerplexityRulesContent();
         }
-        writeTextAtomic(fullPath, content + "\n");
+        const text = content + "\n";
+        writeTextAtomic(fullPath, text);
+        // Also write any legacy paths (e.g. .windsurf/rules/ for the
+        // Windsurf→Devin Desktop rename) so pre-rebrand clients keep working.
+        for (const legacyRel of meta.legacyRulesPaths ?? []) {
+          writeTextAtomic(join(root, legacyRel), text);
+        }
         break;
+      }
       case "md-section":
         upsertSectionInFile(fullPath, getPerplexityRulesContent());
         break;
@@ -1642,16 +1649,18 @@ export function removeRulesForIde(target: IdeTarget, workspaceRoot?: string): vo
   if (!meta?.rulesPath || meta.rulesFormat === "none") return;
 
   const root = workspaceRoot ?? process.cwd();
-  const fullPath = join(root, meta.rulesPath);
-
-  if (!existsSync(fullPath)) return;
-
-  if (meta.rulesFormat === "md-section") {
-    removeSectionFromFile(fullPath);
-  } else {
-    const content = readFileSync(fullPath, "utf8");
-    if (content.includes(PERPLEXITY_RULES_SECTION_START)) {
-      rmSync(fullPath, { force: true });
+  // Clean the primary path and any legacy paths (e.g. both .devin/rules/ and
+  // .windsurf/rules/ for the Windsurf→Devin Desktop rename).
+  for (const rel of [meta.rulesPath, ...(meta.legacyRulesPaths ?? [])]) {
+    const fullPath = join(root, rel);
+    if (!existsSync(fullPath)) continue;
+    if (meta.rulesFormat === "md-section") {
+      removeSectionFromFile(fullPath);
+    } else {
+      const content = readFileSync(fullPath, "utf8");
+      if (content.includes(PERPLEXITY_RULES_SECTION_START)) {
+        rmSync(fullPath, { force: true });
+      }
     }
   }
 }
@@ -1663,18 +1672,28 @@ export function getRulesStatuses(workspaceRoot?: string): RulesStatus[] {
   for (const [key, meta] of Object.entries(IDE_METADATA)) {
     if (!meta.rulesPath || meta.rulesFormat === "none") continue;
 
-    const fullPath = join(root, meta.rulesPath);
     const status: RulesStatus = {
       ide: key as IdeTarget,
-      rulesPath: fullPath,
+      rulesPath: join(root, meta.rulesPath),
       hasPerplexitySection: false
     };
 
-    if (existsSync(fullPath)) {
+    // Scan the primary path first, then any legacy paths (so an existing
+    // .windsurf/rules/ file still reads as "configured" before re-sync writes
+    // the .devin/rules/ primary). Report whichever file actually holds it.
+    for (const rel of [meta.rulesPath, ...(meta.legacyRulesPaths ?? [])]) {
+      const fullPath = join(root, rel);
+      if (!existsSync(fullPath)) continue;
       try {
         const content = readFileSync(fullPath, "utf8");
-        status.hasPerplexitySection = content.includes(PERPLEXITY_RULES_SECTION_START);
-        status.lastUpdated = statSync(fullPath).mtime.toISOString();
+        const mtime = statSync(fullPath).mtime.toISOString();
+        if (content.includes(PERPLEXITY_RULES_SECTION_START)) {
+          status.hasPerplexitySection = true;
+          status.rulesPath = fullPath;
+          status.lastUpdated = mtime;
+          break;
+        }
+        if (!status.lastUpdated) status.lastUpdated = mtime;
       } catch { /* skip */ }
     }
 

@@ -1207,12 +1207,12 @@ export function SettingsView({
             onChange={(v) => send({ type: "settings:update", payload: { autoConfigureCursor: v } })}
           />
           <SettingToggle
-            label="Windsurf"
+            label="Devin Desktop (Windsurf)"
             checked={settings.autoConfigureWindsurf}
             onChange={(v) => send({ type: "settings:update", payload: { autoConfigureWindsurf: v } })}
           />
           <SettingToggle
-            label="Windsurf Next"
+            label="Devin Desktop Next (Windsurf Next)"
             checked={settings.autoConfigureWindsurfNext}
             onChange={(v) => send({ type: "settings:update", payload: { autoConfigureWindsurfNext: v } })}
           />
@@ -1346,7 +1346,7 @@ export function RulesView({
           <p>Each IDE gets Perplexity MCP tool descriptions and usage guidelines in its native format:</p>
           <ul className="list-disc rules-content-list">
             <li><strong>Cursor</strong> — <code className="code-pill">.cursor/rules/perplexity-mcp.mdc</code></li>
-            <li><strong>Windsurf</strong> — <code className="code-pill">.windsurf/rules/perplexity-mcp.md</code></li>
+            <li><strong>Devin Desktop (Windsurf)</strong> — <code className="code-pill">.devin/rules/perplexity-mcp.md</code> <span className="text-[var(--text-secondary)]">(+ legacy <code className="code-pill">.windsurf/rules/</code>)</span></li>
             <li><strong>Claude Code</strong> — section in <code className="code-pill">CLAUDE.md</code></li>
             <li><strong>Codex / Amp / Antigravity / Warp / Copilot CLI / OpenCode / Factory / Qwen Code</strong> — section in <code className="code-pill">AGENTS.md</code></li>
             <li><strong>Kiro</strong> — <code className="code-pill">.kiro/steering/perplexity-mcp.md</code></li>
