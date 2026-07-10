@@ -71,7 +71,10 @@ A VS Code extension that embeds the **Perplexity MCP runtime** directly in your 
 1. Install the extension from the Marketplace.
 2. Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) and run **`Perplexity: Login`**.
 3. A browser window opens — log in to your Perplexity account.
-4. Done. The MCP server is now available to any agent in VS Code.
+4. The MCP server is now registered with VS Code. **It's a server, not a chat window** — you query it *from* an AI agent, not from the Perplexity tab.
+5. **Use it in Copilot Chat:** open Copilot Chat, switch the mode dropdown from **Ask** to **`Agent`** — MCP tools only appear in Agent mode. Click the **🔧 tools picker**, make sure **Perplexity MCP** is enabled, then ask a question, e.g. *"search the web for the latest React 19 release notes."* Confirm the server is live with **Command Palette → `MCP: List Servers`**. Requires VS Code **1.102+**.
+
+> **Using another client?** Cursor, Claude Desktop, Cline and 20+ others are one click away — open the dashboard's **IDEs** tab and hit **Sync**, then ask that client a question the same way.
 
 > **First run only:** Perplexity serves a Cloudflare Turnstile on the first login. The extension opens a headed browser so you can complete it. After that, sessions are cached and renewed automatically.
 

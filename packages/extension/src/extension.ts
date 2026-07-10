@@ -567,7 +567,10 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
 
       serverDefinitionsChanged.fire();
       await dashboard.refresh();
-      await dashboard.postNotice("info", `Perplexity login completed for '${profile}'. MCP server definitions refreshed.`);
+      await dashboard.postNotice(
+        "info",
+        `Logged in as '${profile}'. Next: open Copilot Chat, switch the mode dropdown to Agent (MCP tools don't appear in Ask mode), enable "Perplexity MCP" in the tools picker, then ask a question.`
+      );
       void dashboard.refreshModels();
       return true;
     } catch (err) {
