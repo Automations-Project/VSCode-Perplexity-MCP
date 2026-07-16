@@ -6,6 +6,17 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed — "Node.js not found" is now visible instead of a silent 15s timeout
+
+- **A missing Node install used to fail silently** ([`runtime.ts`](packages/extension/src/daemon/runtime.ts), [`extension.ts`](packages/extension/src/extension.ts)). `resolveNodePath()`'s last resort is the literal string `"node"` — it found nothing on disk and bets on `PATH`. When that bet loses, `spawn()` reports `ENOENT` **asynchronously on the child**, and the handler only wrote it to `daemon.log`. The user's entire experience was `ensureDaemon` timing out after 15s with "Timed out waiting for daemon startup" and no hint that Node was simply not installed. Now that exact case (ENOENT **and** the path was the unresolved `"node"` guess) raises a VS Code error toast — *"Node.js not found — install Node 22+ or set PERPLEXITY_NODE_PATH"* — with **Install Node.js**, **How to set PERPLEXITY_NODE_PATH** (naming the cases the probe misses: nvm, fnm, volta, asdf, portable installs), and **Open Logs**. De-duped per problem kind, since `ensureDaemon` polls and every respawn re-hits the same ENOENT.
+- **Degraded fallback, once, and honest about it.** On that ENOENT the daemon is re-spawned a single time on the editor's own binary with `ELECTRON_RUN_AS_NODE=1`. This is a **diagnostic crutch, not a fix**: pure-JS work (health, Doctor, models cache, history) runs fine, but Chromium driven by patchright from an Electron host is unstable on VS Code/Windsurf/Devin — the daemon dies mid-tool-call and every MCP client sees `transport closed`, which is the exact failure the existing `resolveNodePath` preference comment was written to avoid. So the toast states plainly that browser-backed tools (search / ask / research) will be unreliable until Node is installed, rather than quietly limping on. The fallback never recurses (a failing fallback does not trigger another), and it is scoped precisely: a **non-ENOENT** error (e.g. `EACCES`) is not misdiagnosed as "Node missing", and an ENOENT from a **resolved** path on disk is left alone — there, "install Node" would be wrong advice and `PERPLEXITY_NODE_PATH` is not the fix.
+- Wired through a new `notifyDaemonProblem` seam on `RuntimeConfig`, matching the existing `buildDaemonEnv` precedent so `daemon/runtime.ts` keeps its documented no-`vscode`-import rule; a throwing notifier can never break the spawn path.
+
+#### Verification
+
+- New: [`tests/daemon-node-missing.test.ts`](packages/extension/tests/daemon-node-missing.test.ts) (4) — the bare-`"node"` ENOENT path reports `node-missing` and falls back exactly once to `process.execPath` + `ELECTRON_RUN_AS_NODE=1` (asserting the fallback is a *real* daemon spawn: same args, same `PERPLEXITY_CONFIG_DIR`, still detached — not a stub), a failing fallback does not recurse, `EACCES` is not treated as node-missing, an ENOENT from a resolved path is ignored, and a throwing notifier does not break spawn. **Negative-tested:** disabling the handler fails the fallback test while the three absence-asserting tests correctly still pass.
+- Full suite **1316 passed / 150 files**, typecheck clean across all four packages.
+
 ### Shared-daemon multi-client hardening — Phase A.1 (code-graph version gate)
 
 #### Added

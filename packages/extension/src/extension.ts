@@ -30,6 +30,7 @@ import {
   getBundledNgrokSettings,
   onBundledDaemonPortChange,
   rotateBundledDaemonToken,
+  type DaemonSpawnProblem,
 } from "./daemon/runtime.js";
 import { listHistoryEntries, rebuildHistoryEntries, runCloudSync, runExport } from "./history/open-handlers.js";
 
@@ -123,6 +124,54 @@ function resolveBundledMcpVersion(context: vscode.ExtensionContext): string {
     // fall through
   }
   return String((context.extension.packageJSON as { version?: string }).version ?? "0.0.0");
+}
+
+const NODE_DOWNLOAD_URL = "https://nodejs.org/en/download";
+
+/**
+ * De-dupe the node-missing toast. Every ensureBundledDaemon() respawn hits the
+ * same ENOENT, and ensure polls — without this the user gets a wall of
+ * identical modals.
+ */
+let daemonProblemNotified = new Set<string>();
+
+/**
+ * Surface a daemon-spawn problem the user has to act on.
+ *
+ * Wired into the runtime via the `notifyDaemonProblem` seam so daemon/runtime.ts
+ * keeps its no-vscode-import rule (same rationale as `buildDaemonEnv`).
+ */
+async function reportDaemonProblem(problem: DaemonSpawnProblem): Promise<void> {
+  log(`[daemon] problem: ${problem.kind} — ${problem.message}`);
+  if (daemonProblemNotified.has(problem.kind)) return;
+  daemonProblemNotified.add(problem.kind);
+
+  // Be explicit that the fallback is a diagnostic crutch, not a working
+  // install: Chromium driven from an Electron host dies mid-tool-call, which
+  // is the "transport closed" report we already chased once.
+  const detail = problem.degradedFallbackStarted
+    ? " Perplexity started a limited daemon on the editor's own runtime so the dashboard and Doctor work, " +
+      "but browser-backed tools (search / ask / research) will be unreliable until Node is installed."
+    : " The daemon could not start.";
+
+  const choice = await vscode.window.showErrorMessage(
+    `${problem.message}${detail}`,
+    "Install Node.js",
+    "How to set PERPLEXITY_NODE_PATH",
+    "Open Logs",
+  );
+  if (choice === "Install Node.js") {
+    void vscode.env.openExternal(vscode.Uri.parse(NODE_DOWNLOAD_URL));
+  } else if (choice === "How to set PERPLEXITY_NODE_PATH") {
+    void vscode.window.showInformationMessage(
+      "Set PERPLEXITY_NODE_PATH to the full path of your node binary (e.g. C:\\Program Files\\nodejs\\node.exe " +
+        "or /usr/local/bin/node), then reload the window. Use this when Node is installed somewhere the extension " +
+        "does not probe — nvm, fnm, volta, asdf, or a portable install.",
+      { modal: true },
+    );
+  } else if (choice === "Open Logs") {
+    outputChannel?.show(true);
+  }
 }
 
 const UPGRADE_NOTIFY_KEY = "perplexity.upgradeNotifiedVersion";
@@ -649,6 +698,7 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
     extensionVersion,
     log,
     buildDaemonEnv: () => buildDaemonEnv(context),
+    notifyDaemonProblem: (problem) => void reportDaemonProblem(problem),
   });
   log("Stable launcher: " + launcherPath);
   log(`[daemon] versions ext=${extensionVersion} mcp=${bundledMcpVersion}`);

@@ -509,7 +509,6 @@ async function spawnBundledDaemon(options: { configDir: string; host?: string; p
     args.push("--tunnel");
   }
 
-  const logFd = openDaemonLogFd(options.configDir);
   let consentTtlHours = 24;
   try {
     consentTtlHours = getSettingsSnapshot().oauthConsentCacheTtlHours;
@@ -581,29 +580,86 @@ async function spawnBundledDaemon(options: { configDir: string; host?: string; p
     extraEnv.PERPLEXITY_LOCK_COMPAT_VERSION = config.extensionVersion;
   }
 
-  const child = spawn(nodePath, args, {
-    detached: true,
-    stdio: ["ignore", logFd, logFd],
-    env: {
-      ...baseEnv,
-      ...extraEnv,
-      // Hard-coded overrides — must come AFTER extraEnv so a buggy provider
-      // cannot clobber them.
-      // Only needed when falling back to an Electron host binary.
-      ...(usingRealNode ? {} : { ELECTRON_RUN_AS_NODE: "1" }),
-      PERPLEXITY_CONFIG_DIR: options.configDir,
-      PERPLEXITY_OAUTH_CONSENT_TTL_HOURS: String(consentTtlHours),
-    },
-  });
-  closeSync(logFd);
-  child.on("error", (err) => {
+  const launch = (bin: string, electronAsNode: boolean) => {
+    const fd = openDaemonLogFd(options.configDir);
+    const child = spawn(bin, args, {
+      detached: true,
+      stdio: ["ignore", fd, fd],
+      env: {
+        ...baseEnv,
+        ...extraEnv,
+        // Hard-coded overrides — must come AFTER extraEnv so a buggy provider
+        // cannot clobber them.
+        // Only needed when falling back to an Electron host binary.
+        ...(electronAsNode ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
+        PERPLEXITY_CONFIG_DIR: options.configDir,
+        PERPLEXITY_OAUTH_CONSENT_TTL_HOURS: String(consentTtlHours),
+      },
+    });
+    closeSync(fd);
+    return child;
+  };
+
+  const appendDaemonLog = (line: string) => {
     try {
       const extraFd = openDaemonLogFd(options.configDir);
-      const message = `\n[trace] spawnBundledDaemon error: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`;
-      require("node:fs").writeSync(extraFd, message);
+      require("node:fs").writeSync(extraFd, line);
       closeSync(extraFd);
     } catch {
       // logging best-effort
+    }
+  };
+
+  const child = launch(nodePath, !usingRealNode);
+  child.on("error", (err) => {
+    appendDaemonLog(
+      `\n[trace] spawnBundledDaemon error: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`,
+    );
+
+    const isEnoent = (err as NodeJS.ErrnoException)?.code === "ENOENT";
+    if (!isEnoent || !isUnresolvedNodeGuess) {
+      return;
+    }
+
+    // resolveNodePath() guessed bare "node" and PATH did not have it. Without
+    // this the only symptom is ensureDaemon timing out after 15s and a line
+    // buried in daemon.log — the user gets no idea Node is simply missing.
+    //
+    // Fall back ONCE to the editor's own Electron binary in Node mode. That is
+    // a DEGRADED daemon, not a fix: pure-JS work (health, doctor, models
+    // cache, history) is fine, but Chromium launched via patchright from an
+    // Electron host is unstable on VS Code/Windsurf/Devin — the daemon dies
+    // mid-tool-call and every MCP client sees `transport closed`. It buys the
+    // user a working dashboard + doctor to diagnose from; installing Node (or
+    // setting PERPLEXITY_NODE_PATH) is the actual fix, which is why the toast
+    // says so rather than quietly limping on.
+    const message =
+      "Node.js not found — install Node 22+ or set PERPLEXITY_NODE_PATH to your node binary.";
+    appendDaemonLog(
+      `[daemon] ${message} Falling back once to ${process.execPath} with ELECTRON_RUN_AS_NODE=1 ` +
+        `(degraded: browser-backed tools may drop mid-call).\n`,
+    );
+    (config.log ?? (() => undefined))(`[daemon] ${message} Falling back to the editor runtime (degraded).`);
+
+    let degradedFallbackStarted = false;
+    try {
+      const fallback = launch(process.execPath, true);
+      fallback.on("error", (fallbackErr) => {
+        appendDaemonLog(
+          `\n[trace] spawnBundledDaemon electron-fallback error: ` +
+            `${fallbackErr instanceof Error ? fallbackErr.stack ?? fallbackErr.message : String(fallbackErr)}\n`,
+        );
+      });
+      fallback.unref();
+      degradedFallbackStarted = true;
+    } catch (fallbackErr) {
+      appendDaemonLog(`\n[trace] spawnBundledDaemon electron-fallback threw: ${String(fallbackErr)}\n`);
+    }
+
+    try {
+      config.notifyDaemonProblem?.({ kind: "node-missing", message, degradedFallbackStarted });
+    } catch {
+      // A notifier failure must never break the spawn path.
     }
   });
   child.unref();
