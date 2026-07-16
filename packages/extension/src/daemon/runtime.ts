@@ -94,6 +94,22 @@ interface RuntimeConfig {
    * itself is added in a follow-up task; this task only declares the type.)
    */
   buildDaemonEnv?: () => Promise<Record<string, string>>;
+  /**
+   * Surface a user-facing daemon problem (a toast in the extension host).
+   *
+   * Same seam rationale as `buildDaemonEnv`: the implementation lives in
+   * extension.ts so this module stays free of any vscode import. Omitted in
+   * tests / standalone paths, where the message still reaches daemon.log.
+   */
+  notifyDaemonProblem?: (problem: DaemonSpawnProblem) => void;
+}
+
+/** A daemon-spawn failure worth interrupting the user for. */
+export interface DaemonSpawnProblem {
+  kind: "node-missing";
+  message: string;
+  /** True when we started a degraded daemon on the editor's own runtime. */
+  degradedFallbackStarted: boolean;
 }
 
 let runtimeConfig: RuntimeConfig | null = null;
@@ -542,8 +558,13 @@ async function spawnBundledDaemon(options: { configDir: string; host?: string; p
   const nodePath = resolveNodePath();
   const execName = nodePath.replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? "";
   const usingRealNode = execName.startsWith("node");
+  // resolveNodePath()'s last resort is the literal string "node" — it found
+  // nothing on disk and is betting on PATH. That bet is the only way we can
+  // get ENOENT here, and it's the case worth telling the user about.
+  const isUnresolvedNodeGuess = nodePath === "node";
   (config.log ?? (() => undefined))(
-    `[daemon] spawning with ${nodePath}${usingRealNode ? "" : " (non-node host; ELECTRON_RUN_AS_NODE=1)"}`,
+    `[daemon] spawning with ${nodePath}${usingRealNode ? "" : " (non-node host; ELECTRON_RUN_AS_NODE=1)"}` +
+      `${isUnresolvedNodeGuess ? " (unresolved — relying on PATH)" : ""}`,
   );
 
   // When using real Node, strip any inherited ELECTRON_RUN_AS_NODE so a

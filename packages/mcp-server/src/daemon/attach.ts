@@ -135,14 +135,20 @@ export async function attachToDaemon(options: AttachToDaemonOptions = {}): Promi
     };
     // onclose is intentional transport teardown (http.close / process exit).
     http.onclose = () => settle();
-    // onerror is NOT fatal. StreamableHTTPClientTransport fires it for
-    // recoverable SSE disconnects (`SSE stream disconnected: …`) and then
-    // schedules reconnection. Treating those as fatal was killing the
-    // stdio bridge mid-tool-call so every IDE client saw `transport closed`
-    // as soon as a long request (search/ask) touched the browser path.
+    // onerror is usually recoverable: StreamableHTTPClientTransport fires it
+    // for SSE disconnects and then schedules reconnection. Treating *all*
+    // onerror as fatal was killing the stdio bridge mid-tool-call.
+    // Exception: when max reconnection attempts are exhausted the SDK only
+    // calls onerror (no onclose, no throw) — if we only log, `completion`
+    // hangs forever and the client sees a stuck/dead transport. That case
+    // must settle.
     http.onerror = (error) => {
-      const msg = asError(error).message;
+      const err = asError(error);
+      const msg = err.message;
       process.stderr.write(`[perplexity-mcp] daemon HTTP transport warning: ${msg}\n`);
+      if (/Maximum reconnection attempts/i.test(msg)) {
+        settle(err);
+      }
     };
 
     sourceIn.on("end", handleInputClosed);

@@ -409,7 +409,11 @@ export class AuthManager implements vscode.Disposable {
     if (!opts.loggedIn) {
       // Keep explicit expired/error so the UI can still prompt re-login.
       if (this._state.status === "expired" || this._state.status === "error") return;
-      if (this._state.status !== "unknown") {
+      // Always refresh profile (and clear tier) when not logged in — including
+      // when status is already "unknown". Otherwise a switch to another
+      // logged-out profile leaves this._state.profile pointing at the previous
+      // account.
+      if (this._state.status !== "unknown" || this._state.profile !== opts.profile || this._state.tier) {
         this.setState({
           profile: opts.profile,
           status: "unknown",

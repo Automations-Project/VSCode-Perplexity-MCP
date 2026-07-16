@@ -263,8 +263,10 @@ export function resolveNodePath(): string {
     if (p && found) return p;
   }
 
-  // 4. Fallback — just "node" and hope it's on PATH
-  log("Falling back to bare 'node'");
+  // 4. Fallback — bare "node" and hope it's on PATH. Callers that need a
+  // hard failure (daemon spawn) should surface ENOENT; set PERPLEXITY_NODE_PATH
+  // if Node is installed outside the usual locations.
+  log("Falling back to bare 'node' (not found in well-known paths; requires PATH)");
   return "node";
 }
 

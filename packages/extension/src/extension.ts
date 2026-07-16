@@ -166,15 +166,10 @@ async function maybeNotifyUpgradeComplete(
 }
 
 /**
- * Multiple nskha.perplexity-vscode-* installs (side-by-side upgrades) share one
- * daemon.lock. Each activation reaps "stale" versions and kills the others'
- * daemon → permanent transport-closed for MCP clients. Detect siblings and
- * offer a one-click disable of every other enabled Perplexity extension.
- */
-/**
  * Detect other nskha.perplexity-vscode* installs and offer to disable only
  * those that are not newer than us. Non-blocking so activation/daemon ensure
- * is not held on the modal.
+ * is not held on the modal. Multiple side-by-side installs share one
+ * daemon.lock and can SIGTERM each other (clients then see "transport closed").
  */
 function maybeDisableSiblingPerplexityExtensions(context: vscode.ExtensionContext): void {
   const selfId = context.extension.id;
