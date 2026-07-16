@@ -426,7 +426,14 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Sta
 
     try {
       watcher = watchReinit(currentWatchedProfile, async () => {
-        await client.reinit();
+        try {
+          await client.reinit();
+        } catch (err) {
+          // A failed reinit (CF block, profile lock, no browser) must never take
+          // down a healthy listening server — the next .reinit write retries.
+          // Log so it surfaces in daemon.log instead of vanishing.
+          console.error(`[perplexity-mcp] reinit watcher: ${(err as Error).message}`);
+        }
       });
 
       // Profile-switch handler: when the user picks a different account from
@@ -443,7 +450,11 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Sta
             currentWatchedProfile = nextProfile;
             watcher?.dispose();
             watcher = watchReinit(nextProfile, async () => {
-              await client.reinit();
+              try {
+                await client.reinit();
+              } catch (err) {
+                console.error(`[perplexity-mcp] reinit watcher: ${(err as Error).message}`);
+              }
             });
           }
           await client.reinit();

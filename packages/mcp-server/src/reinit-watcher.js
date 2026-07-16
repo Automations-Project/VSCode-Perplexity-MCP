@@ -2,6 +2,26 @@ import { existsSync, mkdirSync, watch } from "node:fs";
 import { dirname, join } from "node:path";
 import { getConfigDir, getProfilePaths } from "./profiles.js";
 
+/**
+ * Run a watcher callback so that neither a synchronous throw nor a rejected
+ * promise can escape.
+ *
+ * `try { callback(); } catch {}` looks like it covers this, but it does NOT:
+ * an async callback returns a promise immediately without throwing, so the
+ * catch never fires and the promise is discarded. If it later rejects, that is
+ * an unhandled rejection — and under Node >=15's default
+ * `--unhandled-rejections=throw` it HARD-EXITS the daemon. The daemon has no
+ * process-level rejection handler, so a single failed background reinit took
+ * down a healthy, listening HTTP server; every MCP client then saw
+ * ECONNREFUSED on a port VS Code still had cached (issue #10 follow-ups).
+ *
+ * Callers are expected to log their own failures — this is the structural
+ * backstop that stops any future async caller from re-introducing the crash.
+ */
+function runGuarded(callback) {
+  void Promise.resolve().then(callback).catch(() => {});
+}
+
 export function watchReinit(profileName, callback, opts = {}) {
   const { debounceMs = 200 } = opts;
   const target = getProfilePaths(profileName).reinit;
@@ -14,7 +34,7 @@ export function watchReinit(profileName, callback, opts = {}) {
     if (!String(filename).endsWith(".reinit")) return;
     if (!existsSync(target)) return;
     if (timer) clearTimeout(timer);
-    timer = setTimeout(() => { timer = null; try { callback(); } catch {} }, debounceMs);
+    timer = setTimeout(() => { timer = null; runGuarded(callback); }, debounceMs);
   });
 
   return {
@@ -50,7 +70,7 @@ export function watchActiveProfile(configDirOverride, callback, opts = {}) {
     if (String(filename) !== "active") return;
     if (!existsSync(target)) return;
     if (timer) clearTimeout(timer);
-    timer = setTimeout(() => { timer = null; try { callback(); } catch {} }, debounceMs);
+    timer = setTimeout(() => { timer = null; runGuarded(callback); }, debounceMs);
   });
 
   return {
