@@ -141,6 +141,41 @@ export function buildLaunchOptions(headless: boolean): Record<string, any> {
   return opts;
 }
 
+/**
+ * Decide whether the Phase 2 persistent context launches headless.
+ *
+ * Cloudflare re-challenges the headless persistent context on some platforms
+ * (issue #12), so we paint headed-offscreen by default — buildLaunchOptions
+ * (false) appends OFFSCREEN_POSITION_ARG, so no window is visible.
+ *
+ * But headed needs a display. With no X/Wayland, Chromium throws "Missing X
+ * server or $DISPLAY", which does NOT match LOCK_CONTENTION_RE, so
+ * launchWithRetry rethrows immediately and init()'s catch kills the daemon.
+ * Headless Linux works today (Phase 1 fails soft via headedBootstrap's catch;
+ * only Phase 2 is load-bearing there) and must keep working — hence the
+ * display probe rather than an unconditional flip.
+ *
+ * PERPLEXITY_HEADLESS_ONLY=1 means "no UI at all" (servers, airgapped,
+ * stdio-in-process, doctor probe), so it forces headless here too.
+ * PERPLEXITY_PERSISTENT_HEADED=1 forces headed / =0 forces headless, and wins
+ * over both — an explicit opt-in beats inference.
+ *
+ * @internal Exported only for unit tests; not part of the supported
+ * `perplexity-user-mcp/client` API.
+ */
+export function resolvePhase2Headless(skipHeaded: boolean): boolean {
+  const override = process.env.PERPLEXITY_PERSISTENT_HEADED;
+  if (override === "1") return false;
+  if (override === "0") return true;
+  if (skipHeaded) return true;
+  // ponytail: env probe, not a display handshake. An exported DISPLAY pointing
+  // at a dead X server still fails — upgrade to an xdpyinfo/xvfb check only if
+  // that shows up in the wild.
+  const canPaint =
+    process.platform !== "linux" || !!process.env.DISPLAY || !!process.env.WAYLAND_DISPLAY;
+  return !canPaint;
+}
+
 // Block-shape contracts used by parseASIReconnectSSE / extractFromWorkflowBlock.
 // Fields are limited to those the two parsers actually read off the wire.
 //
@@ -903,7 +938,9 @@ export class PerplexityClient {
    * Phase 2 (headless): Launches headless with the same persistent profile
    *   (now carrying fresh cf_clearance) for search operations.
    *
-   * Set env PERPLEXITY_HEADLESS_ONLY=1 to skip the headed phase (uses disk cache).
+   * Set env PERPLEXITY_HEADLESS_ONLY=1 to skip the headed phase (uses disk cache);
+   * it also forces Phase 2 headless. PERPLEXITY_PERSISTENT_HEADED=1|0 overrides
+   * the Phase 2 headed/headless decision outright — see resolvePhase2Headless.
    */
   async init(): Promise<void> {
     const _initAt = Date.now();
@@ -926,14 +963,20 @@ export class PerplexityClient {
         this.loadCachedAccountInfo();
       }
 
-      // Phase 2: Headless browser for search operations.
+      // Phase 2: Persistent browser for search operations.
       // Use the SAME persistent browserData directory as Phase 1 so that
       // any cf_clearance cookie acquired during the headed bootstrap is
       // already on disk and loaded automatically.  This fixes the bug where
       // Phase 2 used a non-persistent context and only had stale vault
       // cookies (issue #5).
-      console.error("[perplexity-mcp] Launching headless persistent browser...");
-      const launchOpts = buildLaunchOptions(true);
+      // Cloudflare re-challenges the headless persistent context (issue #12),
+      // so paint headed-offscreen wherever a display exists. See
+      // resolvePhase2Headless for why this is gated rather than unconditional.
+      const phase2Headless = resolvePhase2Headless(skipHeaded);
+      console.error(
+        `[perplexity-mcp] Launching ${phase2Headless ? "headless" : "headed-offscreen"} persistent browser...`,
+      );
+      const launchOpts = buildLaunchOptions(phase2Headless);
       // Clear stale locks + retry: on Windows the Phase 1 headed context
       // (just closed above) does not release the browser-data profile lock
       // synchronously, so this Phase 2 launch on the SAME --user-data-dir can
@@ -962,7 +1005,7 @@ export class PerplexityClient {
 
       this.page = await this.context.newPage();
 
-      // Navigate to Perplexity (headless — relies on fresh cf_clearance from headed phase)
+      // Navigate to Perplexity (relies on fresh cf_clearance from headed phase)
       try {
         await this.page.goto(PERPLEXITY_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
         await this.page.waitForTimeout(2000);

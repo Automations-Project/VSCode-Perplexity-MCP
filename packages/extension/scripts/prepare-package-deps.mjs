@@ -39,6 +39,67 @@ const SUPPORTED_NGROK_VARIANTS = [
 ];
 
 /**
+ * keytar native prebuilds shipped in the VSIX — one per supported platform.
+ *
+ * Unlike @ngrok/ngrok, keytar 7.9.0 uses the prebuild-install model rather than
+ * optionalDependencies-per-platform: `npm ci` materializes exactly ONE
+ * build/Release/keytar.node, for the BUILD machine's platform. Since
+ * .github/workflows/release.yml packs a universal VSIX (no `vsce --target`) on
+ * ubuntu-latest, every Windows and macOS user was shipped a Linux ELF binary.
+ * The Windows loader rejects it outright ("Bad Image", 0xC000012F =
+ * STATUS_INVALID_IMAGE_NOT_MZ), keytar never loads, the vault can never be
+ * sealed or unsealed, and every login silently falls back to Anonymous — a
+ * total auth outage for non-Linux users (issue #11).
+ *
+ * Two things stop us from just copying the ngrok fix:
+ *   1. keytar's prebuilds live on GitHub Releases, NOT npm — `npm pack` cannot
+ *      reach them, so we fetch the release tarballs directly.
+ *   2. keytar/lib/keytar.js hardcodes require('../build/Release/keytar.node'),
+ *      a single fixed path with no process.platform dispatch. Side-by-side
+ *      prebuilds are inert without the loader patch applied further down.
+ *
+ * Matrix mirrors SUPPORTED_NGROK_VARIANTS and docs/smoke-tests.md. Users on any
+ * other (platform, arch) hit the patched loader's missing-module throw, which
+ * vault.js already catches (tryKeytar) and degrades to the passphrase/TTY unseal
+ * chain — exactly what they get today, so no regression.
+ *
+ * If this matrix changes, update BOTH this constant AND the matching one in
+ * packages/extension/tests/keytar-cross-platform-packaging.test.ts.
+ */
+const KEYTAR_NAPI_ABI = "napi-v3";
+const SUPPORTED_KEYTAR_VARIANTS = [
+  { platform: "linux", arch: "x64", magic: "ELF" },
+  { platform: "darwin", arch: "x64", magic: "MACHO" },
+  { platform: "darwin", arch: "arm64", magic: "MACHO" },
+  { platform: "win32", arch: "x64", magic: "PE" },
+];
+
+/**
+ * Leading-byte signatures for the native-binary formats we ship. The whole
+ * point of issue #11 is that a wrong-platform binary is indistinguishable by
+ * path alone — only the bytes tell the truth, so we assert on them.
+ */
+const MAGIC_SIGNATURES = {
+  PE: [[0x4d, 0x5a]], // "MZ"
+  ELF: [[0x7f, 0x45, 0x4c, 0x46]], // "\x7FELF"
+  MACHO: [
+    [0xcf, 0xfa, 0xed, 0xfe], // 64-bit little-endian
+    [0xca, 0xfe, 0xba, 0xbe], // universal / fat
+  ],
+};
+
+/** Name the binary format of `buf`, or a hex dump of the first 4 bytes. */
+function detectMagic(buf) {
+  for (const [name, signatures] of Object.entries(MAGIC_SIGNATURES)) {
+    for (const signature of signatures) {
+      if (signature.every((byte, i) => buf[i] === byte)) return name;
+    }
+  }
+  const hex = [...buf.subarray(0, 4)].map((b) => b.toString(16).padStart(2, "0")).join(" ");
+  return `unknown(${hex})`;
+}
+
+/**
  * Root packages the extension loads at runtime. We do NOT include bundled-by-tsup
  * pure-JS deps (like got-scraping) — those are inlined into dist/extension.js by
  * the esbuild bundler. This list is only for packages that must ship with their
@@ -468,4 +529,112 @@ const variantShortNames = SUPPORTED_NGROK_VARIANTS.map((v) =>
 console.log(
   `[prepare-package-deps] @ngrok/ngrok ${ngrokManifest.version} ` +
     `+ ${SUPPORTED_NGROK_VARIANTS.length} supported platform variants OK (${variantShortNames})`
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cross-platform native shipping for keytar (issue #11)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// See SUPPORTED_KEYTAR_VARIANTS at the top of this file for why this exists and
+// why it cannot simply reuse the ngrok approach above.
+
+/**
+ * Download + extract one keytar prebuild, returning the path to its .node.
+ * Cached under node_modules/.cache alongside the ngrok tarballs so repeat and
+ * offline builds stay fast.
+ */
+async function fetchKeytarPrebuild(version, platform, arch) {
+  const fileName = `keytar-v${version}-${KEYTAR_NAPI_ABI}-${platform}-${arch}.tar.gz`;
+  const url = `https://github.com/atom/node-keytar/releases/download/v${version}/${fileName}`;
+  const cacheDir = join(packCacheDir, `keytar-${version}-${platform}-${arch}`);
+  // Prebuild tarballs contain exactly one entry: build/Release/keytar.node
+  const extracted = join(cacheDir, "build", "Release", "keytar.node");
+
+  if (!existsSync(extracted)) {
+    mkdirSync(cacheDir, { recursive: true });
+    console.log(`[prepare-package-deps] fetch ${fileName}`);
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(
+        `[prepare-package-deps] GET ${url} failed: ${response.status} ${response.statusText}. ` +
+          `keytar prebuilds are published on GitHub Releases; check that v${version} still ` +
+          `ships a ${KEYTAR_NAPI_ABI}-${platform}-${arch} asset.`
+      );
+    }
+    const tarball = join(cacheDir, fileName);
+    writeFileSync(tarball, Buffer.from(await response.arrayBuffer()));
+    extractTarGzSync(tarball, cacheDir);
+  }
+
+  if (!existsSync(extracted)) {
+    throw new Error(
+      `[prepare-package-deps] ${fileName} did not contain build/Release/keytar.node ` +
+        `(looked in ${cacheDir}). The prebuild tarball layout may have changed.`
+    );
+  }
+  return extracted;
+}
+
+const keytarRoot = join(extensionNodeModules, "keytar");
+const keytarManifestPath = join(keytarRoot, "package.json");
+if (!existsSync(keytarManifestPath)) {
+  throw new Error(
+    `[prepare-package-deps] keytar/package.json missing at ${keytarManifestPath}. ` +
+      `Expected keytar to be copied into dist/node_modules. Check rootPackages in this file.`
+  );
+}
+const keytarVersion = JSON.parse(readFileSync(keytarManifestPath, "utf8")).version ?? "";
+if (!keytarVersion) {
+  throw new Error(`[prepare-package-deps] could not read keytar version from ${keytarManifestPath}`);
+}
+const keytarReleaseDir = join(keytarRoot, "build", "Release");
+
+for (const { platform, arch, magic: expectedMagic } of SUPPORTED_KEYTAR_VARIANTS) {
+  const prebuild = await fetchKeytarPrebuild(keytarVersion, platform, arch);
+  const bytes = readFileSync(prebuild);
+  const actualMagic = detectMagic(bytes);
+  if (actualMagic !== expectedMagic) {
+    throw new Error(
+      `[prepare-package-deps] keytar ${platform}-${arch}: expected a ${expectedMagic} binary but ` +
+        `got ${actualMagic}. This is the issue #11 failure mode — refusing to ship it.`
+    );
+  }
+  const targetDir = join(keytarReleaseDir, `${platform}-${arch}`);
+  mkdirSync(targetDir, { recursive: true });
+  writeFileSync(join(targetDir, "keytar.node"), bytes);
+}
+
+// Delete the build machine's own prebuild. npm ci put it at the exact path the
+// stock loader requires, so leaving it means a Linux-built VSIX keeps loading
+// the ELF on Windows even with the correct binaries sitting right beside it.
+const builderPrebuild = join(keytarReleaseDir, "keytar.node");
+if (existsSync(builderPrebuild)) {
+  rmSync(builderPrebuild, { force: true });
+}
+
+// Patch keytar's loader to resolve per-platform. Surgical single-line swap
+// rather than vendoring a rewritten file, so keytar's own argument-checking
+// wrapper stays exactly as published. The assertion below turns an upstream
+// change into a loud packaging failure instead of a silent ELF-shipping
+// regression.
+const keytarLoaderPath = join(keytarRoot, "lib", "keytar.js");
+const STOCK_LOADER_LINE = "var keytar = require('../build/Release/keytar.node')";
+const PATCHED_LOADER_LINE =
+  "var keytar = require(`../build/Release/${process.platform}-${process.arch}/keytar.node`)";
+const loaderSource = readFileSync(keytarLoaderPath, "utf8");
+if (!loaderSource.includes(STOCK_LOADER_LINE)) {
+  throw new Error(
+    `[prepare-package-deps] keytar ${keytarVersion} loader at ${keytarLoaderPath} does not contain ` +
+      `the expected line:\n  ${STOCK_LOADER_LINE}\n` +
+      `Upstream changed its require path, so the per-platform patch would not apply and the VSIX ` +
+      `would ship a build-machine-only binary again (issue #11). Update the patch in ` +
+      `${fileURLToPath(import.meta.url)}.`
+  );
+}
+writeFileSync(keytarLoaderPath, loaderSource.replace(STOCK_LOADER_LINE, PATCHED_LOADER_LINE));
+
+const keytarShortNames = SUPPORTED_KEYTAR_VARIANTS.map((v) => `${v.platform}-${v.arch}`).join(", ");
+console.log(
+  `[prepare-package-deps] keytar ${keytarVersion} ` +
+    `+ ${SUPPORTED_KEYTAR_VARIANTS.length} platform prebuilds OK (${keytarShortNames})`
 );

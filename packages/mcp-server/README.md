@@ -251,7 +251,8 @@ Path: `~/.config/opencode/opencode.json`.
 | `PERPLEXITY_BROWSER_PATH` | Explicit browser executable path (skips auto-detection). |
 | `PERPLEXITY_BROWSER_CHANNEL` | `chrome` / `msedge` / `chromium`. Channel passed to Patchright. |
 | `PERPLEXITY_CHROME_PATH` | **Legacy** alias for `PERPLEXITY_BROWSER_PATH`. Still honored. |
-| `PERPLEXITY_HEADLESS_ONLY` | `1` to skip the headed Turnstile bootstrap and rely on cached `cf_clearance`. Useful on servers; fails if no clearance is cached yet. |
+| `PERPLEXITY_HEADLESS_ONLY` | `1` to skip the headed Turnstile bootstrap and rely on cached `cf_clearance`. Useful on servers; fails if no clearance is cached yet. Also forces the persistent search context headless. |
+| `PERPLEXITY_PERSISTENT_HEADED` | `1` forces the persistent search context headed-offscreen, `0` forces it headless. Default: headed-offscreen where a display exists (Cloudflare re-challenges headless contexts — issue #12), headless on Linux with no `DISPLAY`/`WAYLAND_DISPLAY`. Overrides `PERPLEXITY_HEADLESS_ONLY`. |
 | `PERPLEXITY_SESSION_TOKEN` | Pre-supplied `__Secure-next-auth.session-token` (skips interactive login). |
 | `PERPLEXITY_CSRF_TOKEN` | Optional companion to `PERPLEXITY_SESSION_TOKEN`. |
 | `PERPLEXITY_DISABLE_IMPIT_LOGIN` | `1` to force browser-driven login even when Speed Boost is installed. |
