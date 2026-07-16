@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, statSync, renameSync } from "node:fs";
 import { join } from "node:path";
+import { resolveNodePath } from "../auto-config/index.js";
 import { getSettingsSnapshot } from "../settings.js";
 import { isLockStale, killStaleDaemonPid, removeStaleLock } from "./stale-version.js";
 import {
@@ -68,8 +69,17 @@ const DAEMON_LOG_MAX_BYTES = 2 * 1024 * 1024;
 interface RuntimeConfig {
   configDir: string;
   serverPath: string;
-  /** Bundled mcp-server version (extension and mcp-server are versioned together). */
+  /**
+   * MCP package version from dist/mcp/package.json — used for code-graph
+   * staleness (must match lock.mcpVersion / getPackageVersion()).
+   */
   bundledVersion: string;
+  /**
+   * Extension package version. Stamped into the daemon env as
+   * PERPLEXITY_LOCK_COMPAT_VERSION so lock.version satisfies legacy reapers
+   * that compared lock.version to extension.packageJSON.version.
+   */
+  extensionVersion?: string;
   /** Optional logger; falls back to a no-op for tests / pre-init paths. */
   log?: (line: string) => void;
   /**
@@ -101,9 +111,9 @@ export function configureDaemonRuntime(config: RuntimeConfig): void {
  */
 function reapStaleVersionedDaemon(config: RuntimeConfig): void {
   const lockPath = getLockfilePath(config.configDir);
-  let lock: { pid: number; version: string } | null = null;
+  let lock: { pid: number; version: string; mcpVersion?: string } | null = null;
   try {
-    lock = readDaemonLock({ lockPath }) as { pid: number; version: string } | null;
+    lock = readDaemonLock({ lockPath }) as { pid: number; version: string; mcpVersion?: string } | null;
   } catch {
     return; // corrupt JSON — existing flow handles it
   }
@@ -111,7 +121,11 @@ function reapStaleVersionedDaemon(config: RuntimeConfig): void {
   if (!isLockStale(lock, config.bundledVersion)) return;
 
   const log = config.log ?? (() => undefined);
-  log(`[daemon] stale daemon detected (lock=v${lock.version ?? "unknown"}, bundled=v${config.bundledVersion}) — restarting`);
+  const lockCode = lock.mcpVersion ?? lock.version ?? "unknown";
+  log(
+    `[daemon] stale daemon detected (lock.mcpVersion=${lock.mcpVersion ?? "—"} lock.version=${lock.version ?? "—"} ` +
+      `code=${lockCode}, bundledMcp=${config.bundledVersion}) — restarting`,
+  );
   killStaleDaemonPid(lock.pid, log);
   removeStaleLock(lockPath);
 }
@@ -166,6 +180,13 @@ export async function ensureBundledDaemon(options: { startTimeoutMs?: number } =
     configDir: config.configDir,
     spawnDaemon: spawnBundledDaemon,
     treatSelfAsZombie: true,
+    // Belt-and-braces with reapStaleVersionedDaemon above: that reaps on this
+    // activation path, this makes the launcher itself refuse to attach to a
+    // daemon from a different build (e.g. one spawned by another window still
+    // running the previous VSIX). bundledVersion is the MCP package version
+    // from dist/mcp/package.json — the same value the daemon stamps as
+    // lock.mcpVersion.
+    expectedMcpVersion: config.bundledVersion,
     ...(pinnedPort !== undefined ? { port: pinnedPort } : {}),
     ...(options.startTimeoutMs !== undefined ? { startTimeoutMs: options.startTimeoutMs } : {}),
   });
@@ -512,7 +533,34 @@ async function spawnBundledDaemon(options: { configDir: string; host?: string; p
   delete baseEnv.PERPLEXITY_HEADLESS_ONLY;
   delete baseEnv.PERPLEXITY_NO_DAEMON;
 
-  const child = spawn(process.execPath, args, {
+  // Prefer a real Node binary. Spawning the IDE's Electron binary with
+  // ELECTRON_RUN_AS_NODE works for pure-JS health checks, but Chromium
+  // (patchright) launched from that process is unstable on Windsurf/Devin/
+  // VS Code hosts — the daemon dies mid-tool-call and every MCP client sees
+  // `transport closed`. resolveNodePath() already handles PATH + well-known
+  // install locations (and PERPLEXITY_NODE_PATH override).
+  const nodePath = resolveNodePath();
+  const execName = nodePath.replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? "";
+  const usingRealNode = execName.startsWith("node");
+  (config.log ?? (() => undefined))(
+    `[daemon] spawning with ${nodePath}${usingRealNode ? "" : " (non-node host; ELECTRON_RUN_AS_NODE=1)"}`,
+  );
+
+  // When using real Node, strip any inherited ELECTRON_RUN_AS_NODE so a
+  // leftover flag from the extension host cannot confuse child tooling.
+  if (usingRealNode) {
+    delete baseEnv.ELECTRON_RUN_AS_NODE;
+    delete extraEnv.ELECTRON_RUN_AS_NODE;
+  }
+
+  // Legacy reaper compat: stamp lock.version with the extension package
+  // version so pre-0.8.57 reapers (lock.version === extension.version) leave
+  // this daemon alone. The daemon still records mcpVersion for new reapers.
+  if (config.extensionVersion) {
+    extraEnv.PERPLEXITY_LOCK_COMPAT_VERSION = config.extensionVersion;
+  }
+
+  const child = spawn(nodePath, args, {
     detached: true,
     stdio: ["ignore", logFd, logFd],
     env: {
@@ -520,11 +568,8 @@ async function spawnBundledDaemon(options: { configDir: string; host?: string; p
       ...extraEnv,
       // Hard-coded overrides — must come AFTER extraEnv so a buggy provider
       // cannot clobber them.
-      // Critical: process.execPath inside a VS Code extension host points at
-      // Electron, not Node. Without this flag Electron ignores the JS script
-      // and starts a GUI session. ELECTRON_RUN_AS_NODE=1 tells the same
-      // binary to behave as a pure Node runtime for this child.
-      ELECTRON_RUN_AS_NODE: "1",
+      // Only needed when falling back to an Electron host binary.
+      ...(usingRealNode ? {} : { ELECTRON_RUN_AS_NODE: "1" }),
       PERPLEXITY_CONFIG_DIR: options.configDir,
       PERPLEXITY_OAUTH_CONSENT_TTL_HOURS: String(consentTtlHours),
     },

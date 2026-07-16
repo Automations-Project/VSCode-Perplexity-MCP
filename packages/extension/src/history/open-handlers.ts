@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import type { ExportFormat, ExtensionMessage, ExternalViewer } from "@perplexity-user-mcp/shared";
+import type { ExportFormat, ExtensionMessage, ExternalViewer, HistoryItem } from "@perplexity-user-mcp/shared";
 import {
   countAllHistory,
   deleteEntry,
@@ -93,8 +93,9 @@ export function rebuildHistoryEntries() {
   return rebuildIndex();
 }
 
-export function listHistoryEntries(limit = 50) {
-  return readHistory({ limit });
+export function listHistoryEntries(limit = 50): HistoryItem[] {
+  // readHistory takes a numeric limit (not an options bag).
+  return readHistory(limit) as HistoryItem[];
 }
 
 export function countHistoryEntries(): number {

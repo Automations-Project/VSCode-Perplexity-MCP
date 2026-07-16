@@ -6,6 +6,29 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Shared-daemon multi-client hardening — Phase A.1 (code-graph version gate)
+
+#### Added
+
+- **`getDaemonStatus` / `ensureDaemon` optionally take `expectedMcpVersion`** ([`launcher.ts`](packages/mcp-server/src/daemon/launcher.ts)). A live daemon whose lock claims a different code graph is now reported `healthy: false` + `versionMismatch: true`, and `ensureDaemon` **stops and replaces it** instead of attaching. A daemon pins its hashed ESM chunk filenames at startup; once an upgrade overwrites those files the old process answers `/daemon/health` **perfectly** while every dynamic import for a code-split chunk (doctor's hashed chunk, …) fails forever — "responds" is not "usable". The extension already reaped this on its own activation path (`reapStaleVersionedDaemon`), but plain `attach` — i.e. **every external stdio client**: Cursor, Claude Desktop, Cline, Codex CLI — went through `ensureDaemon` and happily bound to it after a VSIX upgrade. Wired at both consumers: `attachToDaemon` asserts its own `getPackageVersion()` (it is loaded from the very chunk graph a usable daemon must import), and `ensureBundledDaemon` passes `config.bundledVersion`.
+- **`lockCodeVersion(record)`** — one rule for "which version does this lock claim": prefer `mcpVersion` (authoritative), fall back to the legacy `version`. `version` deliberately carries the *extension* version when the extension spawned the daemon (`PERPLEXITY_LOCK_COMPAT_VERSION`, so pre-0.8.57 reapers leave a healthy daemon alone), which is exactly why `mcpVersion` must win. Mirrors the extension-side rule in `stale-version.ts`.
+
+#### Design notes
+
+- **A mismatch is not staleness.** Stale means "the holder is gone"; mismatched means "the holder is wrong". A mismatched daemon is *alive*, so `getDaemonStatus` deliberately leaves its lock in place — releasing it without stopping the process would put two daemons (and two Chromiums) on one profile. `ensureDaemon` stops the process first, then reclaims, reusing the same helper as the issue #14 wedge path.
+- **Attach-to-self is never gated.** The gate is skipped outright when the lock's pid is our own. `startDaemon` runs the server in-process for the CLI `daemon start` flow and in tests, so the lock is ours and its code graph *is* the code executing; a mismatch there could only mean the caller's expectation is stale, and self-termination is never the answer. `startDaemon`'s own pre-acquire probe stays version-agnostic, so it still attaches to a healthy peer.
+- Reclaim happens as soon as the mismatch is seen rather than after the full `startTimeoutMs` — a wrong-graph daemon will never become healthy, so waiting is pure latency.
+
+#### Fixed
+
+- **A freshly-acquired history lock could be stolen mid-acquire** ([`history-lock.js`](packages/mcp-server/src/history-lock.js)). Acquire is `openSync(path, "wx")` — which creates the file **empty** — followed by `writeFileSync(fd, pid)`. A peer reading in that window saw no pid, and the staleness check condemned it, **deleting a lock that had just been legitimately taken**. Both writers then proceeded and the index lost an entry — the exact bug the lock exists to prevent, reintroduced under contention. Fresh-and-empty now means "a peer is mid-acquire" (back off); only the age check may reclaim an unreadable lock, so a writer that dies in that window is still recovered. **Found by the Phase A cross-process test flaking ~1 in 7 full-suite runs under CPU load** — a real race, not test noise.
+
+#### Verification
+
+- New: [`test/daemon/launcher-version-gate.test.js`](packages/mcp-server/test/daemon/launcher-version-gate.test.js) (12) — `lockCodeVersion` precedence/fallback/null; no-`expectedMcpVersion` back-compat; matching version stays healthy; **attach-to-self ignores a deliberately wrong expectation and preserves the lock**; and against a **real foreign daemon process** that genuinely answers `/daemon/health` (fixture: `fixtures/fake-daemon.mjs`): a control proving it *is* healthy without the gate, mismatch → `healthy:false` + flagged + **not** stale + lock preserved, `mcpVersion` beating a matching legacy `version`, the legacy-only fallback, `ensureDaemon` stopping it and starting a matching one, and a **matching** foreign daemon being attached to and never killed. A port-0/dead-pid fixture would have been worthless here — it never reaches the gate at all (it is caught earlier as wedged/stale) and would pass with or without the feature. **Negative-tested:** disabling the gate fails exactly the 4 gate tests and leaves the control, the self-guard, and the matching case green.
+- New: [`test/history-lock.test.js`](packages/mcp-server/test/history-lock.test.js) (8) — hold/release, release-on-throw, reentrancy, pid recorded, dead-owner reclaim, age-out reclaim, **the mid-acquire race** (fails against the pre-fix check), and the fail-open contract.
+- `npm run build` + `npm test`: **1312 passed / 148 files**, typecheck clean, and **8 consecutive full-suite runs with zero failures** (the flake is gone).
+
 ### Shared-daemon multi-client hardening — Phase A (daemon concurrency)
 
 > **Why:** the architecture is already right — N clients (VS Code windows, Cursor, Claude Desktop) attach to **one** daemon with **one** Chromium, not N browsers. But it was never made safe *under concurrent clients*. Phase A makes the shared backend a real multi-client service. Topology is unchanged by design.

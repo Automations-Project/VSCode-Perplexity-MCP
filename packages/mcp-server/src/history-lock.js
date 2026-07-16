@@ -50,10 +50,24 @@ function isProcessAlive(pid) {
 /** True when the holder is gone or the lock is simply too old to be real. */
 function isStaleLock(lockPath) {
   try {
+    // Age first, and it is the ONLY thing that can condemn a lock we cannot
+    // read a pid from. See below.
     const age = Date.now() - statSync(lockPath).mtimeMs;
     if (age > STALE_LOCK_MS) return true;
+
     const pid = Number.parseInt(String(readFileSync(lockPath, "utf8")).split("\n")[0], 10);
-    if (!Number.isInteger(pid) || pid <= 0) return true;
+    if (!Number.isInteger(pid) || pid <= 0) {
+      // No readable pid on a FRESH lock means a peer is mid-acquire: acquire
+      // is openSync(path,"wx") — which creates the file empty — followed by
+      // writeFileSync(fd, pid). Reading in that window sees "". Treating that
+      // as stale let a peer DELETE a lock that had just been legitimately
+      // taken, so both writers proceeded and the index lost an entry — which
+      // is precisely the bug this lock exists to prevent, reintroduced under
+      // load. Fresh-and-empty is the opposite of stale: back off instead.
+      // A writer that dies in that window is still reclaimed by the age
+      // check above.
+      return false;
+    }
     return !isProcessAlive(pid);
   } catch {
     // Vanished mid-check: someone else released it, so it is not stale — the

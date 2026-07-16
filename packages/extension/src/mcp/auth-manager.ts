@@ -387,6 +387,74 @@ export class AuthManager implements vscode.Disposable {
     this._onDidChange.fire(this._state);
   }
 
+  /**
+   * Align AuthManager UI state with the account snapshot (models-cache +
+   * lastLogin). Without this, ProfileSwitcher stays yellow (`status: unknown`)
+   * after a successful models refresh or daemon restart even though the
+   * session is live — auth state was only set after an explicit login runner.
+   *
+   * Does not overwrite in-progress login / OTP / error flows.
+   */
+  syncFromAccountSnapshot(opts: {
+    profile: string;
+    loggedIn: boolean;
+    tier?: AuthState["tier"];
+  }): void {
+    const busy =
+      this._state.status === "logging-in" ||
+      this._state.status === "awaiting_otp" ||
+      this._state.status === "checking";
+    if (busy) return;
+
+    if (!opts.loggedIn) {
+      // Keep explicit expired/error so the UI can still prompt re-login.
+      if (this._state.status === "expired" || this._state.status === "error") return;
+      if (this._state.status !== "unknown") {
+        this.setState({
+          profile: opts.profile,
+          status: "unknown",
+          tier: undefined,
+        });
+      }
+      return;
+    }
+
+    // Never carry tier across profiles. Only reuse a previous richer tier when
+    // we stay on the same profile and the snapshot did not supply a tier at all.
+    // "Authenticated" is a real Free-account tier and must not be discarded in
+    // favor of a leftover Pro/Max from a prior profile switch.
+    const sameProfile = this._state.profile === opts.profile;
+    let nextTier: AuthState["tier"];
+    if (opts.tier) {
+      nextTier = opts.tier;
+    } else if (
+      sameProfile &&
+      this._state.tier &&
+      this._state.tier !== "Anonymous"
+    ) {
+      nextTier = this._state.tier;
+    } else {
+      nextTier = "Authenticated";
+    }
+
+    if (
+      this._state.status === "valid" &&
+      sameProfile &&
+      this._state.tier === nextTier
+    ) {
+      return;
+    }
+
+    this.setState({
+      profile: opts.profile,
+      status: "valid",
+      tier: nextTier,
+      lastChecked: new Date().toISOString(),
+      error: undefined,
+      errorDetail: undefined,
+    });
+  }
+
   async login(opts: LoginOptions): Promise<AuthLoginResult> {
     const key = `login:${opts.profile}`;
     if (this.inflight.has(key)) {

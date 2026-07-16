@@ -7,7 +7,20 @@ export interface DaemonLockRecord {
   uuid: string;
   port: number;
   bearerToken: string;
+  /**
+   * Compatibility version field. Historically the MCP package version.
+   * When the VS Code extension spawns the daemon it may stamp the *extension*
+   * package version here so legacy reapers (pre-0.8.57) that compared
+   * `lock.version` to `extension.packageJSON.version` do not SIGTERM a healthy
+   * daemon. The authoritative code-graph version is {@link mcpVersion}.
+   */
   version: string;
+  /**
+   * MCP package version that owns the on-disk ESM chunk graph. New reapers
+   * prefer this over {@link version}. Optional for locks written by older
+   * daemons (then fall back to `version`).
+   */
+  mcpVersion?: string;
   startedAt: string;
   cloudflaredPid?: number | null;
   tunnelUrl?: string | null;
@@ -181,6 +194,7 @@ function normalizeRecord(value: unknown): DaemonLockRecord {
   const bearerToken = asRequiredString(record.bearerToken, "bearerToken");
   const version = asRequiredString(record.version, "version");
   const startedAt = asRequiredString(record.startedAt, "startedAt");
+  const mcpVersion = asOptionalString(record.mcpVersion, "mcpVersion");
 
   return {
     pid,
@@ -188,6 +202,7 @@ function normalizeRecord(value: unknown): DaemonLockRecord {
     uuid,
     bearerToken,
     version,
+    ...(typeof mcpVersion === "string" ? { mcpVersion } : {}),
     startedAt,
     cloudflaredPid: asOptionalInteger(record.cloudflaredPid, "cloudflaredPid"),
     tunnelUrl: asOptionalString(record.tunnelUrl, "tunnelUrl"),

@@ -1658,6 +1658,10 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
 
     this.ensureDaemonStatusWatch();
 
+    // Seed/refresh auth pill from disk snapshot before posting so the profile
+    // switcher does not stay yellow (`unknown`) while the session is live.
+    this.syncAuthManagerFromSnapshot();
+
     await this.view.webview.postMessage({
       type: "dashboard:state",
       payload: this.buildState()
@@ -1668,6 +1672,29 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
     await this.postDaemonState({ ensure: true });
     if (this.authManager) {
       await this.postAuthState(this.authManager.state);
+    }
+  }
+
+  /**
+   * Keep AuthManager.status/tier aligned with models-cache + lastLogin so the
+   * profile pill reflects a live Pro/Max session after refresh/restart.
+   */
+  private syncAuthManagerFromSnapshot(overrideTier?: AuthState["tier"]): void {
+    if (!this.authManager) return;
+    try {
+      const snap = getAccountSnapshot();
+      const profile = getActiveName() ?? this.authManager.state.profile ?? "default";
+      const tier = overrideTier ?? snap.tier;
+      this.authManager.syncFromAccountSnapshot({
+        profile,
+        loggedIn: snap.loggedIn,
+        tier: tier === "Anonymous" ? undefined : tier,
+      });
+    } catch (err) {
+      // best-effort — never break refresh
+      debug(
+        `[auth] syncFromAccountSnapshot failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
@@ -1696,6 +1723,16 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
           `refreshAccountInfo: live fetch OK via tier=${result.tier}, ${result.modelCount} models, accountTier=${result.accountTier}, took ${result.elapsedMs}ms`
         );
         setLastRefreshTier(result.tier);
+        // Map live account tier onto AuthManager so the profile pill turns
+        // green (status=valid) instead of staying yellow after Refresh.
+        const accountTier = result.accountTier;
+        const authTier: AuthState["tier"] | undefined =
+          accountTier === "Max" || accountTier === "Pro" || accountTier === "Enterprise"
+            ? accountTier
+            : accountTier === "Free"
+              ? "Authenticated"
+              : undefined;
+        this.syncAuthManagerFromSnapshot(authTier);
         if (this.view) {
           await this.view.webview.postMessage({
             type: "models:refresh:status",

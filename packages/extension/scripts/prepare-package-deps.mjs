@@ -134,7 +134,9 @@ const rootPackages = [
   { name: "got", preferMcpServer: true, optional: true },
   { name: "tough-cookie", preferMcpServer: true, optional: true },
   { name: "header-generator", preferMcpServer: true, optional: true },
-  { name: "fingerprint-generator", preferMcpServer: true, optional: true },
+  // fingerprint-generator is NOT listed: header-generator 2.x no longer depends
+  // on it (got-scraping → header-generator only). Keep it out so prepare-package-deps
+  // does not emit a false-alarm "optional package not installed" warning.
   { name: "keytar", preferMcpServer: true },
   { name: "dot-prop", preferMcpServer: true },
   { name: "is-obj", preferMcpServer: true },

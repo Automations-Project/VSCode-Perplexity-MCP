@@ -10,9 +10,25 @@ export function ProfileSwitcher({ send }: { send: SendFn }) {
   const auth = useDashboardStore((s) => s.authState);
   const profiles = useDashboardStore((s) => s.profiles);
   const active = useDashboardStore((s) => s.activeProfile);
+  // Dashboard snapshot is authoritative after models refresh / daemon reinit;
+  // authState can lag as "unknown" until a login runner runs.
+  const snapshot = useDashboardStore((s) => s.state?.snapshot);
   const activeMeta = profiles.find((profile) => profile.name === active);
   const status = auth?.status ?? "unknown";
-  const tier = active ? auth?.tier ?? activeMeta?.tier ?? activeMeta?.loginMode ?? "Anonymous" : "Add account";
+  // Prefer auth tier, then live snapshot tier, then profile meta. Never show
+  // loginMode ("auto"/"manual") as the tier label — that looked like a broken
+  // account chip.
+  const tier = !active
+    ? "Add account"
+    : auth?.tier && auth.tier !== "Anonymous"
+      ? auth.tier
+      : snapshot?.tier && snapshot.tier !== "Anonymous"
+        ? snapshot.tier
+        : activeMeta?.tier && activeMeta.tier !== "Anonymous"
+          ? activeMeta.tier
+          : snapshot?.loggedIn
+            ? "Authenticated"
+            : "Anonymous";
   const label = active ?? "No profile";
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -22,8 +38,19 @@ export function ProfileSwitcher({ send }: { send: SendFn }) {
 
   useDisclosureMenu({ triggerRef, menuRef: containerRef, isOpen: open, onClose: close });
 
+  // Green when auth is valid OR the dashboard already knows we have a live
+  // session (models-cache / lastLogin / daemon). Yellow only when truly unknown
+  // and not logged in — avoids "yellow while working" after refresh.
+  const sessionLive =
+    status === "valid" ||
+    (!!snapshot?.loggedIn && status !== "expired" && status !== "error") ||
+    (!!snapshot?.daemonAuth?.authenticated && status !== "expired" && status !== "error");
   const dotVariant: DotVariant =
-    status === "valid" ? "ok" : status === "expired" || status === "error" ? "err" : "warn";
+    status === "expired" || status === "error"
+      ? "err"
+      : sessionLive
+        ? "ok"
+        : "warn";
 
   function switchTo(name: string) {
     send({ type: "profile:switch", id: crypto.randomUUID(), payload: { name } });
@@ -71,7 +98,10 @@ export function ProfileSwitcher({ send }: { send: SendFn }) {
           )}
           {profiles.map((p) => (
             <button key={p.name} role="menuitem" className={`profile-menu-item ${p.name === active ? "is-active" : ""}`} onClick={() => switchTo(p.name)}>
-              {p.displayName ?? p.name} <span className="profile-menu-item-tier">{p.tier ?? p.loginMode}</span>
+              {p.displayName ?? p.name}
+              {p.tier && p.tier !== "Anonymous" ? (
+                <span className="profile-menu-item-tier">{p.tier}</span>
+              ) : null}
             </button>
           ))}
           <hr />

@@ -6,6 +6,15 @@ vi.mock("vscode", () => ({
   window: { showInputBox: async () => undefined },
 }));
 
+// Prefer a real Node binary path in spawn assertions (not Electron host).
+vi.mock("../src/auto-config/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/auto-config/index.js")>();
+  return {
+    ...actual,
+    resolveNodePath: () => "/usr/bin/node",
+  };
+});
+
 // Mock spawn — we inspect its calls; we never actually fork a daemon.
 // Use importOriginal so other consumers (e.g. mcp-server bundle pulling in
 // execFile) still see the rest of the module.
@@ -66,9 +75,11 @@ describe("spawnBundledDaemon merges buildDaemonEnv result", () => {
     });
     try { await ensureBundledDaemon({ startTimeoutMs: FAST_DEADLINE_MS }); } catch { /* health-check failure is expected */ }
     expect(spawnMock).toHaveBeenCalled();
+    expect(spawnMock.mock.calls[0]?.[0]).toBe("/usr/bin/node");
     const opts = spawnMock.mock.calls[0]?.[2] as { env: Record<string, string> };
     expect(opts.env.PERPLEXITY_VAULT_PASSPHRASE).toBe("test-pass");
-    expect(opts.env.ELECTRON_RUN_AS_NODE).toBe("1");
+    // Real node binary — do not force ELECTRON_RUN_AS_NODE.
+    expect(opts.env.ELECTRON_RUN_AS_NODE).toBeUndefined();
     expect(opts.env.PERPLEXITY_CONFIG_DIR).toBe("/tmp/perp-test");
   });
 
@@ -94,7 +105,8 @@ describe("spawnBundledDaemon merges buildDaemonEnv result", () => {
     });
     try { await ensureBundledDaemon({ startTimeoutMs: FAST_DEADLINE_MS }); } catch { /* expected */ }
     const opts = spawnMock.mock.calls[0]?.[2] as { env: Record<string, string> };
-    expect(opts.env.ELECTRON_RUN_AS_NODE).toBe("1");
+    // Real node path: we do not force ELECTRON_RUN_AS_NODE (provider value is
+    // still present if they set it, but CONFIG_DIR hard-override always wins).
     expect(opts.env.PERPLEXITY_CONFIG_DIR).toBe("/tmp/perp-test");
   });
 
@@ -106,7 +118,8 @@ describe("spawnBundledDaemon merges buildDaemonEnv result", () => {
     });
     try { await ensureBundledDaemon({ startTimeoutMs: FAST_DEADLINE_MS }); } catch { /* expected */ }
     const opts = spawnMock.mock.calls[0]?.[2] as { env: Record<string, string> };
-    expect(opts.env.ELECTRON_RUN_AS_NODE).toBe("1");
+    expect(spawnMock.mock.calls[0]?.[0]).toBe("/usr/bin/node");
+    expect(opts.env.ELECTRON_RUN_AS_NODE).toBeUndefined();
   });
 
   it("does not mutate process.env after spawn", async () => {

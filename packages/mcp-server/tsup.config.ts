@@ -67,7 +67,6 @@ export default defineConfig({
     "got",
     "tough-cookie",
     "header-generator",
-    "fingerprint-generator",
     "keytar",
     // gray-matter is CommonJS (uses top-level `require("fs")`). Inlining into
     // an ESM bundle crashes at server startup because tsup's __require shim

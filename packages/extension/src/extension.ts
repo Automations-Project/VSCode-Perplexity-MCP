@@ -105,6 +105,147 @@ function getBundledServerPath(context: vscode.ExtensionContext): string {
   return vscode.Uri.joinPath(context.extensionUri, "dist", "mcp", "server.mjs").fsPath;
 }
 
+/**
+ * Version the daemon process writes into `daemon.lock` (from dist/mcp/package.json).
+ * Falls back to the extension package version only if the MCP package.json is missing.
+ */
+function resolveBundledMcpVersion(context: vscode.ExtensionContext): string {
+  try {
+    const mcpPkgPath = vscode.Uri.joinPath(context.extensionUri, "dist", "mcp", "package.json").fsPath;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("node:fs") as typeof import("node:fs");
+    const raw = fs.readFileSync(mcpPkgPath, "utf8");
+    const parsed = JSON.parse(raw) as { version?: unknown };
+    if (typeof parsed.version === "string" && parsed.version.length > 0) {
+      return parsed.version;
+    }
+  } catch {
+    // fall through
+  }
+  return String((context.extension.packageJSON as { version?: string }).version ?? "0.0.0");
+}
+
+const UPGRADE_NOTIFY_KEY = "perplexity.upgradeNotifiedVersion";
+
+/**
+ * One-shot toast after a version that actually restarted/healed the daemon so
+ * legacy users know MCP clients may need a single reconnect. Skipped when we
+ * already notified for this extension version.
+ */
+async function maybeNotifyUpgradeComplete(
+  context: vscode.ExtensionContext,
+  info: { extensionVersion: string; mcpVersion: string; daemonPort: number },
+): Promise<void> {
+  const prev = context.globalState.get<string>(UPGRADE_NOTIFY_KEY);
+  if (prev === info.extensionVersion) return;
+  await context.globalState.update(UPGRADE_NOTIFY_KEY, info.extensionVersion);
+
+  // First install (no previous) — softer message; still useful.
+  const isUpgrade = typeof prev === "string" && prev.length > 0 && prev !== info.extensionVersion;
+  const title = isUpgrade
+    ? `Perplexity MCP updated to ${info.extensionVersion}`
+    : `Perplexity MCP ${info.extensionVersion} is ready`;
+  const detail = isUpgrade
+    ? `Daemon is healthy on port ${info.daemonPort} (mcp ${info.mcpVersion}). ` +
+      `If Cursor/Claude/Grok still show "transport closed", reload that app once so it re-attaches.`
+    : `Daemon is healthy on port ${info.daemonPort}. Use the dashboard Refresh if the account chip looks stale.`;
+
+  const choice = await vscode.window.showInformationMessage(
+    `${title}. ${detail}`,
+    "Open Dashboard",
+    "Copy restart tip",
+  );
+  if (choice === "Open Dashboard") {
+    void vscode.commands.executeCommand("Perplexity.openDashboard");
+  } else if (choice === "Copy restart tip") {
+    await vscode.env.clipboard.writeText(
+      "Perplexity MCP: after an extension update, reload Cursor/Claude/Grok (or restart the MCP server) once so clients re-run ~/.perplexity-mcp/start.mjs against the new daemon.",
+    );
+    void vscode.window.showInformationMessage("Restart tip copied to clipboard.");
+  }
+}
+
+/**
+ * Multiple nskha.perplexity-vscode-* installs (side-by-side upgrades) share one
+ * daemon.lock. Each activation reaps "stale" versions and kills the others'
+ * daemon → permanent transport-closed for MCP clients. Detect siblings and
+ * offer a one-click disable of every other enabled Perplexity extension.
+ */
+/**
+ * Detect other nskha.perplexity-vscode* installs and offer to disable only
+ * those that are not newer than us. Non-blocking so activation/daemon ensure
+ * is not held on the modal.
+ */
+function maybeDisableSiblingPerplexityExtensions(context: vscode.ExtensionContext): void {
+  const selfId = context.extension.id;
+  const selfVersion = String((context.extension.packageJSON as { version?: string }).version ?? "0.0.0");
+
+  const isOurFamily = (id: string): boolean => {
+    const lower = id.toLowerCase();
+    // Strict publisher + name family only — no loose substring match.
+    return lower === "nskha.perplexity-vscode" || lower.startsWith("nskha.perplexity-vscode-");
+  };
+
+  const cmpSemverLoose = (a: string, b: string): number => {
+    const pa = a.split(".").map((p) => Number.parseInt(p, 10) || 0);
+    const pb = b.split(".").map((p) => Number.parseInt(p, 10) || 0);
+    const n = Math.max(pa.length, pb.length);
+    for (let i = 0; i < n; i++) {
+      const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+      if (d !== 0) return d;
+    }
+    return 0;
+  };
+
+  // Only disable siblings that are older or same (duplicate side-by-side).
+  // Never disable a strictly newer install.
+  const olderOrDupSiblings = vscode.extensions.all.filter((ext) => {
+    if (ext.id === selfId) return false;
+    if (!isOurFamily(ext.id)) return false;
+    try {
+      if (!ext.packageJSON?.name) return false;
+      const theirVersion = String((ext.packageJSON as { version?: string }).version ?? "0.0.0");
+      return cmpSemverLoose(theirVersion, selfVersion) <= 0;
+    } catch {
+      return false;
+    }
+  });
+  if (olderOrDupSiblings.length === 0) return;
+
+  const names = olderOrDupSiblings.map((e) => `${e.id}@${(e.packageJSON as { version?: string }).version ?? "?"}`).join(", ");
+  log(`[upgrade] sibling Perplexity extension(s) still present: ${names}`);
+
+  // Fire-and-forget so activate continues (daemon ensure / dashboard load).
+  void vscode.window
+    .showWarningMessage(
+      `Perplexity MCP: ${olderOrDupSiblings.length} other install(s) are still present (${names}). ` +
+        `They share one daemon lock and can kill each other's process (clients then see "transport closed"). ` +
+        `Disable the older/duplicate install(s) and keep only this version (${selfVersion})?`,
+      "Disable older installs",
+      "Not now",
+    )
+    .then(async (choice) => {
+      if (choice !== "Disable older installs") return;
+      for (const ext of olderOrDupSiblings) {
+        try {
+          await vscode.commands.executeCommand("workbench.extensions.disableExtension", ext.id);
+          log(`[upgrade] disabled sibling ${ext.id}`);
+        } catch (err) {
+          log(
+            `[upgrade] could not disable ${ext.id}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      const reload = await vscode.window.showInformationMessage(
+        "Perplexity MCP: older installs disabled. Reload the window if MCP clients still fail.",
+        "Reload",
+      );
+      if (reload === "Reload") {
+        void vscode.commands.executeCommand("workbench.action.reloadWindow");
+      }
+    });
+}
+
 function getServerEnvironment(settings: ReturnType<typeof getSettingsSnapshot>, configDir: string): Record<string, string> {
   const env: Record<string, string> = {
     ...Object.fromEntries(
@@ -497,16 +638,45 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
   });
 
   const bundledServerPath = getBundledServerPath(context);
+  // Rewrites ~/.perplexity-mcp/start.mjs + bundled-path.json so every stdio MCP
+  // client (Cursor, Claude, Grok, …) points at this install on next spawn.
   const { launcherPath, configDir } = ensureLauncher(bundledServerPath);
-  const bundledVersion = String((context.extension.packageJSON as { version?: string }).version ?? "0.0.0");
+  // Staleness MUST compare against the MCP package version (dist/mcp/package.json).
+  // package:vsix often bumps extension + mcp independently (e.g. ext 0.8.56 /
+  // mcp 0.8.55). The daemon stamps both: lock.mcpVersion (authoritative) and
+  // lock.version = extension version (legacy reaper compat).
+  const bundledMcpVersion = resolveBundledMcpVersion(context);
+  const extensionVersion = String((context.extension.packageJSON as { version?: string }).version ?? "0.0.0");
   configureDaemonRuntime({
     serverPath: bundledServerPath,
     configDir,
-    bundledVersion,
+    bundledVersion: bundledMcpVersion,
+    extensionVersion,
     log,
     buildDaemonEnv: () => buildDaemonEnv(context),
   });
   log("Stable launcher: " + launcherPath);
+  log(`[daemon] versions ext=${extensionVersion} mcp=${bundledMcpVersion}`);
+
+  // Sibling installs (0.8.54 + 0.8.55 + 0.8.56 all enabled) all own the same
+  // ~/.perplexity-mcp/daemon.lock and SIGTERM each other on ensure. Offer to
+  // disable the older ones so one owner remains after upgrade (non-blocking).
+  maybeDisableSiblingPerplexityExtensions(context);
+
+  // After update: force a healthy real-Node daemon so MCP clients that attach
+  // via start.mjs do not hit a leftover Electron-hosted or version-mismatched
+  // process. Failures are logged; activation continues so the dashboard still loads.
+  try {
+    const info = await ensureBundledDaemon({ startTimeoutMs: 20_000 });
+    log(`[daemon] ensured pid=${info.pid} port=${info.port} version=${info.version}`);
+    await maybeNotifyUpgradeComplete(context, {
+      extensionVersion,
+      mcpVersion: bundledMcpVersion,
+      daemonPort: info.port,
+    });
+  } catch (err) {
+    log(`[daemon] ensure on activate failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   async function promptEmailForAutoLogin(profile: string): Promise<string | undefined> {
     const email = await vscode.window.showInputBox({
@@ -625,15 +795,19 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
       return undefined;
     }
 
-    const pick = await vscode.window.showQuickPick(
-      items.map((item) => ({
-        label: item.query,
-        description: item.tool,
-        detail: `${item.createdAt} · ${item.status ?? "completed"}${item.model ? ` · ${item.model}` : ""}`,
-        id: item.id,
-      })),
-      { placeHolder, ignoreFocusOut: true, matchOnDescription: true, matchOnDetail: true },
-    );
+    type HistoryPick = vscode.QuickPickItem & { id: string };
+    const picks: HistoryPick[] = items.map((item) => ({
+      label: item.query || item.id,
+      description: item.tool,
+      detail: `${item.createdAt} · ${item.status ?? "completed"}${item.model ? ` · ${item.model}` : ""}`,
+      id: item.id,
+    }));
+    const pick = await vscode.window.showQuickPick(picks, {
+      placeHolder,
+      ignoreFocusOut: true,
+      matchOnDescription: true,
+      matchOnDetail: true,
+    });
     return pick?.id;
   }
 
@@ -1110,12 +1284,21 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
                 ),
               ];
             }
+            // Prefer real Node — process.execPath in Windsurf/Devin/VS Code is
+            // the Electron host binary and breaks daemon attach without
+            // ELECTRON_RUN_AS_NODE (and is unstable with Chromium even with it).
+            const nodePath = resolveNodePath();
+            const env = getServerEnvironment(settings, getBundledDaemonConfigDir());
+            const execName = nodePath.replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? "";
+            if (!execName.startsWith("node")) {
+              env.ELECTRON_RUN_AS_NODE = "1";
+            }
             return [
               createStdioDefinition(
                 MCP_SERVER_LABEL,
-                process.execPath,
+                nodePath,
                 [getBundledServerPath(context), "daemon", "attach"],
-                getServerEnvironment(settings, getBundledDaemonConfigDir()),
+                env,
                 version
               )
             ];

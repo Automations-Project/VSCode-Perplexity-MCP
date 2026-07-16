@@ -25,6 +25,22 @@ describe("isLockStale", () => {
     expect(isLockStale({ version: "" }, "0.8.9")).toBe(true);
     expect(isLockStale({ version: null }, "0.8.9")).toBe(true);
   });
+
+  it("prefers mcpVersion over version (legacy reaper compat stamp)", () => {
+    // Extension 0.8.56 stamped lock.version=0.8.56 for old reapers, while
+    // mcpVersion=0.8.55 is the real chunk graph — new reaper must use mcpVersion.
+    expect(
+      isLockStale({ version: "0.8.56", mcpVersion: "0.8.55" }, "0.8.55"),
+    ).toBe(false);
+    expect(
+      isLockStale({ version: "0.8.56", mcpVersion: "0.8.54" }, "0.8.55"),
+    ).toBe(true);
+  });
+
+  it("falls back to version when mcpVersion is absent (pre-dual-field locks)", () => {
+    expect(isLockStale({ version: "0.8.55" }, "0.8.55")).toBe(false);
+    expect(isLockStale({ version: "0.8.55" }, "0.8.56")).toBe(true);
+  });
 });
 
 describe("removeStaleLock", () => {

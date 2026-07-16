@@ -2,6 +2,7 @@ import type { Readable, Writable } from "node:stream";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ensureDaemon } from "./launcher.js";
+import { getPackageVersion } from "../package-version.js";
 
 export class DaemonAttachError extends Error {
   readonly code = "DAEMON_UNREACHABLE";
@@ -58,6 +59,16 @@ export async function attachToDaemon(options: AttachToDaemonOptions = {}): Promi
     daemon = await ensure({
       configDir: options.configDir,
       startTimeoutMs: options.ensureTimeoutMs ?? 15_000,
+      // Refuse to attach to a daemon from a different build. This launcher is
+      // loaded from the same on-disk chunk graph the daemon would have to
+      // import, so our own package version is exactly what a usable daemon
+      // must be running. A stale-version daemon answers /daemon/health
+      // perfectly but its dynamic imports for code-split chunks (e.g. doctor's
+      // hashed chunk) were overwritten by the upgrade and fail forever — the
+      // extension already reaped that on its own activation path, but every
+      // external stdio client (Cursor, Claude Desktop, Cline, …) came through
+      // here and happily attached to it.
+      expectedMcpVersion: getPackageVersion(),
     });
   } catch (error) {
     if (options.fallbackStdio) {
@@ -79,6 +90,14 @@ export async function attachToDaemon(options: AttachToDaemonOptions = {}): Promi
         "x-perplexity-client-id": options.clientId ?? `daemon-attach-${process.pid}`,
         "x-perplexity-source": "loopback",
       },
+    },
+    // Long tool calls (search/ask/research) can outlive a single SSE frame;
+    // allow more reconnect attempts than the SDK default (2) before giving up.
+    reconnectionOptions: {
+      initialReconnectionDelay: 500,
+      maxReconnectionDelay: 10_000,
+      reconnectionDelayGrowFactor: 1.5,
+      maxRetries: 8,
     },
   });
 
@@ -114,8 +133,17 @@ export async function attachToDaemon(options: AttachToDaemonOptions = {}): Promi
     http.onmessage = (message) => {
       void stdio.send(message).catch((error) => settle(asError(error)));
     };
+    // onclose is intentional transport teardown (http.close / process exit).
     http.onclose = () => settle();
-    http.onerror = (error) => settle(error);
+    // onerror is NOT fatal. StreamableHTTPClientTransport fires it for
+    // recoverable SSE disconnects (`SSE stream disconnected: …`) and then
+    // schedules reconnection. Treating those as fatal was killing the
+    // stdio bridge mid-tool-call so every IDE client saw `transport closed`
+    // as soon as a long request (search/ask) touched the browser path.
+    http.onerror = (error) => {
+      const msg = asError(error).message;
+      process.stderr.write(`[perplexity-mcp] daemon HTTP transport warning: ${msg}\n`);
+    };
 
     sourceIn.on("end", handleInputClosed);
     sourceIn.on("close", handleInputClosed);

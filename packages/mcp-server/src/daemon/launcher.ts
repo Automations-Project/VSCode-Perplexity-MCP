@@ -46,10 +46,40 @@ export interface DaemonHealthStatus {
   };
 }
 
+/**
+ * The code-graph version a lock claims.
+ *
+ * Prefers `mcpVersion` (authoritative — it names the on-disk hashed ESM chunk
+ * graph the daemon pinned at startup). Falls back to the legacy `version`
+ * field for locks written by older daemons that only stamped one. Note
+ * `version` may deliberately carry the *extension* version when the extension
+ * spawned the daemon (PERPLEXITY_LOCK_COMPAT_VERSION), which is exactly why
+ * `mcpVersion` wins when present.
+ *
+ * Mirrors the extension-side rule in daemon/stale-version.ts — keep the two in
+ * agreement.
+ */
+export function lockCodeVersion(
+  record: { version?: string | null; mcpVersion?: string | null } | null | undefined,
+): string | null {
+  if (!record) return null;
+  if (typeof record.mcpVersion === "string" && record.mcpVersion.length > 0) return record.mcpVersion;
+  if (typeof record.version === "string" && record.version.length > 0) return record.version;
+  return null;
+}
+
 export interface DaemonStatus {
   running: boolean;
   healthy: boolean;
   stale: boolean;
+  /**
+   * A LIVE daemon answers health but runs a different code graph than the
+   * caller's `expectedMcpVersion`. It is NOT stale (its pid is alive, so the
+   * lock must not simply be released — that would leave two daemons racing the
+   * same profile) and it will never become healthy, so `ensureDaemon` stops it
+   * and starts a matching one. Absent unless `expectedMcpVersion` was supplied.
+   */
+  versionMismatch?: boolean;
   configDir: string;
   lockPath: string;
   tokenPath: string;
@@ -71,6 +101,13 @@ export interface EnsureDaemonOptions {
   // left behind by a prior activation (the daemon is supposed to run in a
   // detached child, never in the extension host itself).
   treatSelfAsZombie?: boolean;
+  /**
+   * MCP code-graph version this caller requires. When set, a live daemon from
+   * a different build is stopped and replaced instead of attached to — see
+   * `getDaemonStatus`'s `expectedMcpVersion`. Omit to attach to any healthy
+   * daemon (the pre-existing behavior).
+   */
+  expectedMcpVersion?: string;
 }
 
 export interface StartDaemonOptions {
@@ -114,6 +151,22 @@ export async function getDaemonStatus(options: {
   // startDaemon's own bookkeeping (which legitimately runs in-process during
   // tests and the CLI `daemon start` flow) isn't nuked.
   treatSelfAsZombie?: boolean;
+  /**
+   * MCP code-graph version the caller requires (i.e. `getPackageVersion()` /
+   * the bundled `dist/mcp/package.json` version). When set, a live daemon
+   * whose lock claims a different code graph is reported `healthy: false` +
+   * `versionMismatch: true`.
+   *
+   * Why it matters: a daemon pins its hashed ESM chunk filenames at startup.
+   * After an upgrade overwrites those files, the old process's dynamic imports
+   * for code-split chunks fail forever — it answers /daemon/health perfectly
+   * while being unable to actually serve tools. The extension already reaped
+   * this on its own activation path; supplying this makes plain `attach`
+   * (every external stdio client) reclaim it too.
+   *
+   * Never applied to a lock held by our OWN pid — see the guard below.
+   */
+  expectedMcpVersion?: string;
 } = {}): Promise<DaemonStatus> {
   const configDir = options.configDir ?? getConfigDir();
   const lockPath = getLockfilePath(configDir);
@@ -178,8 +231,28 @@ export async function getDaemonStatus(options: {
       // readToken may throw if file is malformed; treat as unhealthy
     }
   }
-  const healthy = Boolean(health?.ok && health.uuid === record.uuid);
-  const stale = !healthy && isStale(record, { echoedUuid: health?.uuid ?? null });
+  const probeHealthy = Boolean(health?.ok && health.uuid === record.uuid);
+
+  // Code-graph gate. A daemon from a different build answers health fine but
+  // cannot import the hashed chunks now on disk, so "responds" != "usable".
+  //
+  // NEVER gate a lock held by our own pid. That is the attach-to-self case:
+  // startDaemon runs the server in-process for the CLI `daemon start` flow and
+  // in tests, so the lock's pid IS us and its code graph IS the code currently
+  // executing. A mismatch there could only mean the CALLER's expectation is
+  // stale — self-termination is never the answer, and gating it would break
+  // startDaemon's attach.
+  const gateVersion =
+    options.expectedMcpVersion !== undefined && record.pid !== process.pid;
+  const versionMismatch =
+    gateVersion && probeHealthy && lockCodeVersion(record) !== options.expectedMcpVersion;
+
+  const healthy = probeHealthy && !versionMismatch;
+  // Deliberately keyed off `probeHealthy`, not `healthy`: a version-mismatched
+  // daemon is alive and answering, so isStale() would say "not stale" anyway —
+  // but being explicit keeps the two concepts from drifting. Stale means "the
+  // holder is gone"; mismatched means "the holder is wrong".
+  const stale = !probeHealthy && isStale(record, { echoedUuid: health?.uuid ?? null });
 
   if (stale && options.reclaimStale) {
     release({ lockPath, expectedUuid: record.uuid });
@@ -199,12 +272,44 @@ export async function getDaemonStatus(options: {
     running: !stale,
     healthy,
     stale,
+    ...(versionMismatch ? { versionMismatch: true } : {}),
     configDir,
     lockPath,
     tokenPath,
     record,
     health,
   };
+}
+
+/**
+ * Stop the process holding the lock and free it, so the caller can start a
+ * replacement. Used for the two "alive but unusable" cases: a wedged daemon
+ * (never answers health) and a version-mismatched one (answers, wrong code
+ * graph). Refuses to signal our own pid.
+ */
+async function reclaimDaemonProcess(
+  record: DaemonLockRecord,
+  configDir: string,
+  reason: string,
+): Promise<void> {
+  console.error(`[perplexity-mcp] reclaiming daemon pid ${record.pid} in ${configDir}: ${reason}`);
+  try {
+    process.kill(record.pid, "SIGTERM");
+  } catch {
+    // already gone or not ours — the release below still frees the lock
+  }
+  await delay(1_000);
+  try {
+    process.kill(record.pid, 0);
+    process.kill(record.pid, "SIGKILL");
+  } catch {
+    // ESRCH — exited after SIGTERM
+  }
+  try {
+    release({ lockPath: getLockfilePath(configDir), expectedUuid: record.uuid });
+  } catch {
+    // best-effort; the next getDaemonStatus will retry the reclaim
+  }
 }
 
 export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<DaemonConnectionInfo> {
@@ -220,6 +325,7 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<D
   for (let pass = 0; pass < 2; pass++) {
     const deadline = Date.now() + (options.startTimeoutMs ?? 15_000);
     let launched = false;
+    let reclaimedMismatch = false;
     let lastStatus: DaemonStatus | null = null;
 
     while (Date.now() < deadline) {
@@ -228,10 +334,35 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<D
         reclaimStale: true,
         healthTimeoutMs: options.healthTimeoutMs,
         treatSelfAsZombie: options.treatSelfAsZombie,
+        ...(options.expectedMcpVersion !== undefined
+          ? { expectedMcpVersion: options.expectedMcpVersion }
+          : {}),
       });
       lastStatus = status;
       if (status.running && status.healthy && status.record && status.health) {
         return toConnectionInfo(status.record, status.health);
+      }
+
+      // A live daemon on the wrong code graph will never become healthy, so
+      // don't burn the whole timeout waiting: stop it now and let the next
+      // poll spawn a matching one. It is NOT stale, so getDaemonStatus
+      // deliberately left its lock alone — releasing it without stopping the
+      // process would leave two daemons racing one profile.
+      // getDaemonStatus never flags a mismatch for our own pid, so this can't
+      // signal ourselves; the explicit check keeps that guarantee local.
+      if (
+        status.versionMismatch &&
+        status.record &&
+        status.record.pid !== process.pid &&
+        !reclaimedMismatch
+      ) {
+        reclaimedMismatch = true;
+        await reclaimDaemonProcess(
+          status.record,
+          configDir,
+          `lock claims code graph ${lockCodeVersion(status.record) ?? "unknown"}, need ${options.expectedMcpVersion}`,
+        );
+        continue;
       }
 
       if (!status.running && !launched) {
@@ -253,27 +384,11 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<D
     // treatSelfAsZombie case, which getDaemonStatus already reclaims when the
     // caller opted in; if it didn't opt in, killing is not ours to do.
     if (pass === 0 && wedged && record && record.pid !== process.pid) {
-      console.error(
-        `[perplexity-mcp] daemon pid ${record.pid} holds ${configDir} but never answered health ` +
-          `(lock port ${record.port}) — reclaiming wedged daemon and retrying once.`,
+      await reclaimDaemonProcess(
+        record,
+        configDir,
+        `never answered health (lock port ${record.port}) — retrying once`,
       );
-      try {
-        process.kill(record.pid, "SIGTERM");
-      } catch {
-        // already gone or not ours — the release below still frees the lock
-      }
-      await delay(1_000);
-      try {
-        process.kill(record.pid, 0);
-        process.kill(record.pid, "SIGKILL");
-      } catch {
-        // ESRCH — exited after SIGTERM
-      }
-      try {
-        release({ lockPath: getLockfilePath(configDir), expectedUuid: record.uuid });
-      } catch {
-        // best-effort; pass 1's getDaemonStatus will retry the reclaim
-      }
       continue;
     }
     break;
@@ -288,7 +403,21 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Sta
   const tokenPath = getTokenPath(configDir);
   const retries = options.retries ?? 3;
   const retryDelayMs = options.retryDelayMs ?? 200;
-  const version = options.version ?? getPackageVersion();
+  // Code-graph version (hashed ESM chunks). Always the MCP package version.
+  const mcpVersion = getPackageVersion();
+  // `version` stays on the lock for legacy extension reapers that compared
+  // lock.version to extension.packageJSON.version. When the extension spawns
+  // us it sets PERPLEXITY_LOCK_COMPAT_VERSION to its own package version so
+  // those reapers leave a healthy daemon alone. Fall back to mcpVersion for
+  // CLI / npx starts.
+  const compatVersion =
+    (typeof process.env.PERPLEXITY_LOCK_COMPAT_VERSION === "string" &&
+    process.env.PERPLEXITY_LOCK_COMPAT_VERSION.trim().length > 0
+      ? process.env.PERPLEXITY_LOCK_COMPAT_VERSION.trim()
+      : null) ??
+    options.version ??
+    mcpVersion;
+  const version = compatVersion;
 
   for (let attempt = 0; attempt < retries; attempt++) {
     const status = await getDaemonStatus({
@@ -320,6 +449,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Sta
       port: typeof options.port === "number" ? options.port : 0,
       bearerToken: token.bearerToken,
       version,
+      mcpVersion,
       startedAt,
       cloudflaredPid: null,
       tunnelUrl: null,
@@ -361,6 +491,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Sta
       port: server?.port ?? provisional.port,
       bearerToken,
       version,
+      mcpVersion,
       startedAt,
       cloudflaredPid: tunnelState.pid ?? null,
       tunnelUrl: tunnelState.url ?? null,
@@ -1017,9 +1148,22 @@ async function spawnDetachedDaemon(options: {
 }
 
 function resolveCliEntry(): string {
-  const mjsPath = fileURLToPath(new URL("../cli.mjs", import.meta.url));
+  // tsup CJS-bundles this module into the VS Code extension host, where
+  // import.meta.url is polyfilled to empty. Extension callers must pass
+  // spawnDaemon (see packages/extension/src/daemon/runtime.ts); this path
+  // is only for plain Node ESM (CLI / npx).
+  const moduleUrl =
+    typeof import.meta.url === "string" && import.meta.url.length > 0 ? import.meta.url : null;
+  if (!moduleUrl) {
+    throw new Error(
+      "Cannot resolve CLI entry: import.meta.url is unavailable in this runtime. " +
+        "Pass spawnDaemon to ensureDaemon when running from a CJS-bundled host " +
+        "(e.g. the VS Code extension).",
+    );
+  }
+  const mjsPath = fileURLToPath(new URL("../cli.mjs", moduleUrl));
   if (existsSync(mjsPath)) {
     return mjsPath;
   }
-  return fileURLToPath(new URL("../cli.js", import.meta.url));
+  return fileURLToPath(new URL("../cli.js", moduleUrl));
 }
