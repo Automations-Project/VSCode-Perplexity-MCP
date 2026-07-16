@@ -119,9 +119,18 @@ async function main() {
   const metadata = await collectSessionMetadata(page, ORIGIN, { sessionTimeoutMs: 10_000 });
 
   const vault = new Vault();
-  await vault.set(PROFILE, "cookies", JSON.stringify(allCookies));
-  if (metadata.sessionData?.user?.email) await vault.set(PROFILE, "email", metadata.sessionData.user.email);
-  if (metadata.sessionData?.user?.id) await vault.set(PROFILE, "userId", metadata.sessionData.user.id);
+  try {
+    await vault.set(PROFILE, "cookies", JSON.stringify(allCookies));
+    if (metadata.sessionData?.user?.email) await vault.set(PROFILE, "email", metadata.sessionData.user.email);
+    if (metadata.sessionData?.user?.id) await vault.set(PROFILE, "userId", metadata.sessionData.user.id);
+  } catch (err) {
+    // Seal failure (no keychain + no passphrase + no TTY) used to surface as a
+    // generic "crash" AFTER the user completed the login. Typed reason so the
+    // extension can point at the real fix (keychain / PERPLEXITY_VAULT_PASSPHRASE).
+    await ctx.browser()?.close().catch(() => {});
+    emit({ ok: false, reason: "vault_seal_failed", error: redact(String(err?.message ?? err)) });
+    process.exit(6);
+  }
 
   if (!existsSync(paths.dir)) mkdirSync(paths.dir, { recursive: true });
   writeFileSync(paths.modelsCache, JSON.stringify(metadata.cache, null, 2));

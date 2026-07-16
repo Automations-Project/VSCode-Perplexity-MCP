@@ -698,6 +698,11 @@ export async function refreshAccountInfo(opts: RefreshOptions = {}): Promise<Ref
     canUseComputer,
     modelsConfig: payload.models,
     rateLimits: payload.rateLimits ?? existing?.rateLimits ?? null,
+    // /rest/user/info only answers for a logged-in session, so its presence is
+    // the refresh path's authentication signal. Never inherit `authenticated`
+    // from the existing cache — a refresh that lost the session must downgrade.
+    authenticated: Boolean(payload.userInfo),
+    userId: (payload.userInfo as { id?: string } | null)?.id ?? existing?.userId ?? null,
   };
 
   mkdirSync(dirname(modelsCacheFile), { recursive: true });

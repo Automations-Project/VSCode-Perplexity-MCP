@@ -107,6 +107,8 @@ export async function collectSessionMetadata(page, origin, opts = {}) {
         isMax: false,
         isEnterprise: false,
         canUseComputer: false,
+        authenticated: false,
+        userId: null,
       },
     };
   }
@@ -141,6 +143,10 @@ export async function collectSessionMetadata(page, origin, opts = {}) {
       isMax: flags.isMax,
       isEnterprise: flags.isEnterprise,
       canUseComputer: flags.canUseComputer,
+      // We only reach here with a confirmed session (guard above), so the
+      // cache can honestly claim authentication (perplexity_models reads it).
+      authenticated: true,
+      userId: sessionData.user.id ?? null,
     },
   };
 }

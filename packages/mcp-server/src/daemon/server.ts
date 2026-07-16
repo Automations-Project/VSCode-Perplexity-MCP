@@ -7,7 +7,7 @@ import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middlew
 import helmet from "helmet";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express, { type NextFunction, type Request, type RequestLike, type Response } from "express";
-import { PerplexityClient } from "../client.js";
+import { PerplexityClient, buildAccountSnapshot } from "../client.js";
 import { registerPrompts } from "../prompts.js";
 import { registerResources } from "../resources.js";
 import { getEnabledTools, loadToolConfig } from "../tool-config.js";
@@ -693,7 +693,7 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
         sessionIdGenerator: undefined,
       });
 
-      registerResources(mcpServer);
+      registerResources(mcpServer, buildAccountSnapshot);
       registerPrompts(mcpServer);
       registerTools(mcpServer, getClient, getEnabledTools(loadToolConfig()), {
         onToolSettled: (event) => {

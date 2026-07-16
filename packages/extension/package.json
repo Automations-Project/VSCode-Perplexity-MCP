@@ -377,7 +377,7 @@
           "default": 0,
           "minimum": 0,
           "maximum": 65535,
-          "description": "Pinned loopback port for the embedded daemon. 0 = ephemeral (OS-assigned, changes on restart). Set to a fixed port (1024-65535) to make http-loopback configs stable across daemon restarts."
+          "description": "Pinned loopback port for the embedded daemon. 0 = ephemeral (OS-assigned, changes on restart). Set a fixed port (1024-65535) to keep VS Code's own MCP registration and http-loopback IDE configs stable across daemon restarts. Takes effect the next time the daemon starts."
         },
         "Perplexity.syncFolderPatterns": {
           "type": "array",

@@ -30,6 +30,21 @@ describe("logout", () => {
     expect(existsSync(getProfilePaths("default").dir)).toBe(true);
   });
 
+  // Issue #13 / product review: models-cache.json surviving a soft logout kept
+  // the dashboard claiming the old tier (and loggedIn=true via `|| !!accountInfo`),
+  // and a stale daemon-status.json pinned an obsolete auth badge the same way.
+  it("soft: removes models-cache.json and daemon-status.json", async () => {
+    const paths = getProfilePaths("default");
+    writeFileSync(paths.modelsCache, JSON.stringify({ isPro: true, authenticated: true }));
+    writeFileSync(paths.daemonStatus, JSON.stringify({ authenticated: true, tier: "Pro" }));
+
+    await softLogout("default");
+
+    expect(existsSync(paths.modelsCache)).toBe(false);
+    expect(existsSync(paths.daemonStatus)).toBe(false);
+    // browser-data is deliberately NOT touched (daemon single-owner, issue #8).
+  });
+
   it("hard: wipes entire profile dir including vault", async () => {
     const vault = new Vault();
     await vault.set("default", "cookies", JSON.stringify([{ name: "x", value: "y" }]));

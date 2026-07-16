@@ -116,15 +116,61 @@ function reapStaleVersionedDaemon(config: RuntimeConfig): void {
   removeStaleLock(lockPath);
 }
 
+// Observed-port tracking (issue #14). The daemon binds an OS-assigned
+// ephemeral port on every start, and VS Code caches the URL we bake into the
+// McpHttpServerDefinition — so when a respawn lands on a new port, someone
+// must tell VS Code to re-resolve or it hammers the dead port forever.
+// Every daemon-ensure in the extension funnels through ensureBundledDaemon,
+// which makes this the one place that can see the port move.
+let lastObservedPort: number | null = null;
+let portChangeListener: ((port: number) => void) | null = null;
+
+/** Register the (single) listener notified when the daemon's port changes. */
+export function onBundledDaemonPortChange(listener: (port: number) => void): void {
+  portChangeListener = listener;
+}
+
+function notifyDaemonPortObserved(port: number): void {
+  const changed = lastObservedPort !== null && lastObservedPort !== port;
+  lastObservedPort = port;
+  if (changed) {
+    try {
+      portChangeListener?.(port);
+    } catch {
+      // A listener failure must never break the ensure path.
+    }
+  }
+}
+
+/**
+ * `Perplexity.daemonPort` from settings, or undefined when unset/invalid.
+ * This setting existed (and the port-pin nudge wrote it) but nothing ever
+ * consumed it — pinning was a no-op and every daemon start drew a fresh
+ * ephemeral port (issue #14).
+ */
+function getPinnedDaemonPort(): number | undefined {
+  try {
+    const port = getSettingsSnapshot().daemonPort;
+    if (Number.isInteger(port) && port >= 1024 && port <= 65535) return port;
+  } catch {
+    // settings unavailable outside the extension host
+  }
+  return undefined;
+}
+
 export async function ensureBundledDaemon(options: { startTimeoutMs?: number } = {}) {
   const config = requireRuntimeConfig();
   reapStaleVersionedDaemon(config);
-  return ensureDaemon({
+  const pinnedPort = getPinnedDaemonPort();
+  const info = await ensureDaemon({
     configDir: config.configDir,
     spawnDaemon: spawnBundledDaemon,
     treatSelfAsZombie: true,
+    ...(pinnedPort !== undefined ? { port: pinnedPort } : {}),
     ...(options.startTimeoutMs !== undefined ? { startTimeoutMs: options.startTimeoutMs } : {}),
   });
+  notifyDaemonPortObserved(info.port);
+  return info;
 }
 
 export async function exportHistoryFromDaemon(historyId: string, format: "pdf" | "markdown" | "docx"): Promise<DaemonExportResult> {

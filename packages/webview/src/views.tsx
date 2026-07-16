@@ -272,6 +272,11 @@ export function DashboardView({
             // The daemon couldn't unseal this profile's vault. "Refresh state"
             // now re-sends the passphrase to the daemon, so it IS the fix.
             text = "Daemon can't unlock this profile's vault — click Refresh state to re-send your passphrase.";
+          } else if (da.reason === "auth-check-failed") {
+            // The vault unsealed and cookies loaded, but Perplexity rejected
+            // or never answered the live session probe — telling the user to
+            // "run login" here was the #13 misdirection.
+            text = "Daemon loaded your saved session but Perplexity didn't accept it — it may have expired or the check was blocked. Try Refresh state; if it persists, log in again.";
           } else if (da.reason === "not-logged-in") {
             text = "Daemon sees an anonymous session — run login to connect.";
           } else {

@@ -28,6 +28,7 @@ import {
   type ASIAccessResponse,
   type RateLimitResponse,
   type AccountInfo,
+  deriveTierLabel,
 } from "./config.js";
 import { exportThread as exportEntry, resolveExportApiFormat, FORMAT_TO_CONTENT_TYPE } from "./export.js";
 import { isImpitAvailable, impitFetchJson } from "./refresh.js";
@@ -67,6 +68,56 @@ export function readCachedAccountInfoFromDisk(): AccountInfo | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Map the daemon's auth outcome to the machine-readable reason in
+ * daemon-status.json. Order matters: an unsealable vault outranks everything
+ * (login can't fix it), and a loaded-but-rejected session ("auth-check-failed")
+ * must NOT collapse into "not-logged-in" — that told users to run a login that
+ * couldn't help (issue #13).
+ *
+ * @internal Exported only for unit tests.
+ */
+export function computeDaemonAuthReason(input: {
+  authenticated: boolean;
+  vaultLocked: boolean;
+  hadStoredSession: boolean;
+}): NonNullable<DaemonAuthStatus["reason"]> {
+  if (input.authenticated) return "ok";
+  if (input.vaultLocked) return "vault-locked";
+  if (input.hadStoredSession) return "auth-check-failed";
+  return "not-logged-in";
+}
+
+/**
+ * Snapshot served over the `perplexity://account/status` MCP resource. Pure
+ * disk read — never launches a browser. registerResources() always supported
+ * a provider, but both transports called it one-arg, so the resource never
+ * registered anywhere; this is its first real producer. Curated on purpose:
+ * account status, not the multi-hundred-line models config (that's
+ * perplexity_models' job).
+ */
+export function buildAccountSnapshot(): Record<string, unknown> {
+  const info = readCachedAccountInfoFromDisk();
+  if (!info) {
+    return {
+      status: "no-cache",
+      note: "No account snapshot on disk yet. Run perplexity_login (or any Perplexity tool) to populate it.",
+    };
+  }
+  const authenticated = info.authenticated ?? false;
+  return {
+    tier: deriveTierLabel(info, authenticated),
+    authenticated,
+    userId: info.userId ?? null,
+    isPro: info.isPro,
+    isMax: info.isMax,
+    isEnterprise: info.isEnterprise,
+    canUseComputer: info.canUseComputer,
+    rateLimits: info.rateLimits ?? null,
+    modelCount: Object.keys(info.modelsConfig?.models ?? {}).length,
+  };
 }
 
 const STEALTH_ARGS = [
@@ -918,6 +969,11 @@ export class PerplexityClient {
   private page: Page | null = null;
   public authenticated = false;
   public userId: string | null = null;
+  // True when the last init() actually loaded stored session cookies. Lets
+  // writeDaemonStatus tell "you never logged in" apart from "your saved
+  // session was loaded but the live probe rejected it" (auth-check-failed) —
+  // the latter is NOT fixed by running login again (issue #13).
+  private hadStoredSession = false;
   public accountInfo: AccountInfo = {
     isPro: false,
     isMax: false,
@@ -991,6 +1047,7 @@ export class PerplexityClient {
       // The headed bootstrap may have refreshed cf_clearance; we must not
       // overwrite the fresh disk cookie with the stale vault copy.
       const saved = await getSavedCookies();
+      this.hadStoredSession = saved.length > 0;
       if (saved.length > 0) {
         const current = await this.context.cookies();
         const currentNames = new Set(current.map((c) => c.name));
@@ -2721,11 +2778,11 @@ export class PerplexityClient {
       // this profile's vault" (a plain reinit won't recover — the passphrase
       // must be re-supplied) from "not logged in". Derived from the last
       // getSavedCookies() unseal outcome (issue: daemon vault-locked).
-      const reason: DaemonAuthStatus["reason"] = this.authenticated
-        ? "ok"
-        : wasLastVaultLocked()
-          ? "vault-locked"
-          : "not-logged-in";
+      const reason = computeDaemonAuthReason({
+        authenticated: this.authenticated,
+        vaultLocked: wasLastVaultLocked(),
+        hadStoredSession: this.hadStoredSession,
+      });
       const status: DaemonAuthStatus = {
         authenticated: this.authenticated,
         tier: this.daemonTier(),

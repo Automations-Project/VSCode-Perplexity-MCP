@@ -330,6 +330,26 @@ export interface AccountInfo {
   canUseComputer: boolean;
   modelsConfig: ModelsConfigResponse | null;
   rateLimits: RateLimitResponse | null;
+  // Optional because caches written before these fields existed must stay
+  // readable. Consumers default authenticated to false (never true — a stale
+  // cache must degrade to "Anonymous", not fake an authenticated session).
+  authenticated?: boolean;
+  userId?: string | null;
+}
+
+/**
+ * Single tier ladder for AccountInfo consumers. Subscription flags outrank
+ * `authenticated`: the flags come from real /rest signals, while
+ * `authenticated` merely says a session existed when the cache was written.
+ */
+export function deriveTierLabel(
+  info: Pick<AccountInfo, "isPro" | "isMax" | "isEnterprise">,
+  authenticated: boolean,
+): "Anonymous" | "Authenticated" | "Pro" | "Max" | "Enterprise" {
+  if (info.isMax) return "Max";
+  if (info.isPro) return "Pro";
+  if (info.isEnterprise) return "Enterprise";
+  return authenticated ? "Authenticated" : "Anonymous";
 }
 
 export interface ASIFile {

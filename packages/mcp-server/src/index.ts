@@ -3,7 +3,7 @@
 import { isMainModule } from "./is-main-module.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { PerplexityClient } from "./client.js";
+import { PerplexityClient, buildAccountSnapshot } from "./client.js";
 import { ensureDaemon, startDaemon } from "./daemon/launcher.js";
 import { registerTools } from "./tools.js";
 import { registerPrompts } from "./prompts.js";
@@ -112,7 +112,7 @@ export async function main() {
   const toolConfig = loadToolConfig();
   const enabledTools = getEnabledTools(toolConfig);
 
-  registerResources(server);
+  registerResources(server, buildAccountSnapshot);
   registerPrompts(server);
   registerTools(server, getClient, enabledTools);
 

@@ -195,31 +195,74 @@ export async function getDaemonStatus(options: {
 
 export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<DaemonConnectionInfo> {
   const configDir = options.configDir ?? getConfigDir();
-  const deadline = Date.now() + (options.startTimeoutMs ?? 15_000);
-  let launched = false;
 
-  while (Date.now() < deadline) {
-    const status = await getDaemonStatus({
-      configDir,
-      reclaimStale: true,
-      healthTimeoutMs: options.healthTimeoutMs,
-      treatSelfAsZombie: options.treatSelfAsZombie,
-    });
-    if (status.running && status.healthy && status.record && status.health) {
-      return toConnectionInfo(status.record, status.health);
-    }
+  // Two passes (issue #14): pass 0 is the normal ensure loop; if it times out
+  // WEDGED — a live pid holding the lock whose port never once answered
+  // health — pass 1 reclaims and retries. isStale() is pid-liveness only, so
+  // without this a daemon that hung between lock-acquire and port-sync (lock
+  // pinned at port 0), or whose socket died under a live process, reads as
+  // running:true forever: the spawn gate never opens and every ensure times
+  // out with no way to recover short of manually deleting daemon.lock.
+  for (let pass = 0; pass < 2; pass++) {
+    const deadline = Date.now() + (options.startTimeoutMs ?? 15_000);
+    let launched = false;
+    let lastStatus: DaemonStatus | null = null;
 
-    if (!status.running && !launched) {
-      await (options.spawnDaemon ?? spawnDetachedDaemon)({
+    while (Date.now() < deadline) {
+      const status = await getDaemonStatus({
         configDir,
-        host: options.host,
-        port: options.port,
-        tunnel: options.tunnel,
+        reclaimStale: true,
+        healthTimeoutMs: options.healthTimeoutMs,
+        treatSelfAsZombie: options.treatSelfAsZombie,
       });
-      launched = true;
+      lastStatus = status;
+      if (status.running && status.healthy && status.record && status.health) {
+        return toConnectionInfo(status.record, status.health);
+      }
+
+      if (!status.running && !launched) {
+        await (options.spawnDaemon ?? spawnDetachedDaemon)({
+          configDir,
+          host: options.host,
+          port: options.port,
+          tunnel: options.tunnel,
+        });
+        launched = true;
+      }
+
+      await delay(options.pollIntervalMs ?? 200);
     }
 
-    await delay(options.pollIntervalMs ?? 200);
+    const record = lastStatus?.record ?? null;
+    const wedged = Boolean(lastStatus?.running && !lastStatus.healthy && record);
+    // Never SIGTERM ourselves: a lock carrying our own pid is the
+    // treatSelfAsZombie case, which getDaemonStatus already reclaims when the
+    // caller opted in; if it didn't opt in, killing is not ours to do.
+    if (pass === 0 && wedged && record && record.pid !== process.pid) {
+      console.error(
+        `[perplexity-mcp] daemon pid ${record.pid} holds ${configDir} but never answered health ` +
+          `(lock port ${record.port}) — reclaiming wedged daemon and retrying once.`,
+      );
+      try {
+        process.kill(record.pid, "SIGTERM");
+      } catch {
+        // already gone or not ours — the release below still frees the lock
+      }
+      await delay(1_000);
+      try {
+        process.kill(record.pid, 0);
+        process.kill(record.pid, "SIGKILL");
+      } catch {
+        // ESRCH — exited after SIGTERM
+      }
+      try {
+        release({ lockPath: getLockfilePath(configDir), expectedUuid: record.uuid });
+      } catch {
+        // best-effort; pass 1's getDaemonStatus will retry the reclaim
+      }
+      continue;
+    }
+    break;
   }
 
   throw new Error(`Timed out waiting for daemon startup in ${configDir}.`);

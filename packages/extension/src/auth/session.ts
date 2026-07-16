@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import type { AccountSnapshot, DaemonAuthStatus, ModelsConfigSource, RefreshTier } from "@perplexity-user-mcp/shared";
 import { MODELS_FALLBACK, MODELS_FALLBACK_CAPTURED_AT } from "@perplexity-user-mcp/shared";
-import { getConfigDir, getProfilePaths, getActiveName } from "perplexity-user-mcp/profiles";
+import { getConfigDir, getProfilePaths, getActiveName, getProfile } from "perplexity-user-mcp/profiles";
 import type { AccountInfo } from "../browser/runtime.js";
 import { getImpitStatus } from "../native-deps.js";
 
@@ -96,9 +96,14 @@ export function getModelsCachePath(): string {
 }
 
 export function hasStoredLogin(): boolean {
+  // NOT "vault.enc exists": soft logout deletes only the vault's `cookies`
+  // key (email/userId survive by design), so the file outlives every logout
+  // and a file-existence check reports "logged in" forever. `meta.lastLogin`
+  // is the signal both sides maintain — every login runner records it and
+  // softLogout deletes it. (This must stay sync; the cookie-aware async
+  // variant lives in perplexity-user-mcp's config.ts.)
   const name = getActiveName() ?? "default";
-  const { vault, vaultPlain } = getProfilePaths(name);
-  return existsSync(vault) || existsSync(vaultPlain);
+  return Boolean(getProfile(name)?.lastLogin);
 }
 
 export function getAccountSnapshot(): AccountSnapshot {

@@ -5,7 +5,7 @@ import type { AnySchema, ZodRawShapeCompat } from "@modelcontextprotocol/sdk/ser
 import { z } from "zod";
 import type { PerplexityClient } from "./client.js";
 import { exportThreadViaImpit, readCachedAccountInfoFromDisk, retrieveThreadViaImpit } from "./client.js";
-import type { AccountInfo, SearchResult } from "./config.js";
+import { deriveTierLabel, type AccountInfo, type SearchResult } from "./config.js";
 import { hydrateCloudHistoryEntry, syncCloudHistory } from "./cloud-sync.js";
 import { buildStoredHistoryEntry, formatResponse } from "./format.js";
 import {
@@ -90,15 +90,7 @@ function buildModelsResponseFromAccountInfo(
   userId: string | null,
   authenticated: boolean,
 ): string {
-  const tier = info.isMax
-    ? "Max"
-    : info.isPro
-      ? "Pro"
-      : info.isEnterprise
-        ? "Enterprise"
-        : authenticated
-          ? "Authenticated"
-          : "Anonymous";
+  const tier = deriveTierLabel(info, authenticated);
 
   const lines: string[] = [
     `**Account tier:** ${tier}`,
@@ -311,7 +303,14 @@ export function registerTools(
       async ({ query, sources, language, model }) => {
         const client = await getClient();
         if (!client.authenticated) {
-          return failure("perplexity_reason requires an authenticated Pro account.");
+          return failure("perplexity_reason requires an authenticated account. Run perplexity_login first.");
+        }
+        // Two-step taxonomy (same as perplexity_compute): authentication and
+        // subscription are different failures with different fixes. Fail open
+        // when account flags never loaded (modelsConfig null) — only block
+        // when the account is confirmed Free.
+        if (client.accountInfo.modelsConfig && !client.accountInfo.isPro && !client.accountInfo.isMax && !client.accountInfo.isEnterprise) {
+          return failure("perplexity_reason requires a Pro subscription; this account is authenticated but not Pro.");
         }
 
         try {
@@ -370,7 +369,11 @@ export function registerTools(
       async ({ query, sources, language }) => {
         const client = await getClient();
         if (!client.authenticated) {
-          return failure("perplexity_research requires an authenticated Pro account.");
+          return failure("perplexity_research requires an authenticated account. Run perplexity_login first.");
+        }
+        // See perplexity_reason: block only a confirmed-Free account.
+        if (client.accountInfo.modelsConfig && !client.accountInfo.isPro && !client.accountInfo.isMax && !client.accountInfo.isEnterprise) {
+          return failure("perplexity_research requires a Pro subscription; this account is authenticated but not Pro.");
         }
 
         try {
@@ -500,18 +503,21 @@ export function registerTools(
       },
       async () => {
         // Cache-first path: read the on-disk AccountInfo cache (written by
-        // refresh.ts on every successful tier-fetch and by login-runner
+        // refresh.ts on every successful tier-fetch and by the login runners
         // after a fresh login). Skips the browser launch entirely on warm
         // runs. Falls back to the lazy getClient() → init() live fetch
         // when the cache is missing or empty (modelsConfig === null).
-        // userId is not currently persisted to the cache file — pass null
-        // and let the response render `User ID: anonymous`. authenticated
-        // is true iff modelsConfig is populated (matches today's behavior:
-        // anonymous accounts have a minimal models config).
+        // authenticated/userId come from the cache itself; pre-upgrade caches
+        // lack the fields and must degrade to Anonymous — anonymous accounts
+        // DO have a minimal models config, so a populated cache is not an
+        // authentication signal (that hardcoded `true` was the "Authenticated
+        // + anonymous userId" lie).
         // TODO: background refresh on stale cache
         const cached = readCachedAccountInfoFromDisk();
         if (cached?.modelsConfig) {
-          return success(buildModelsResponseFromAccountInfo(cached, null, true));
+          return success(
+            buildModelsResponseFromAccountInfo(cached, cached.userId ?? null, cached.authenticated ?? false),
+          );
         }
         const client = await getClient();
         return success(buildModelsResponse(client));

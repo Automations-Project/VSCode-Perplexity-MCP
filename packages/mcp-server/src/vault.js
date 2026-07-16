@@ -351,7 +351,14 @@ async function tryKeytar() {
     }
     _keytarModuleCache = keytar;
     return keytar;
-  } catch {
+  } catch (err) {
+    // Log the degradation once per process. A wrong-platform keytar.node
+    // (issue #11's Linux-ELF-on-Windows) failed here with NO trace anywhere —
+    // the only symptom was the vault silently falling back to passphrase/TTY
+    // and logins landing on Anonymous.
+    console.error(
+      `[vault] keytar unavailable (${err?.message ?? err}) — falling back to passphrase/TTY unseal`,
+    );
     _keytarModuleCache = false;
     return null;
   }

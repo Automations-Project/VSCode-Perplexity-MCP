@@ -23,7 +23,7 @@ import { writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { Vault } from "./vault.js";
 import { getProfilePaths, getActiveName, recordLoginSuccess } from "./profiles.js";
 import { redact } from "./redact.js";
-import { buildRuntimeEndpoints } from "./session-metadata.js";
+import { buildRuntimeEndpoints, deriveAccountFlags, deriveTier } from "./session-metadata.js";
 import { CookieJar } from "./cookie-jar.js";
 import { loadImpit, isImpitAvailable } from "./refresh.js";
 import { warmCloudflare } from "./cf-warmup.js";
@@ -233,33 +233,32 @@ async function fetchSessionInfo(client, jar) {
   return session.json ?? {};
 }
 
-async function fetchModelsCache(client, jar) {
-  // Mirrors what `refresh.ts` writes — but via this jar. Best-effort.
+/**
+ * Fetch the raw account metadata responses through the impit jar. Best-effort:
+ * a partial result is fine, the flags derivation treats missing keys as false.
+ *
+ * URLs come from buildRuntimeEndpoints — the SAME source the browser runners
+ * and refresh.ts use. This function used to hardcode its own paths and 4 of
+ * the 5 were wrong (a "configs" prefix that doesn't exist upstream), so every
+ * Speed Boost login wrote a near-empty cache and the dashboard downgraded
+ * real Pro accounts to "Authenticated".
+ */
+async function fetchAccountMetadata(client, jar) {
+  const endpoints = buildRuntimeEndpoints(ORIGIN);
   const result = {};
-  for (const [key, path] of [
-    ["models", "/rest/configs/models?version=2.18&source=default"],
-    ["asi", "/rest/configs/asi-access?version=2.18&source=default"],
-    ["rateLimits", "/rest/rate-limits?version=2.18&source=default"],
-    ["experiments", "/rest/experiments?version=2.18&source=default"],
-    ["userInfo", "/rest/user/info?version=2.18&source=default"],
+  for (const [key, url] of [
+    ["models", endpoints.models],
+    ["asi", endpoints.asi],
+    ["rateLimits", endpoints.rateLimits],
+    ["experiments", endpoints.experiments],
+    ["userInfo", endpoints.userInfo],
   ]) {
     try {
-      const r = await impitJsonRequest(client, jar, `${ORIGIN}${path}`);
+      const r = await impitJsonRequest(client, jar, url);
       if (r.status === 200 && r.json) result[key] = r.json;
     } catch { /* ignore — partial cache is fine */ }
   }
   return result;
-}
-
-function deriveTier(modelsCache) {
-  if (modelsCache.userInfo?.subscription_tier === "enterprise") return "Enterprise";
-  if (modelsCache.userInfo?.subscription_tier === "max") return "Max";
-  if (modelsCache.userInfo?.subscription_tier === "pro") return "Pro";
-  if (modelsCache.experiments?.server_is_enterprise) return "Enterprise";
-  if (modelsCache.experiments?.server_is_max) return "Max";
-  if (modelsCache.experiments?.server_is_pro) return "Pro";
-  if (modelsCache.asi?.can_use_computer) return "Pro";
-  return "Authenticated";
 }
 
 async function main() {
@@ -348,20 +347,43 @@ async function main() {
     if (submitResp.ok) {
       // 5. Persist cookies + session metadata.
       const sessionInfo = await fetchSessionInfo(client, jar).catch(() => ({}));
-      const modelsCache = await fetchModelsCache(client, jar).catch(() => ({}));
-      const tier = deriveTier(modelsCache);
+      const raw = await fetchAccountMetadata(client, jar).catch(() => ({}));
+      const payload = {
+        experiments: raw.experiments ?? null,
+        userInfo: raw.userInfo ?? null,
+        asi: raw.asi ?? null,
+      };
+      const tier = deriveTier(payload);
 
-      await vault.set(PROFILE, "cookies", JSON.stringify(submitResp.cookies));
-      if (sessionInfo?.user?.email) await vault.set(PROFILE, "email", sessionInfo.user.email);
-      if (sessionInfo?.user?.id) await vault.set(PROFILE, "userId", sessionInfo.user.id);
+      try {
+        await vault.set(PROFILE, "cookies", JSON.stringify(submitResp.cookies));
+        if (sessionInfo?.user?.email) await vault.set(PROFILE, "email", sessionInfo.user.email);
+        if (sessionInfo?.user?.id) await vault.set(PROFILE, "userId", sessionInfo.user.id);
+      } catch (err) {
+        // Seal failure (no keychain + no passphrase + no TTY) used to crash the
+        // runner as a generic error AFTER a successful login. Emit a typed
+        // reason so the extension can say what to actually fix.
+        emit({ ok: false, reason: "vault_seal_failed", error: redact(String(err?.message ?? err)) });
+        process.exit(6);
+      }
 
       const paths = getProfilePaths(PROFILE);
       if (!existsSync(paths.dir)) mkdirSync(paths.dir, { recursive: true });
-      writeFileSync(paths.modelsCache, JSON.stringify(modelsCache, null, 2));
+      // Write the AccountInfo shape every cache reader expects (refresh.ts is
+      // the reference writer). This runner used to dump the raw keyed
+      // responses, which readers could not interpret.
+      const accountInfo = {
+        ...deriveAccountFlags(payload),
+        modelsConfig: raw.models ?? null,
+        rateLimits: raw.rateLimits ?? null,
+        authenticated: Boolean(sessionInfo?.user?.id),
+        userId: sessionInfo?.user?.id ?? null,
+      };
+      writeFileSync(paths.modelsCache, JSON.stringify(accountInfo, null, 2));
       recordLoginSuccess(PROFILE, { tier, loginMode: "auto", lastLogin: new Date().toISOString() });
       writeFileSync(paths.reinit, String(Date.now()));
 
-      emit({ ok: true, tier, modelCount: Object.keys(modelsCache?.models?.models ?? {}).length, transport: "impit" });
+      emit({ ok: true, tier, modelCount: Object.keys(raw.models?.models ?? {}).length, transport: "impit" });
       process.exit(0);
     }
 

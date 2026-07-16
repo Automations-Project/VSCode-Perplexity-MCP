@@ -28,6 +28,7 @@ import {
   getBundledDaemonConfigDir,
   getBundledDaemonStatus,
   getBundledNgrokSettings,
+  onBundledDaemonPortChange,
   rotateBundledDaemonToken,
 } from "./daemon/runtime.js";
 import { listHistoryEntries, rebuildHistoryEntries, runCloudSync, runExport } from "./history/open-handlers.js";
@@ -474,6 +475,11 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
   const serverDefinitionsChanged = new vscode.EventEmitter<void>();
   context.subscriptions.push(serverDefinitionsChanged);
   dashboard.setOnMcpServerDefinitionsChanged(() => { serverDefinitionsChanged.fire(); });
+  // Issue #14: the daemon's port is ephemeral, and the URL we hand VS Code
+  // embeds it. When any ensure path observes the daemon on a new port
+  // (respawn after a crash, dashboard-triggered restart), re-fire so VS Code
+  // re-resolves instead of hammering the dead port with ECONNREFUSED.
+  onBundledDaemonPortChange(() => { serverDefinitionsChanged.fire(); });
 
   // v0.8.5: wire the auto-regen helper so postStaleness can refresh any
   // drifted IDE configs without routing through the "Regenerate all" button.
@@ -558,9 +564,13 @@ async function activateInner(context: vscode.ExtensionContext): Promise<void> {
         const errorText = result.error && result.error !== reason ? result.error : "";
         const logLine = `[login:${profile}] Failed: ${reason}${errorText ? ` — ${errorText}` : ""}${result.detail && result.detail !== errorText ? ` (detail: ${result.detail})` : ""}`;
         log(logLine);
-        const uiLine = errorText
-          ? `Login failed for '${profile}' (${reason}): ${errorText}`
-          : `Login failed for '${profile}': ${reason}`;
+        const uiLine =
+          reason === "vault_seal_failed"
+            ? `Login for '${profile}' succeeded but the session could not be saved${errorText ? ` (${errorText})` : ""}. ` +
+              `Enable an OS keychain (on Linux: gnome-keyring/libsecret) or set PERPLEXITY_VAULT_PASSPHRASE, then log in again.`
+            : errorText
+              ? `Login failed for '${profile}' (${reason}): ${errorText}`
+              : `Login failed for '${profile}': ${reason}`;
         await dashboard.postNotice("error", uiLine);
         return false;
       }

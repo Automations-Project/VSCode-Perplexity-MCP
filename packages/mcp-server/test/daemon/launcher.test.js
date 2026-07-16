@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
+import { spawn } from "node:child_process";
 import { acquire, getLockfilePath } from "../../src/daemon/lockfile.ts";
 import { ensureDaemon, getDaemonStatus, startDaemon } from "../../src/daemon/launcher.ts";
 
@@ -77,6 +78,63 @@ describe("daemon launcher", () => {
     expect(status.record?.pid).toBe(results[0].pid);
     expect(results[0].version).toBe(readPackageVersion());
   });
+
+  // Issue #14: a LIVE pid holding the lock whose port never answers health
+  // (e.g. a daemon that hung between lock-acquire and port-sync, leaving the
+  // lock pinned at port 0). isStale() is pid-only, so this used to read as
+  // running:true forever — the spawn gate never opened and every ensureDaemon
+  // timed out with no recovery short of hand-deleting daemon.lock.
+  it("reclaims a wedged daemon (live pid, never-healthy port) and starts a replacement", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "pplx-daemon-wedged-"));
+    const lockPath = getLockfilePath(configDir);
+
+    // A real, live process that will never serve /daemon/health. Lock port 0
+    // makes probeHealth return null unconditionally — the wedged shape.
+    const zombie = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: "ignore",
+    });
+    try {
+      expect(
+        acquire(
+          {
+            pid: zombie.pid,
+            uuid: "wedged-daemon",
+            port: 0,
+            bearerToken: "wedged-token",
+            version: readPackageVersion(),
+            startedAt: new Date().toISOString(),
+          },
+          { lockPath },
+        ),
+      ).toBe(true);
+
+      const spawnDaemon = async () => {
+        const runtime = await startDaemon({ configDir, createClient: createMockClient });
+        if (!runtime.attached) {
+          runtimes.push({ ...runtime, configDir });
+        }
+      };
+
+      const info = await ensureDaemon({
+        configDir,
+        spawnDaemon,
+        pollIntervalMs: 50,
+        startTimeoutMs: 1_500,
+      });
+
+      expect(info.uuid).not.toBe("wedged-daemon");
+      expect(info.port).toBeGreaterThan(0);
+      // The wedged process was killed as part of the reclaim.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(() => process.kill(zombie.pid, 0)).toThrow();
+    } finally {
+      try {
+        process.kill(zombie.pid, "SIGKILL");
+      } catch {
+        // already reaped by the reclaim — the expected case
+      }
+    }
+  }, 20_000);
 
   it("reclaims a stale lockfile before starting a new daemon", async () => {
     const configDir = mkdtempSync(join(tmpdir(), "pplx-daemon-stale-"));
