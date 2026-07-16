@@ -7,6 +7,7 @@ import {
   EXTENSION_ID,
   IDE_METADATA,
   type DaemonAuditEntry,
+  type DaemonBusyState,
   type DaemonStatusState,
   type DaemonTunnelState,
   type DashboardState,
@@ -517,7 +518,31 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
           case "auth:dismiss-expired":
             break;
           case "profile:switch": {
-            setActive(message.payload.name);
+            const name = message.payload.name;
+            // Switching rebinds the ONE shared daemon, so it silently changes
+            // the account under every other VS Code window and every attached
+            // IDE. Confirm host-side (mirroring profile:delete) rather than in
+            // the webview: this way it also covers ExpiredBanner, the second
+            // entry point that sends profile:switch, and cannot be bypassed by
+            // a stale webview bundle.
+            const confirmSwitch = await vscode.window.showWarningMessage(
+              `Switch the shared daemon to profile '${name}'?`,
+              {
+                modal: true,
+                detail:
+                  "This rebinds the shared daemon. All open VS Code windows and every configured " +
+                  "IDE client (Cursor, Claude Desktop, …) will start using this account. " +
+                  "Any Perplexity work already running will finish on the previous account.",
+              },
+              "Switch profile",
+            );
+            if (confirmSwitch !== "Switch profile") {
+              // Required: without this the webview's pending slice never clears
+              // and the dashboard spins "Reconnecting…" for the full 60s.
+              await this.postActionResult(message.id, false, "cancelled");
+              break;
+            }
+            setActive(name);
             this.onMcpServerDefinitionsChanged?.();
             // The active profile changed → re-supply its vault passphrase to
             // the running daemon so it can unlock the new profile (otherwise it
@@ -2261,13 +2286,62 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  /**
+   * Forward a busy snapshot to this window's webview.
+   *
+   * Re-narrows every field: the SSE parser yields `Record<string, unknown>` off
+   * the wire. Carries tool/clientId/depth only — no bearer, no tunnel URL, no
+   * passphrase (cf. the `bearerAvailable`-only rule for daemon status).
+   */
+  private async postDaemonBusy(payload: Record<string, unknown>): Promise<void> {
+    if (!this.view) {
+      return;
+    }
+    const rawActive = payload.active;
+    let active: DaemonBusyState["active"] = null;
+    if (rawActive && typeof rawActive === "object") {
+      const a = rawActive as Record<string, unknown>;
+      if (typeof a.tool === "string") {
+        active = {
+          tool: a.tool,
+          clientId: typeof a.clientId === "string" ? a.clientId : null,
+          startedAt: typeof a.startedAt === "string" ? a.startedAt : new Date().toISOString(),
+        };
+      }
+    }
+    const busy: DaemonBusyState = {
+      busy: typeof payload.busy === "boolean" ? payload.busy : active !== null,
+      active,
+      queued: typeof payload.queued === "number" && payload.queued >= 0 ? payload.queued : 0,
+      updatedAt: typeof payload.updatedAt === "string" ? payload.updatedAt : new Date().toISOString(),
+    };
+    await this.view.webview.postMessage({
+      type: "daemon:busy",
+      payload: busy,
+    } satisfies ExtensionMessage);
+  }
+
   private async handleDaemonEvent(event: string, payload: Record<string, unknown>): Promise<void> {
     if (!this.view) {
       return;
     }
 
     if (event === "daemon:ready") {
+      // The greeting payload IS getHealth(), which embeds the busy snapshot —
+      // so a dashboard that opens mid-research renders busy immediately instead
+      // of showing "idle" until the next transition.
+      if (payload.busy && typeof payload.busy === "object") {
+        await this.postDaemonBusy(payload.busy as Record<string, unknown>);
+      }
       await this.postDaemonState();
+      return;
+    }
+
+    if (event === "daemon:busy") {
+      // Partial post ONLY — never postDaemonState() here. Busy fires per tool
+      // start/finish per client; a full refresh would mean 6+ postMessages, a
+      // 50-entry audit disk read and a tunnel-perf compute per tool call.
+      await this.postDaemonBusy(payload);
       return;
     }
 

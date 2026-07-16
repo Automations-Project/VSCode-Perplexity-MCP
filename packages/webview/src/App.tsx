@@ -40,6 +40,14 @@ function nextActionId(prefix: string): string {
 }
 
 /**
+ * Ids of profile:switch messages we optimistically started the reconnecting
+ * spinner for. Both senders (ProfileSwitcher, ExpiredBanner) mint their own
+ * crypto.randomUUID(), so the id carries no type prefix to match on — we have
+ * to remember it. Cleared when the host answers.
+ */
+const pendingProfileSwitchIds = new Set<string>();
+
+/**
  * Send a webview message. For action-type messages the `id` field is
  * auto-generated and the action is registered as pending in the store.
  */
@@ -49,6 +57,11 @@ function send(message: WebviewMessage | Omit<Extract<WebviewMessage, { id: strin
   // daemon badge shows a "Reconnecting…" spinner instead of looking stuck.
   if (message.type === "profile:switch" || message.type === "dashboard:refresh") {
     useDashboardStore.getState().startReconnecting();
+    // The host confirms a profile switch (it rebinds the shared daemon for
+    // every window) — remember the id so a cancel can stop the spinner.
+    if (message.type === "profile:switch" && "id" in message && message.id) {
+      pendingProfileSwitchIds.add(message.id);
+    }
   }
   if (ACTION_TYPES.has(message.type) && !("id" in message && message.id)) {
     const id = nextActionId(message.type);
@@ -112,6 +125,14 @@ function App() {
     const msg = event.data;
     if (msg.type === "action:result") {
       useDashboardStore.getState().markActionDone(msg.id);
+      // `send()` optimistically starts the reconnecting spinner for
+      // profile:switch, but the host now shows a modal confirm first (the
+      // switch rebinds the shared daemon for every window). If the user
+      // cancels, stop spinning immediately instead of waiting out the 60s
+      // safety timeout.
+      if (pendingProfileSwitchIds.delete(msg.id) && !msg.ok) {
+        useDashboardStore.getState().stopReconnecting();
+      }
       return;
     }
     if (msg.type === "auth:state") {

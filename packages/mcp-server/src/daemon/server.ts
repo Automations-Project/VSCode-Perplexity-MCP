@@ -8,6 +8,9 @@ import helmet from "helmet";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express, { type NextFunction, type Request, type RequestLike, type Response } from "express";
 import { PerplexityClient, buildAccountSnapshot } from "../client.js";
+// Type-only: @perplexity-user-mcp/shared is deliberately NOT a dependency of
+// this package (it publishes standalone to npm). Type imports erase at build.
+import type { DaemonBusyState } from "@perplexity-user-mcp/shared";
 import { registerPrompts } from "../prompts.js";
 import { registerResources } from "../resources.js";
 import { getEnabledTools, loadToolConfig } from "../tool-config.js";
@@ -170,6 +173,10 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
   const getClient = async () => {
     if (!client) {
       client = options.createClient ? options.createClient() : new PerplexityClient();
+      // Fan the shared page's busy/queue state out to every attached dashboard.
+      // One scheduler on one singleton client = one truth for every window.
+      // Optional-chained: test doubles supply only init/shutdown.
+      client.onBusyChange?.((state) => publishEvent("daemon:busy", { ...state }));
     }
     if (!clientInitPromise) {
       const pending = client.init();
@@ -336,6 +343,23 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
     next();
   };
 
+  /**
+   * Busy snapshot for join-time hydration.
+   *
+   * SSE `daemon:busy` is the live transport, but `/daemon/events` greets each
+   * new subscriber with `daemon:ready` + getHealth(); without busy in there, a
+   * dashboard opened mid-research would render "idle" until the next
+   * transition. Same producer, read at subscribe time — not a second source.
+   * Idle default when no client exists yet (the client is lazily constructed).
+   */
+  const getBusy = (): DaemonBusyState =>
+    client?.getBusyState?.() ?? {
+      busy: false,
+      active: null,
+      queued: 0,
+      updatedAt: new Date().toISOString(),
+    };
+
   const getHealth = () => ({
     ok: true,
     pid: process.pid,
@@ -345,6 +369,7 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
     uptimeMs: Date.now() - startedAt,
     startedAt: new Date(startedAt).toISOString(),
     heartbeatCount: heartbeatMap.size,
+    busy: getBusy(),
     tunnel: options.getTunnelState?.() ?? {
       status: "disabled",
       url: null,
@@ -356,7 +381,15 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
   const publishEvent = (event: string, payload: EventPayload) => {
     const frame = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
     for (const response of sseClients) {
-      response.write(frame);
+      try {
+        response.write(frame);
+      } catch {
+        // A dead socket used to throw and abort the loop, starving every
+        // later subscriber. Harmless while events were rare; busy events fire
+        // per tool start/finish per client, and multi-window fan-out is
+        // exactly the case that exposes it. Drop the corpse and keep going.
+        sseClients.delete(response);
+      }
     }
   };
 

@@ -61,6 +61,14 @@ export function ProfileSwitcher({ send }: { send: SendFn }) {
         <div className="profile-menu" role="menu">
           {profiles.length > 0 && <div className="profile-menu-group">Profiles</div>}
           {profiles.length === 0 && <div className="profile-menu-group">No profiles yet</div>}
+          {profiles.length > 1 && (
+            // Pre-click honesty. The host also shows a modal confirm (which is
+            // the enforcement point and covers ExpiredBanner too) — this just
+            // means the consequence isn't a surprise at the moment of clicking.
+            <div className="profile-menu-hint" data-testid="profile-switch-scope-hint">
+              Switching rebinds the shared daemon — all windows &amp; IDE clients follow.
+            </div>
+          )}
           {profiles.map((p) => (
             <button key={p.name} role="menuitem" className={`profile-menu-item ${p.name === active ? "is-active" : ""}`} onClick={() => switchTo(p.name)}>
               {p.displayName ?? p.name} <span className="profile-menu-item-tier">{p.tier ?? p.loginMode}</span>

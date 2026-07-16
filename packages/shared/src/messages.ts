@@ -167,6 +167,32 @@ export interface DaemonStatusState {
   bearerAvailable: boolean;
 }
 
+/** The page-exclusive op currently holding the shared daemon's browser. */
+export interface DaemonBusyActive {
+  /** MCP tool name, e.g. "perplexity_research". */
+  tool: string;
+  /** Which attached client issued it ("cursor-…", "daemon-attach-…"), when known. */
+  clientId?: string | null;
+  startedAt: string;
+}
+
+/**
+ * Live busy/queue state of the shared daemon's single browser page.
+ *
+ * One daemon serves every VS Code window and every configured IDE, so this is
+ * global truth, not per-window. Deliberately kept OUT of `DaemonStatusState`:
+ * that payload is pull-driven by the heavy `postDaemonState` refresh and would
+ * be stale between refreshes, whereas busy must land in every dashboard within
+ * ~1s of a transition. Carries no bearer, no tunnel URL, no passphrase.
+ */
+export interface DaemonBusyState {
+  busy: boolean;
+  active: DaemonBusyActive | null;
+  /** Page-exclusive ops waiting behind `active`. */
+  queued: number;
+  updatedAt: string;
+}
+
 export interface DaemonAuditEntry {
   timestamp: string;
   clientId: string;
@@ -423,6 +449,7 @@ export type ExtensionMessage =
   | { type: "doctor:running"; payload: { probeRan: boolean } }
   | { type: "doctor:report"; payload: DoctorReport }
   | { type: "daemon:status-updated"; payload: DaemonStatusState }
+  | { type: "daemon:busy"; payload: DaemonBusyState }
   | { type: "daemon:tunnel-url"; payload: DaemonTunnelState }
   | { type: "daemon:token-rotated"; payload: { rotatedAt: string } }
   | { type: "daemon:audit-tail"; payload: { items: DaemonAuditEntry[] } }

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type {
   AuthState,
   DaemonAuditEntry,
+  DaemonBusyState,
   DaemonStatusState,
   CfNamedManagedConfig,
   CfNamedTunnelSummary,
@@ -52,6 +53,17 @@ interface DashboardStore {
   richViewEntry: HistoryEntryDetail | null;
   externalViewers: ExternalViewer[];
   daemonStatus: DaemonStatusState | null;
+  /**
+   * Live busy/queue state of the shared daemon's single browser page.
+   *
+   * `null` = not hydrated yet (render nothing), which is NOT the same as an
+   * idle payload (`busy: false`) — that is a real "idle" the UI can state.
+   *
+   * Deliberately a SEPARATE slot from `daemonStatus`: busy arrives on its own
+   * SSE event, while daemonStatus is rebuilt by the heavy refresh. Merging them
+   * would let a refresh clobber busy with a stale value.
+   */
+  daemonBusy: DaemonBusyState | null;
   daemonAuditTail: DaemonAuditEntry[];
   daemonTokenRotatedAt: string | null;
   /**
@@ -186,6 +198,7 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
   richViewEntry: null,
   externalViewers: [],
   daemonStatus: null,
+  daemonBusy: null,
   daemonAuditTail: [],
   daemonTokenRotatedAt: null,
   reconnecting: { active: false, since: 0 },
@@ -272,6 +285,13 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
 
     if (message.type === "daemon:status-updated") {
       set({ daemonStatus: message.payload });
+      return;
+    }
+
+    if (message.type === "daemon:busy") {
+      // Host is authoritative — overwrite unconditionally. The daemon's
+      // scheduler is the single producer for every window.
+      set({ daemonBusy: message.payload });
       return;
     }
 

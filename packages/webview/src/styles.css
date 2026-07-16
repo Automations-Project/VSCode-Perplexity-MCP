@@ -236,6 +236,21 @@ a {
   margin-bottom: 10px;
 }
 
+/*
+ * Shared-daemon busy/queue strip. min-height reserves the row so chips
+ * appearing when another window starts work never shift the metric grid
+ * underneath (the strip is driven by SSE, so it can change at any moment
+ * without any local interaction).
+ */
+.daemon-busy-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 26px;
+  margin-bottom: 10px;
+}
+
 .daemon-action-row {
   display: flex;
   align-items: center;
@@ -3098,6 +3113,15 @@ details[open] > .daemon-disclosure-summary .daemon-disclosure-icon {
   letter-spacing: 0.06em;
   color: var(--text-muted);
   padding: 6px 10px 4px;
+}
+
+/* Scope warning above the profile list: a switch is global, not per-window. */
+.profile-menu-hint {
+  font-size: 0.68rem;
+  line-height: 1.35;
+  color: var(--text-muted);
+  padding: 0 10px 6px;
+  max-width: 240px;
 }
 
 .profile-menu hr {

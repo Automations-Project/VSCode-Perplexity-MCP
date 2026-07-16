@@ -1,6 +1,11 @@
 import { ChevronDown, KeyRound, Power, RefreshCcw, ServerCog, Skull } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { DaemonAuditEntry, DaemonStatusState, WebviewMessage } from "@perplexity-user-mcp/shared";
+import type {
+  DaemonAuditEntry,
+  DaemonBusyState,
+  DaemonStatusState,
+  WebviewMessage,
+} from "@perplexity-user-mcp/shared";
 import { useDashboardStore, type TunnelProbeState } from "../store";
 import { BearerReveal } from "./BearerReveal";
 import { DaemonActionButton } from "./DaemonActionButton";
@@ -12,8 +17,19 @@ export { deriveCfNamedState };
 
 type SendFn = (message: WebviewMessage | Omit<Extract<WebviewMessage, { id: string }>, "id">) => void;
 
+/**
+ * "perplexity_research" → "Research". The daemon reports raw MCP tool names;
+ * the strip is user-facing.
+ */
+export function humanizeTool(tool: string): string {
+  const bare = tool.replace(/^perplexity[_-]?/i, "").replace(/[_-]+/g, " ").trim();
+  if (!bare) return tool;
+  return bare.charAt(0).toUpperCase() + bare.slice(1);
+}
+
 export function DaemonStatus({ send }: { send: SendFn }) {
   const status = useDashboardStore((store) => store.daemonStatus);
+  const daemonBusy = useDashboardStore((store) => store.daemonBusy);
   const auditTail = useDashboardStore((store) => store.daemonAuditTail);
   const tokenRotatedAt = useDashboardStore((store) => store.daemonTokenRotatedAt);
   const tunnelProviders = useDashboardStore((store) => store.tunnelProviders);
@@ -30,6 +46,7 @@ export function DaemonStatus({ send }: { send: SendFn }) {
   return (
     <DaemonStatusView
       status={status}
+      daemonBusy={daemonBusy}
       auditTail={auditTail}
       tokenRotatedAt={tokenRotatedAt}
       tunnelProviders={tunnelProviders}
@@ -44,6 +61,7 @@ export function DaemonStatus({ send }: { send: SendFn }) {
 
 export function DaemonStatusView({
   status,
+  daemonBusy = null,
   auditTail,
   tokenRotatedAt,
   tunnelProviders,
@@ -54,6 +72,12 @@ export function DaemonStatusView({
   send,
 }: {
   status: DaemonStatusState | null;
+  /**
+   * Live busy/queue state of the shared page. `null` = the daemon has not
+   * reported yet, so the strip stays silent rather than claiming "Ready".
+   * Defaults to null so existing callers/tests need no prop change.
+   */
+  daemonBusy?: DaemonBusyState | null;
   auditTail: DaemonAuditEntry[];
   tokenRotatedAt: string | null;
   tunnelProviders?: TunnelProvidersState | null;
@@ -130,12 +154,74 @@ export function DaemonStatusView({
           ? { label: "Starting", chip: "chip-warn", dot: "warn" }
           : { label: "Offline", chip: "chip-danger", dot: "off" };
 
+  // Busy strip. Three real states plus pre-hydrate:
+  //   null      → say nothing (the daemon has never reported)
+  //   idle      → calm "Ready", naming the sharing explicitly
+  //   busy      → which tool, which client, how many waiting
+  // Queue depth is a chip inside this strip rather than a 4th DaemonMetric:
+  // the metric grid is 3-up, so a 4th card would reflow onto a second row and
+  // jump the layout the moment work starts.
+  const busyStrip = (() => {
+    if (!daemonBusy) return null;
+    if (!daemonBusy.busy || !daemonBusy.active) {
+      return (
+        <span className="chip chip-muted" data-testid="daemon-busy-idle">
+          <StatusDot variant="ok" decorative />
+          Ready — shared with your other windows &amp; IDEs
+        </span>
+      );
+    }
+    const { tool, clientId, startedAt } = daemonBusy.active;
+    return (
+      <>
+        <span className="chip chip-accent" data-testid="daemon-busy-active">
+          <StatusDot variant="info" decorative />
+          {humanizeTool(tool)} running
+          {startedAt ? (
+            <>
+              {" "}
+              · <RelativeTime iso={startedAt} />
+            </>
+          ) : null}
+        </span>
+        {clientId ? (
+          <span className="chip chip-neutral" data-testid="daemon-busy-client">
+            from {clientId}
+          </span>
+        ) : null}
+        {daemonBusy.queued > 0 ? (
+          <span className="chip chip-warn" data-testid="daemon-busy-queued">
+            {daemonBusy.queued} queued
+          </span>
+        ) : null}
+      </>
+    );
+  })();
+
   return (
     <div className="glass-panel section-panel" data-testid="daemon-status-card">
       <div className="section-header">
         <div className="eyebrow">Singleton Daemon</div>
         <div className="title">HTTP MCP server</div>
-        <div className="detail">One local daemon shared by all VS Code windows and MCP clients.</div>
+        <div className="detail">
+          One local daemon shared by all VS Code windows and MCP clients — they queue on the
+          same browser session, so work started anywhere shows up here.
+        </div>
+      </div>
+
+      {/*
+        Own live region, deliberately NOT nested inside the bearer-reveal one
+        below — that region ticks every second during a reveal and would make
+        busy announcements chatter. Height is reserved so the strip appearing
+        never shifts the metric grid.
+      */}
+      <div
+        className="daemon-busy-strip"
+        role="status"
+        aria-live="polite"
+        data-testid="daemon-busy-strip"
+      >
+        {busyStrip}
       </div>
 
       <div className="daemon-chip-row">
@@ -220,6 +306,12 @@ export function DaemonStatusView({
           Loopback {status.url}
         </div>
       ) : null}
+      {/* Lifecycle honesty: the daemon outlives this window on purpose, and
+          Restart/Kill above are global, not local to it. */}
+      <div className="daemon-muted-note" data-testid="daemon-lifecycle-note">
+        Closing this window won&apos;t stop the daemon — it keeps serving your other windows and
+        IDE clients. Restart and Kill above affect every one of them.
+      </div>
 
       <details className="daemon-disclosure">
         <summary className="daemon-disclosure-summary">

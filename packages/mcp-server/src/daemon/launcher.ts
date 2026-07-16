@@ -15,6 +15,13 @@ import { ensureToken, getTokenPath, readToken } from "./token.js";
 import type { StartedTunnel, TunnelState } from "./tunnel.js";
 import { getTunnelProvider, readTunnelSettings } from "./tunnel-providers/index.js";
 
+/**
+ * Consumer-side mirror of the daemon's `getHealth()` payload (server.ts).
+ *
+ * NOTE: this is a hand-maintained duplicate applied with an unchecked `as`
+ * cast, so TypeScript will NOT catch a field that server.ts stops sending —
+ * it will just silently arrive as undefined. Keep it in sync by hand.
+ */
 export interface DaemonHealthStatus {
   ok: boolean;
   pid: number;
@@ -24,6 +31,13 @@ export interface DaemonHealthStatus {
   uptimeMs: number;
   startedAt: string;
   heartbeatCount?: number;
+  /** Busy/queue snapshot of the shared page, for join-time hydration. */
+  busy?: {
+    busy: boolean;
+    active: { tool: string; clientId?: string | null; startedAt: string } | null;
+    queued: number;
+    updatedAt: string;
+  };
   tunnel?: {
     status?: string;
     url?: string | null;

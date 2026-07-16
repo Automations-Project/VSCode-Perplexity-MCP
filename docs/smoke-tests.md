@@ -549,3 +549,33 @@ The Windsurf row is the **definitive evidence for closing issue #3** because Win
 - Linux + headless-no-libsecret (Codex CLI path) — same code path covered by the `set` row above; deferred until a clean Linux box is available.
 - macOS — covered by the existing 0.8.x release-gate matrix; no behavior change in 0.8.41 specific to macOS.
 - Cross-IDE soak — Antigravity, Cursor outside VS Code, Codex CLI — pending; will be folded into the 0.8.42 / 0.8.43 smoke checklists as those releases ship.
+
+## Shared-daemon multi-client hardening (Unreleased)
+
+Phases A–C make the already-correct topology (N clients → **1 daemon → 1 Chromium → 1 page**) safe *under concurrent clients*: page-exclusive tool calls are serialized through a FIFO, reinit runs as a drain barrier, history index writes take a cross-process lock, and busy/queue state fans out to every dashboard over SSE.
+
+Unit tests cover the scheduler algebra and the cross-process history race (the latter spawns real processes and is negative-tested). What they **cannot** exercise is real Chromium under real concurrent load, which is exactly where the pre-fix bugs lived — so this checklist is gating.
+
+Prereqs:
+
+1. Install the smoke VSIX and reload VS Code.
+2. Active profile logged in (`~/.perplexity-mcp/profiles/<active>/vault.enc` exists).
+3. At least two VS Code windows + one external stdio client (Cursor / Claude Desktop / Cline).
+
+Run on Windows 11 (primary) + macOS 14 + Ubuntu 22 if available.
+
+- [ ] **Topology unchanged — one daemon, one Chromium.** Open 3 clients (2 VS Code windows + 1 external). Assert **exactly one** `node` PID holding `daemon.lock` and **exactly one Chromium parent** for `browser-data`. (Regression guard: Phase A must not have introduced a second `launchPersistentContext`.)
+- [ ] **Concurrent tools serialize instead of racing.** Fire 3 `perplexity_search` calls at the same daemon from 3 different clients as close to simultaneously as you can manage. **All three must return real answers**, or fail with an explicit queue/timeout error. The failure mode this replaces is `page.evaluate: Target page, context or browser has been closed` or interleaved/garbled answers as the *normal* path — seeing either means the FIFO is not engaged.
+- [ ] **Busy/queue is visible in every window within ~1s.** Start a long `perplexity_research` from the external client. **Both** VS Code dashboards must show the busy strip — "Research running", the client id, and a queue depth if you stack more calls — **without clicking anything**. Then fire a second call and confirm `1 queued` appears in both. This is the SSE fan-out; a manual refresh being required means the busy branch fell through to `postDaemonState` or the event never published.
+- [ ] **Join-time hydration.** While a long research is *still running*, open a **third** VS Code window. Its dashboard must show busy **immediately** on load, not "Ready" until the next transition. (This is the `getHealth()` busy snapshot on the `daemon:ready` greeting.)
+- [ ] **Reinit does not kill in-flight work.** Start a `perplexity_research`, and while it is running trigger a reinit from another window (**Refresh state**, or log in again to touch `.reinit`). Expected: the research **completes** (or fails with a clean error) and the daemon **stays alive**. `daemon.log` must NOT show the reconnect loop dying on `Target page, context or browser has been closed`, and the daemon PID must be unchanged afterwards.
+- [ ] **Profile switch warns that it is global.** Click a different profile in the switcher. A **modal** must appear stating the switch rebinds the shared daemon and that all windows and IDE clients will use the account. **Cancel it** — the dashboard must NOT be left spinning "Reconnecting…" (regression guard for the optimistic spinner). Then confirm it and check every other window follows to the new account.
+- [ ] **Timeout does not leak across ops.** Run a `perplexity_compute` (ASI) and let it finish or time out. Immediately run a `perplexity_search`. The search must behave normally — a search that hangs far past ~30s suggests compute's raised page timeout leaked.
+- [ ] **History integrity under multi-client load.** With the daemon serving 2+ clients, run ~10 tool calls in quick succession across them, then open the History tab (and/or `~/.perplexity-mcp/profiles/<active>/history/index.json`). **Every** call must appear. Count `*.md` files in that dir and assert the count equals `index.json`'s `items.length` — a mismatch is the lost-update bug. Also assert no `*.tmp` and no `index.lock` files remain.
+- [ ] **Audit still attributes clients.** `~/.perplexity-mcp/audit.log` still records a distinct `x-perplexity-client-id` + tool + duration per call. (Queue wait must not have swallowed the audit entry.)
+- [ ] **Doctor still skips the live daemon's profile (issue #8).** With the daemon running, run `Perplexity: Run Doctor` **with probe**. The browser probe must report **skip**, not launch a second Chromium against `browser-data`.
+- [ ] **Busy never crosses the tunnel (H11).** With a tunnel enabled, `curl` the tunnel URL for `/daemon/events` and `/daemon/health` → both must be **404**. Busy is loopback-only.
+
+**Observable invariant after 3 concurrent attach clients:** one live `daemon.lock` PID · one Chromium parent · distinct client ids in audit · all tools complete under the queue without daemon death.
+
+Save evidence to `docs/smoke-evidence/shared-daemon-hardening-YYYY-MM-DD.md`.
