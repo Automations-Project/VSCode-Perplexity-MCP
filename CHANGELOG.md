@@ -6,6 +6,16 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed — first-run `ENOENT` from the history index lock (CI red on `5782fed`/`801df79`)
+
+- **The Phase A index lock threw `ENOENT` on a profile that had never existed** ([`history-lock.js`](packages/mcp-server/src/history-lock.js), [`history-store.js`](packages/mcp-server/src/history-store.js)). The lock is acquired with `openSync(path, "wx")`, which fails when the **parent directory** does not exist — and a first-run machine has no `~/.perplexity-mcp/profiles/<name>/history` at all. `rebuildIndex()` creates the store dirs *inside* its own locked section, so it took the lock **before** anything had made the directory, and `rebuild-history-index` threw straight out of the CLI. `withFileLock` now creates the lock's parent directory itself (mirroring `atomicWrite`, which always did), and `rebuildIndex` also ensures the store dirs before acquiring.
+- **Why local runs never caught it:** the failing test drives the *default* config dir (`~/.perplexity-mcp`), and the dev box already had it from real use. A fresh CI runner has nothing — so this was invisible locally and failed all three matrix cells. Reproduced locally by running `cli.test.js` under a pristine `HOME`, which now passes.
+
+#### Verification
+
+- New: [`test/history-store.first-run.test.js`](packages/mcp-server/test/history-store.first-run.test.js) (3) — `rebuildIndex`, `append` and `list` against a config dir that has never existed, each in a **child process** so the suite's own profile state cannot mask it (the in-process variant is exactly what hid the bug). Plus a first-run case in [`test/history-lock.test.js`](packages/mcp-server/test/history-lock.test.js). **Negative-tested:** with the fix disabled these reproduce CI's exact `ENOENT … index.lock`.
+- `cli.test.js` (the suite CI failed on) passes under a pristine `HOME`: **67/67**. Full suite **1320 passed / 151 files**; `test:coverage` green across 3 consecutive runs; typecheck clean.
+
 ### Fixed — "Node.js not found" is now visible instead of a silent 15s timeout
 
 - **A missing Node install used to fail silently** ([`runtime.ts`](packages/extension/src/daemon/runtime.ts), [`extension.ts`](packages/extension/src/extension.ts)). `resolveNodePath()`'s last resort is the literal string `"node"` — it found nothing on disk and bets on `PATH`. When that bet loses, `spawn()` reports `ENOENT` **asynchronously on the child**, and the handler only wrote it to `daemon.log`. The user's entire experience was `ensureDaemon` timing out after 15s with "Timed out waiting for daemon startup" and no hint that Node was simply not installed. Now that exact case (ENOENT **and** the path was the unresolved `"node"` guess) raises a VS Code error toast — *"Node.js not found — install Node 22+ or set PERPLEXITY_NODE_PATH"* — with **Install Node.js**, **How to set PERPLEXITY_NODE_PATH** (naming the cases the probe misses: nvm, fnm, volta, asdf, portable installs), and **Open Logs**. De-duped per problem kind, since `ensureDaemon` polls and every respawn re-hits the same ENOENT.

@@ -1,4 +1,5 @@
-import { closeSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 /**
  * Cross-process mutual exclusion for a profile's history index.
@@ -96,6 +97,18 @@ export function withFileLock(lockPath, fn, opts = {}) {
   const backoffMs = opts.backoffMs ?? DEFAULT_BACKOFF_MS;
   let acquired = false;
   let reclaimed = false;
+
+  // The lock's directory may not exist yet — a first-run machine has no
+  // ~/.perplexity-mcp/profiles/<name>/history at all, and openSync(…,"wx")
+  // fails ENOENT on a missing parent. Callers must not have to remember to
+  // create it first (rebuildIndex legitimately creates it *inside* its own
+  // locked section). Mirrors atomicWrite in history-store.js.
+  try {
+    mkdirSync(dirname(lockPath), { recursive: true });
+  } catch {
+    // If we cannot create it, the openSync below will fail and be handled
+    // by the fail-open path rather than throwing out of a history write.
+  }
 
   for (let i = 0; i < attempts && !acquired; i++) {
     try {

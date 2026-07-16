@@ -94,6 +94,22 @@ describe("withFileLock", () => {
     expect(readFileSync(lockPath, "utf8")).toBe("");
   });
 
+  // Broke CI on a fresh runner: openSync(path,"wx") fails ENOENT when the
+  // parent directory does not exist, and a first-run machine has no
+  // ~/.perplexity-mcp/profiles/<name>/history at all. It never reproduced
+  // locally because the dev box already had the dir. rebuildIndex creates the
+  // store dirs INSIDE its own locked section, so the lock cannot require the
+  // caller to have made them first.
+  it("creates the lock's parent directory when it does not exist yet (first run)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "px-lock-fresh-"));
+    dirs.push(dir);
+    const lockPath = join(dir, "profiles", "default", "history", "index.lock");
+    let ran = false;
+    expect(() => withFileLock(lockPath, () => { ran = true; })).not.toThrow();
+    expect(ran).toBe(true);
+    expect(existsSync(lockPath)).toBe(false); // released
+  });
+
   it("proceeds fail-open rather than throwing when the lock stays busy", () => {
     const lockPath = tempLock();
     // Held by a live process (us) with a fresh mtime → never reclaimable.

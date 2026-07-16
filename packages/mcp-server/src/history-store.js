@@ -485,6 +485,11 @@ export function tag(id, tags) {
 }
 
 export function rebuildIndex() {
+  // Create the store dirs BEFORE acquiring: the lock lives inside the history
+  // dir, and on a first-run machine that dir does not exist yet. (withFileLock
+  // also mkdirs defensively — belt and braces, since this is the one entry
+  // point that can be the very first thing to touch the profile.)
+  ensureStoreDirs();
   // Reachable from inside loadIndexedEntries/resolveRecord, i.e. from within a
   // section that already holds the lock — withIndexLock is reentrant by depth,
   // so this is a pass-through there and a real acquire when called standalone
