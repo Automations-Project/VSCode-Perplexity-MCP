@@ -11,6 +11,20 @@ import {
 import { basename, dirname, join } from "node:path";
 import matter from "gray-matter";
 import { getActiveName, getProfilePaths } from "./profiles.js";
+import { withFileLock } from "./history-lock.js";
+
+/**
+ * Serialize index mutations across PROCESSES (daemon + CLI + extension host).
+ * Per-profile, never global — profile A must not block profile B.
+ */
+function withIndexLock(fn) {
+  // Test-only seam (mirrors PERPLEXITY_TEST_BROWSER_CLOSE_AFTER_MS in
+  // manual-login-runner.js): lets the concurrency suite prove it actually
+  // catches the lost update rather than passing vacuously. Never set this in
+  // production — it re-enables cross-process history corruption.
+  if (process.env.PERPLEXITY_TEST_DISABLE_HISTORY_LOCK === "1") return fn();
+  return withFileLock(join(getHistoryDir(), "index.lock"), fn);
+}
 
 export const HISTORY_LIMIT = 50;
 const INDEX_VERSION = 2;
@@ -42,9 +56,23 @@ function ensureStoreDirs() {
 
 function atomicWrite(path, contents) {
   mkdirSync(dirname(path), { recursive: true });
-  const tempPath = `${path}.tmp`;
-  writeFileSync(tempPath, contents);
-  renameSync(tempPath, path);
+  // Unique temp per writer. A fixed `${path}.tmp` is shared by every process
+  // touching this profile (daemon + CLI + extension host): two writers staged
+  // into the SAME temp file, the first renamed it away, and the second's
+  // renameSync then threw ENOENT on its own vanished temp. recordToolRun
+  // swallows that, so the entry disappeared with no log at all.
+  const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(tempPath, contents);
+    renameSync(tempPath, path);
+  } catch (err) {
+    try {
+      rmSync(tempPath, { force: true });
+    } catch {
+      // best-effort cleanup — never mask the original failure
+    }
+    throw err;
+  }
 }
 
 function stripInternal(record) {
@@ -313,32 +341,43 @@ function resolveRecord(id) {
 
 export function append(entry) {
   ensureStoreDirs();
-  if (entry?.id && resolveRecord(entry.id)) {
-    throw new Error(`History entry '${entry.id}' already exists.`);
-  }
+  // The lock must span read->modify->write, not just the write: two processes
+  // that each loadIndexedEntries() before either writes will both write a base
+  // that lacks the other's row, and the last rename wins. It also closes the
+  // ensureUniqueFilename TOCTOU.
+  return withIndexLock(() => {
+    if (entry?.id && resolveRecord(entry.id)) {
+      throw new Error(`History entry '${entry.id}' already exists.`);
+    }
 
-  const body = String(entry?.body ?? "").trim();
-  const normalized = normalizeEntry(entry ?? {}, body);
-  const filename = ensureUniqueFilename(buildFilename(normalized.createdAt, normalized.query));
-  const mdPath = join(getHistoryDir(), filename);
+    const body = String(entry?.body ?? "").trim();
+    const normalized = normalizeEntry(entry ?? {}, body);
+    const filename = ensureUniqueFilename(buildFilename(normalized.createdAt, normalized.query));
+    const mdPath = join(getHistoryDir(), filename);
 
-  atomicWrite(mdPath, serializeRecord(normalized, body));
+    atomicWrite(mdPath, serializeRecord(normalized, body));
 
-  const record = {
-    ...normalized,
-    filename,
-    body,
-    mdPath,
-    attachmentsDir: join(getAttachmentsRoot(), filename.slice(0, -3)),
-  };
+    const record = {
+      ...normalized,
+      filename,
+      body,
+      mdPath,
+      attachmentsDir: join(getAttachmentsRoot(), filename.slice(0, -3)),
+    };
 
-  const next = loadIndexedEntries().filter((item) => item.id !== normalized.id);
-  next.unshift({ ...record, ...stripInternal(record) });
-  writeIndex(next);
-  return stripInternal(record);
+    const next = loadIndexedEntries().filter((item) => item.id !== normalized.id);
+    next.unshift({ ...record, ...stripInternal(record) });
+    writeIndex(next);
+    return stripInternal(record);
+  });
 }
 
 export function update(id, patch = {}) {
+  // Lock spans resolveRecord -> writeIndex: it re-reads the index at the end.
+  return withIndexLock(() => updateUnlocked(id, patch));
+}
+
+function updateUnlocked(id, patch = {}) {
   const existing = resolveRecord(id);
   if (!existing) {
     return null;
@@ -422,17 +461,19 @@ export function get(id) {
 }
 
 export function deleteEntry(id) {
-  const record = resolveRecord(id);
-  if (!record) {
-    return false;
-  }
+  return withIndexLock(() => {
+    const record = resolveRecord(id);
+    if (!record) {
+      return false;
+    }
 
-  rmSync(record.mdPath, { force: true });
-  rmSync(record.attachmentsDir, { recursive: true, force: true });
+    rmSync(record.mdPath, { force: true });
+    rmSync(record.attachmentsDir, { recursive: true, force: true });
 
-  const next = loadIndexedEntries().filter((entry) => entry.id !== id);
-  writeIndex(next);
-  return true;
+    const next = loadIndexedEntries().filter((entry) => entry.id !== id);
+    writeIndex(next);
+    return true;
+  });
 }
 
 export function pin(id, pinned) {
@@ -444,6 +485,14 @@ export function tag(id, tags) {
 }
 
 export function rebuildIndex() {
+  // Reachable from inside loadIndexedEntries/resolveRecord, i.e. from within a
+  // section that already holds the lock — withIndexLock is reentrant by depth,
+  // so this is a pass-through there and a real acquire when called standalone
+  // (the CLI's rebuild-history-index).
+  return withIndexLock(() => rebuildIndexUnlocked());
+}
+
+function rebuildIndexUnlocked() {
   ensureStoreDirs();
   const files = readdirSync(getHistoryDir())
     .filter((file) => file.endsWith(".md"));

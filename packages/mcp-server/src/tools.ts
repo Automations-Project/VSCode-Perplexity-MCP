@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { PerplexityClient } from "./client.js";
 import { exportThreadViaImpit, readCachedAccountInfoFromDisk, retrieveThreadViaImpit } from "./client.js";
 import { deriveTierLabel, type AccountInfo, type SearchResult } from "./config.js";
+import { runInToolContext } from "./page-scheduler.js";
 import { hydrateCloudHistoryEntry, syncCloudHistory } from "./cloud-sync.js";
 import { buildStoredHistoryEntry, formatResponse } from "./format.js";
 import {
@@ -191,8 +192,15 @@ export function registerTools(
     config: ToolConfigWithInput<ZodRawShapeCompat | AnySchema> | ToolConfigWithoutInput,
     handler: ((args: any, extra: any) => Promise<any>) | ((extra: any) => Promise<any>),
   ): void {
-    const runWithAudit = async (extra: any, invoke: () => Promise<any>) => {
+    const runWithAudit = async (extra: any, rawInvoke: () => Promise<any>) => {
       const startedAt = Date.now();
+      // Name the tool for the whole async chain. client.search() backs four
+      // different tools, so the page scheduler cannot label its own work — it
+      // reads this ambient context when the op reaches the front of the queue,
+      // which is what lets every dashboard show "perplexity_research" and the
+      // owning clientId instead of an internal method name.
+      const invoke = () =>
+        runInToolContext({ tool: name, clientId: getClientId(extra) }, rawInvoke);
       try {
         const result = await invoke();
         hooks.onToolSettled?.({

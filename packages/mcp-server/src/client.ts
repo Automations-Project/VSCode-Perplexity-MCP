@@ -38,6 +38,7 @@ import { getActiveName, getConfigDir, getProfilePaths } from "./profiles.js";
 import type { DaemonAuthStatus } from "@perplexity-user-mcp/shared";
 import { clearStaleSingletonLocks, launchWithRetry } from "./fs-utils.js";
 import { OFFSCREEN_POSITION_ARG } from "./browser-window.js";
+import { PageScheduler, type PageBusyState } from "./page-scheduler.js";
 
 function getActiveProfileName(): string {
   return process.env.PERPLEXITY_PROFILE || getActiveName() || "default";
@@ -963,6 +964,82 @@ export async function exportThreadViaImpit(
   return { buffer, filename, contentType };
 }
 
+/**
+ * Playwright's default action timeout for the shared page.
+ *
+ * The page is process-global state shared by every client, so anything that
+ * raises it (computeASI's long reconnect loop) must put it back to exactly this.
+ */
+const DEFAULT_PAGE_TIMEOUT_MS = 30_000;
+
+// Option/result shapes for the page-exclusive methods. Extracted from inline
+// positions so each public method can stay a one-line scheduler wrapper around
+// its private `…Unsafe` implementation without duplicating a long literal type.
+export interface SearchOpts {
+  query: string;
+  modelPreference?: string;
+  mode?: string;
+  sources?: string[];
+  language?: string;
+  followUp?: { backendUuid: string; readWriteToken?: string | null };
+}
+
+export interface ComputeASIOpts {
+  query: string;
+  modelPreference?: string;
+  language?: string;
+  timeoutMs?: number;
+}
+
+export interface RetrieveThreadOpts {
+  threadSlug: string;
+  backendUuid?: string | null;
+  readWriteToken?: string | null;
+}
+
+export interface ExportThreadOpts {
+  threadSlug?: string | null;
+  entryUuid?: string | null;
+  format: "pdf" | "markdown" | "docx";
+}
+
+export interface ExportThreadResult {
+  buffer: Buffer;
+  filename: string;
+  contentType: string;
+}
+
+export interface ListCloudThreadsOpts {
+  limit?: number;
+  offset?: number;
+  searchTerm?: string;
+  excludeAsi?: boolean;
+  ascending?: boolean;
+}
+
+export interface CloudThreadSummary {
+  backendUuid: string;
+  contextUuid: string;
+  slug: string;
+  title: string;
+  queryStr: string;
+  answerPreview: string;
+  firstAnswer: string | null;
+  createdAt: string;
+  mode: string | null;
+  displayModel: string | null;
+  searchFocus: string | null;
+  sources: string[];
+  queryCount: number;
+  threadStatus: string;
+  readWriteToken: string | null;
+}
+
+export interface ListCloudThreadsResult {
+  items: CloudThreadSummary[];
+  total: number;
+}
+
 export class PerplexityClient {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
@@ -974,6 +1051,36 @@ export class PerplexityClient {
   // session was loaded but the live probe rejected it" (auth-check-failed) —
   // the latter is NOT fixed by running login again (issue #13).
   private hadStoredSession = false;
+  /**
+   * Serializes page-exclusive work and quiesces the page across reinit.
+   *
+   * Lives on the client (not the daemon server) because the `.reinit` and
+   * active-profile watchers call `client.reinit()` directly on this instance
+   * and never pass through the daemon's getClient() — a barrier anywhere else
+   * would simply be bypassed. See page-scheduler.ts.
+   */
+  private readonly scheduler = new PageScheduler();
+
+  /** Live busy/queue snapshot for the daemon's SSE fan-out and /daemon/health. */
+  getBusyState(): PageBusyState {
+    return this.scheduler.getBusyState();
+  }
+
+  /** Subscribe to busy transitions (daemon publishes these to dashboards). */
+  onBusyChange(listener: (state: PageBusyState) => void): () => void {
+    return this.scheduler.onBusyChange(listener);
+  }
+
+  /**
+   * Resolves once no reinit is in progress.
+   *
+   * The daemon awaits this after its cached init promise so a tool arriving
+   * mid-reinit WAITS for the fresh page instead of hitting the misleading
+   * "Client not initialized" guard on a perfectly healthy daemon.
+   */
+  whenReady(): Promise<void> {
+    return this.scheduler.whenReady();
+  }
   public accountInfo: AccountInfo = {
     isPro: false,
     isMax: false,
@@ -1349,7 +1456,20 @@ export class PerplexityClient {
    * vault cookies are picked up. Called by the `.reinit` sentinel watcher
    * after a child login-runner completes.
    */
+  /**
+   * Rebind the client to the active profile's session.
+   *
+   * Runs as a scheduler BARRIER so it can never close the page out from under
+   * an in-flight `page.evaluate` (which surfaced as "Target page, context or
+   * browser has been closed"). Every trigger — the `.reinit` sentinel watcher,
+   * the active-profile watcher, and POST /daemon/reinit — calls this method on
+   * the one shared client, so putting the barrier here covers all of them.
+   */
   async reinit(opts: { passphrase?: string } = {}): Promise<void> {
+    return this.scheduler.runBarrier(() => this.reinitUnsafe(opts));
+  }
+
+  private async reinitUnsafe(opts: { passphrase?: string } = {}): Promise<void> {
     console.error("[perplexity-mcp] Reinit requested — closing current context and reloading cookies.");
     // When the extension re-supplies the vault passphrase (e.g. after a profile
     // switch to a passphrase-protected account), update the process env so the
@@ -1381,14 +1501,12 @@ export class PerplexityClient {
     await this.init();
   }
 
-  async search(opts: {
-    query: string;
-    modelPreference?: string;
-    mode?: string;
-    sources?: string[];
-    language?: string;
-    followUp?: { backendUuid: string; readWriteToken?: string | null };
-  }): Promise<SearchResult> {
+  /** Page-exclusive: serialized so concurrent clients cannot interleave on the shared tab. */
+  async search(opts: SearchOpts): Promise<SearchResult> {
+    return this.scheduler.runExclusive("search", () => this.searchUnsafe(opts));
+  }
+
+  private async searchUnsafe(opts: SearchOpts): Promise<SearchResult> {
     const {
       query,
       modelPreference = "turbo",
@@ -1473,12 +1591,22 @@ export class PerplexityClient {
    * 3. Parse FINAL event blocks: workflow_block (answer text + workflow sources),
    *    web_result_block (citation sources), pending_followups_block
    */
-  async computeASI(opts: {
-    query: string;
-    modelPreference?: string;
-    language?: string;
-    timeoutMs?: number;
-  }): Promise<SearchResult> {
+  /** Page-exclusive: holds the tab for up to `timeoutMs` (default 180s). */
+  async computeASI(opts: ComputeASIOpts): Promise<SearchResult> {
+    return this.scheduler.runExclusive("computeASI", async () => {
+      try {
+        return await this.computeASIUnsafe(opts);
+      } finally {
+        // computeASIUnsafe raises the page-GLOBAL default timeout for its long
+        // reconnect loop and lowers it again at each return. A throw in between
+        // used to leak a ~210s default onto whatever ran next on this shared
+        // page. Restoring here covers every exit path exactly once.
+        this.page?.setDefaultTimeout(DEFAULT_PAGE_TIMEOUT_MS);
+      }
+    });
+  }
+
+  private async computeASIUnsafe(opts: ComputeASIOpts): Promise<SearchResult> {
     if (!this.page) {
       throw new Error("Client not initialized. Call init() first.");
     }
@@ -1669,7 +1797,7 @@ export class PerplexityClient {
         if (!result.answer.startsWith("ASI task may still be running")) {
           const elapsed = Math.round((Date.now() - startedAt) / 1000);
           console.error(`[perplexity-mcp] ASI completed via reconnect #${reconnectAttempt} (${elapsed}s).`);
-          this.page.setDefaultTimeout(30_000);
+          this.page.setDefaultTimeout(DEFAULT_PAGE_TIMEOUT_MS);
           // Download any generated files
           if (result.files?.length) {
             await this.downloadASIFiles(result.files, threadSlug);
@@ -1695,7 +1823,7 @@ export class PerplexityClient {
     if (lastSSEData) {
       const result = PerplexityClient.extractFromWorkflowBlock(lastSSEData, threadSlug, backendUuid, readWriteToken);
       if (result) {
-        this.page.setDefaultTimeout(30_000);
+        this.page.setDefaultTimeout(DEFAULT_PAGE_TIMEOUT_MS);
         return result;
       }
     }
@@ -1723,7 +1851,7 @@ export class PerplexityClient {
       }
     }
 
-    this.page.setDefaultTimeout(30_000);
+    this.page.setDefaultTimeout(DEFAULT_PAGE_TIMEOUT_MS);
     console.error(`[perplexity-mcp] ASI task timed out after ${timeoutMs / 1000}s.`);
     return {
       answer: `ASI task timed out after ${timeoutMs / 1000}s. The task may still be running.\nView results at: ${PERPLEXITY_URL}/search/${threadSlug}`,
@@ -1738,11 +1866,12 @@ export class PerplexityClient {
    * Re-fetch results from a Perplexity thread that may have completed after we timed out.
    * Tries reconnect SSE first (using backendUuid), then falls back to thread endpoint.
    */
-  async retrieveThread(opts: {
-    threadSlug: string;
-    backendUuid?: string | null;
-    readWriteToken?: string | null;
-  }): Promise<SearchResult> {
+  /** Page-exclusive on the fallback path; the impit fast path below only runs with no page. */
+  async retrieveThread(opts: RetrieveThreadOpts): Promise<SearchResult> {
+    return this.scheduler.runExclusive("retrieveThread", () => this.retrieveThreadUnsafe(opts));
+  }
+
+  private async retrieveThreadUnsafe(opts: RetrieveThreadOpts): Promise<SearchResult> {
     const { threadSlug, backendUuid, readWriteToken } = opts;
 
     // Fast path: try impit before forcing a browser launch. Both shapes
@@ -2575,11 +2704,12 @@ export class PerplexityClient {
     return lastEntry?.uuid ?? threadData?.last_entry_uuid ?? null;
   }
 
-  async exportThread(opts: {
-    threadSlug?: string | null;
-    entryUuid?: string | null;
-    format: "pdf" | "markdown" | "docx";
-  }): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
+  /** Page-exclusive on the fallback path; the impit fast path below only runs with no page. */
+  async exportThread(opts: ExportThreadOpts): Promise<ExportThreadResult> {
+    return this.scheduler.runExclusive("exportThread", () => this.exportThreadUnsafe(opts));
+  }
+
+  private async exportThreadUnsafe(opts: ExportThreadOpts): Promise<ExportThreadResult> {
     // Fast path: impit (no browser launch). Mirrors the pattern used by
     // getCloudThread / retrieveThread. Returns null on any failure so we
     // fall through to the page-context export below.
@@ -2666,32 +2796,13 @@ export class PerplexityClient {
    * Endpoint captured 2026-04-21 — body shape documented in
    * docs/export-endpoint-capture.md (alongside export).
    */
-  async listCloudThreads(opts: {
-    limit?: number;
-    offset?: number;
-    searchTerm?: string;
-    excludeAsi?: boolean;
-    ascending?: boolean;
-  } = {}): Promise<{
-    items: Array<{
-      backendUuid: string;
-      contextUuid: string;
-      slug: string;
-      title: string;
-      queryStr: string;
-      answerPreview: string;
-      firstAnswer: string | null;
-      createdAt: string;
-      mode: string | null;
-      displayModel: string | null;
-      searchFocus: string | null;
-      sources: string[];
-      queryCount: number;
-      threadStatus: string;
-      readWriteToken: string | null;
-    }>;
-    total: number;
-  }> {
+  async listCloudThreads(opts: ListCloudThreadsOpts = {}): Promise<ListCloudThreadsResult> {
+    return this.scheduler.runExclusive("listCloudThreads", () => this.listCloudThreadsUnsafe(opts));
+  }
+
+  private async listCloudThreadsUnsafe(
+    opts: ListCloudThreadsOpts = {},
+  ): Promise<ListCloudThreadsResult> {
     const url = buildListAskThreadsUrl();
     const body = buildListAskThreadsBody(opts);
 
@@ -2721,6 +2832,13 @@ export class PerplexityClient {
    * GET /rest/thread/<slug>?from_first=true (captured 2026-04-21).
    */
   async getCloudThread(slug: string, opts: GetCloudThreadOpts = {}): Promise<GetCloudThreadResult> {
+    return this.scheduler.runExclusive("getCloudThread", () => this.getCloudThreadUnsafe(slug, opts));
+  }
+
+  private async getCloudThreadUnsafe(
+    slug: string,
+    opts: GetCloudThreadOpts = {},
+  ): Promise<GetCloudThreadResult> {
     if (!slug) throw new Error("getCloudThread: slug required");
 
     // Fast path: same shape as listCloudThreads — go through impit when

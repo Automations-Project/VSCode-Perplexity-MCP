@@ -186,6 +186,13 @@ export async function startDaemonServer(options: StartDaemonServerOptions = {}):
       clientInitPromise = pending;
     }
     await clientInitPromise;
+    // `clientInitPromise` is a one-shot latch — it is never reassigned, so once
+    // the first init has fulfilled it resolves instantly forever, including
+    // while a reinit is tearing the page down. Awaiting the client's scheduler
+    // makes a tool arriving mid-reinit WAIT for the fresh page instead of
+    // hitting the misleading "Client not initialized" guard on a healthy
+    // daemon. Optional-chained: test doubles supply only init/shutdown.
+    await client.whenReady?.();
     return client;
   };
 
