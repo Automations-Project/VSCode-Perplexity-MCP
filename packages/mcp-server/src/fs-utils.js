@@ -88,7 +88,9 @@ export async function launchWithRetry(launch, opts = {}) {
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (beforeAttempt) {
-      try { beforeAttempt(attempt); } catch { /* best-effort lock clearing */ }
+      // May be async (squatter eviction shells out to PowerShell/pgrep) —
+      // await it so the cleanup actually lands before the next launch.
+      try { await beforeAttempt(attempt); } catch { /* best-effort lock clearing */ }
     }
     try {
       return await launch(attempt);

@@ -39,6 +39,7 @@ import type { DaemonAuthStatus } from "@perplexity-user-mcp/shared";
 import { clearStaleSingletonLocks, launchWithRetry } from "./fs-utils.js";
 import { OFFSCREEN_POSITION_ARG } from "./browser-window.js";
 import { PageScheduler, type PageBusyState } from "./page-scheduler.js";
+import { evictProfileSquatters } from "./process-tree.js";
 
 function getActiveProfileName(): string {
   return process.env.PERPLEXITY_PROFILE || getActiveName() || "default";
@@ -993,6 +994,15 @@ export async function exportThreadViaImpit(
  */
 const DEFAULT_PAGE_TIMEOUT_MS = 30_000;
 
+/** Idle time before the browser is parked. 0 disables. Default 30 minutes. */
+function resolveIdleParkMs(): number {
+  const raw = process.env.PERPLEXITY_BROWSER_IDLE_PARK_MS;
+  if (raw === undefined || raw.trim() === "") return 30 * 60_000;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return parsed;
+}
+
 // Option/result shapes for the page-exclusive methods. Extracted from inline
 // positions so each public method can stay a one-line scheduler wrapper around
 // its private `…Unsafe` implementation without duplicating a long literal type.
@@ -1082,6 +1092,73 @@ export class PerplexityClient {
    */
   private readonly scheduler = new PageScheduler();
 
+  /**
+   * Idle browser parking. The Chromium tree is the daemon's big cost
+   * (~300-600MB RSS); the daemon itself is a small HTTP server. After
+   * `idleParkMs` with no page work, close the browser and let the next tool
+   * call resurrect it lazily — so an unused daemon costs almost nothing.
+   *
+   * The trade: the first call after a long idle pays the bootstrap again
+   * (~10-30s incl. the headed CF pass). Default 30 minutes; tune or disable
+   * with PERPLEXITY_BROWSER_IDLE_PARK_MS (0 = never park).
+   */
+  private readonly idleParkMs = resolveIdleParkMs();
+  private parkTimer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor() {
+    this.scheduler.onBusyChange((state) => {
+      if (state.busy) this.cancelIdlePark();
+      else this.scheduleIdlePark();
+    });
+  }
+
+  private scheduleIdlePark(): void {
+    if (this.idleParkMs <= 0 || !this.page || this.parkTimer) return;
+    this.parkTimer = setTimeout(() => {
+      this.parkTimer = null;
+      void this.parkBrowser().catch(() => {
+        // Parking is an optimization; a failed park must never hurt anything.
+      });
+    }, this.idleParkMs);
+    // Never keep a short-lived CLI/stdio process alive just to park a browser.
+    this.parkTimer.unref?.();
+  }
+
+  private cancelIdlePark(): void {
+    if (this.parkTimer) {
+      clearTimeout(this.parkTimer);
+      this.parkTimer = null;
+    }
+  }
+
+  /**
+   * Close the browser, keep the daemon.
+   *
+   * Deliberately NOT `shutdown()`: shutdown flips `authenticated = false` and
+   * writes an anonymous daemon-status — but a parked daemon is still logged in
+   * (cookies on disk, session resumable), and the dashboard must not start
+   * telling users to re-login because we saved them some RAM. Only the
+   * browser handles are dropped; auth state and account info survive, and the
+   * on-disk status keeps saying "ok".
+   *
+   * Runs as a barrier so it can never yank the page from under an in-flight
+   * op; skips itself if work queued up while it waited.
+   */
+  async parkBrowser(): Promise<void> {
+    return this.scheduler.runBarrier(async () => {
+      if (!this.page) return;
+      if (this.scheduler.getBusyState().queued > 0) return;
+      console.error(
+        `[perplexity-mcp] parking idle browser (no page work for ${Math.round(this.idleParkMs / 60_000)}m) — ` +
+          `next tool call will bring it back.`,
+      );
+      if (this.context) await this.context.close().catch(() => {});
+      this.context = null;
+      this.browser = null;
+      this.page = null;
+    });
+  }
+
   /** Live busy/queue snapshot for the daemon's SSE fan-out and /daemon/health. */
   getBusyState(): PageBusyState {
     return this.scheduler.getBusyState();
@@ -1167,7 +1244,7 @@ export class PerplexityClient {
       // momentarily collide (issue #8). The retry absorbs that release lag.
       this.context = await launchWithRetry(
         () => chromium.launchPersistentContext(activePaths.browserData, launchOpts),
-        { beforeAttempt: () => clearStaleSingletonLocks(activePaths.browserData) },
+        { beforeAttempt: (attempt) => this.prepareProfileForLaunch(activePaths.browserData, attempt) },
       );
       this.browser = this.context.browser();
 
@@ -1206,6 +1283,10 @@ export class PerplexityClient {
       }
 
       this.writeDaemonStatus(_initAt, null);
+      // Start the idle-park clock: a daemon that inits and then never gets a
+      // tool call would otherwise hold Chromium forever (busy events only fire
+      // on tool activity).
+      this.scheduleIdlePark();
     } catch (err: unknown) {
       this.writeDaemonStatus(_initAt, err instanceof Error ? err.message : String(err));
       throw err;
@@ -1228,7 +1309,7 @@ export class PerplexityClient {
       // after a prior context close on the same browser-data dir (issue #8).
       ctx = await launchWithRetry(
         () => chromium.launchPersistentContext(browserData, buildLaunchOptions(false)),
-        { beforeAttempt: () => clearStaleSingletonLocks(browserData) },
+        { beforeAttempt: (attempt) => this.prepareProfileForLaunch(browserData, attempt) },
       );
 
       const page = ctx.pages()[0] || await ctx.newPage();
@@ -1478,6 +1559,40 @@ export class PerplexityClient {
    * after a child login-runner completes.
    */
   /**
+   * Pre-launch profile cleanup, escalating with the retry count.
+   *
+   * Attempt 0 (every launch): clear stale singleton lock FILES only — cheap,
+   * no process spawned, the happy path stays free.
+   *
+   * Attempt ≥1 (a real ProcessSingleton collision just happened): a LIVE
+   * browser is holding the profile. If it were merely mid-close, the retry
+   * backoff would have covered it — so hunt down processes whose command line
+   * carries `--user-data-dir=<browser-data>` and evict them. Without this, an
+   * orphan Chrome (from a killed daemon — on Windows every TerminateProcess'd
+   * daemon used to orphan its browser) turns EVERY subsequent launch into
+   * "Opening in existing browser session": the new chrome.exe forwards a tab
+   * into the orphan and exits 0, Playwright reports "Target page, context or
+   * browser has been closed", and the retry loop spams the orphan with tabs
+   * forever (138 reinit cycles in the field report).
+   *
+   * Eviction is ownership-guarded (see evictProfileSquatters): if a live
+   * foreign daemon holds daemon.lock, WE are the trespasser and nothing is
+   * killed — preserving the issue #8 single-owner invariant.
+   */
+  private async prepareProfileForLaunch(browserData: string, attempt: number): Promise<void> {
+    clearStaleSingletonLocks(browserData);
+    if (attempt >= 1) {
+      const result = await evictProfileSquatters(browserData, getConfigDir());
+      if (result.refusedReason) {
+        console.error(
+          `[perplexity-mcp] not evicting profile squatters: ${result.refusedReason} — ` +
+            `a live daemon owns this profile; this process should attach, not launch.`,
+        );
+      }
+    }
+  }
+
+  /**
    * Rebind the client to the active profile's session.
    *
    * Runs as a scheduler BARRIER so it can never close the page out from under
@@ -1486,8 +1601,49 @@ export class PerplexityClient {
    * the active-profile watcher, and POST /daemon/reinit — calls this method on
    * the one shared client, so putting the barrier here covers all of them.
    */
+  private reinitInFlight: Promise<void> | null = null;
+  private reinitQueued: {
+    opts: { passphrase?: string };
+    promise: Promise<void>;
+    resolve: () => void;
+    reject: (err: unknown) => void;
+  } | null = null;
+
   async reinit(opts: { passphrase?: string } = {}): Promise<void> {
-    return this.scheduler.runBarrier(() => this.reinitUnsafe(opts));
+    // Coalesce storms. Three editor windows each re-supplying the passphrase
+    // and refreshing produced 138 queued reinits in one field log — every one
+    // a full browser teardown + bootstrap, serialized by the barrier, so the
+    // daemon spent its life reinitializing. Reinit is idempotent (it reloads
+    // whatever is on disk NOW), so N requests during an in-flight run collapse
+    // into at most ONE follow-up. The follow-up keeps the NEWEST passphrase —
+    // dropping a fresh passphrase would strand a profile switch.
+    if (this.reinitInFlight) {
+      if (!this.reinitQueued) {
+        let resolve!: () => void;
+        let reject!: (err: unknown) => void;
+        const promise = new Promise<void>((res, rej) => {
+          resolve = res;
+          reject = rej;
+        });
+        this.reinitQueued = { opts, promise, resolve, reject };
+      } else if (opts.passphrase) {
+        this.reinitQueued.opts = opts;
+      }
+      return this.reinitQueued.promise;
+    }
+
+    const run = this.scheduler
+      .runBarrier(() => this.reinitUnsafe(opts))
+      .finally(() => {
+        this.reinitInFlight = null;
+        const queued = this.reinitQueued;
+        if (queued) {
+          this.reinitQueued = null;
+          this.reinit(queued.opts).then(queued.resolve, queued.reject);
+        }
+      });
+    this.reinitInFlight = run;
+    return run;
   }
 
   private async reinitUnsafe(opts: { passphrase?: string } = {}): Promise<void> {
@@ -1548,7 +1704,13 @@ export class PerplexityClient {
     }
 
     if (!this.page) {
-      throw new Error("Client not initialized. Call init() first.");
+      // Parked (idle teardown) or never initialized — resurrect on demand.
+      // We are inside the scheduler's exclusive slot, so the nested init()
+      // passes the reentrancy guard and later callers queue behind the resume.
+      await this.init();
+    }
+    if (!this.page) {
+      throw new Error("Client not initialized after init().");
     }
 
     // Validate model if we have a models config
@@ -1629,7 +1791,11 @@ export class PerplexityClient {
 
   private async computeASIUnsafe(opts: ComputeASIOpts): Promise<SearchResult> {
     if (!this.page) {
-      throw new Error("Client not initialized. Call init() first.");
+      // Parked or never initialized — resurrect on demand (see searchUnsafe).
+      await this.init();
+    }
+    if (!this.page) {
+      throw new Error("Client not initialized after init().");
     }
 
     const {
@@ -2880,6 +3046,7 @@ export class PerplexityClient {
   }
 
   async shutdown(): Promise<void> {
+    this.cancelIdlePark();
     if (this.context) {
       await this.context.close().catch(() => {});
       this.context = null;

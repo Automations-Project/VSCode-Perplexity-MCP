@@ -6,6 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { PerplexityClient } from "../client.js";
 import { getActiveName, getConfigDir } from "../profiles.js";
 import { getPackageVersion } from "../package-version.js";
+import { terminateProcessTree } from "../process-tree.js";
 import { watchActiveProfile, watchReinit } from "../reinit-watcher.js";
 import type { StartedDaemonServer } from "./server.js";
 import { startDaemonServer } from "./server.js";
@@ -321,18 +322,12 @@ async function reclaimDaemonProcess(
   reason: string,
 ): Promise<void> {
   console.error(`[perplexity-mcp] reclaiming daemon pid ${record.pid} in ${configDir}: ${reason}`);
-  try {
-    process.kill(record.pid, "SIGTERM");
-  } catch {
-    // already gone or not ours — the release below still frees the lock
-  }
-  await delay(1_000);
-  try {
-    process.kill(record.pid, 0);
-    process.kill(record.pid, "SIGKILL");
-  } catch {
-    // ESRCH — exited after SIGTERM
-  }
+  // Tree-kill, not process.kill: on Windows a plain kill is TerminateProcess —
+  // the daemon's signal handler never runs, so its Chrome child survived every
+  // reclaim, kept the browser-data ProcessSingleton, and forwarded all later
+  // launches to itself ("Opening in existing browser session" tab spam). The
+  // replacement daemon then could never bring a browser up.
+  await terminateProcessTree(record.pid);
   try {
     release({ lockPath: getLockfilePath(configDir), expectedUuid: record.uuid });
   } catch {
@@ -829,23 +824,20 @@ export async function stopDaemon(options: {
     throw new Error("Timed out waiting for daemon shutdown.");
   }
 
-  // Force path: try signalling the pid directly. SIGTERM first, then SIGKILL.
+  // Force path: take the WHOLE TREE down. On Windows a plain SIGTERM is
+  // TerminateProcess (no handler runs), which orphaned the daemon's Chrome —
+  // it kept the browser-data singleton and broke every later launch.
   const pid = recordForShutdown.pid;
   let signalled = false;
   try {
-    process.kill(pid, "SIGTERM");
+    process.kill(pid, 0); // only claim "signalled" for a live pid
     signalled = true;
-    await delay(1000);
-    try {
-      process.kill(pid, 0);
-      // still alive
-      process.kill(pid, "SIGKILL");
-      await delay(500);
-    } catch {
-      // ESRCH — process already gone
-    }
   } catch {
     // process may already be dead or not ours (pid recycled)
+  }
+  if (signalled) {
+    await terminateProcessTree(pid);
+    await delay(500);
   }
   try {
     release({ lockPath: getLockfilePath(configDir), expectedUuid: recordForShutdown.uuid });

@@ -257,6 +257,7 @@ Path: `~/.config/opencode/opencode.json`.
 | `PERPLEXITY_CSRF_TOKEN` | Optional companion to `PERPLEXITY_SESSION_TOKEN`. |
 | `PERPLEXITY_DISABLE_IMPIT_LOGIN` | `1` to force browser-driven login even when Speed Boost is installed. |
 | `PERPLEXITY_VAULT_PASSPHRASE` | Env-var master-key fallback for headless Linux (no keychain). |
+| `PERPLEXITY_BROWSER_IDLE_PARK_MS` | Idle time before the daemon **parks** its browser (closes Chromium, keeps the daemon; the next tool call brings it back — first call after a long idle pays the bootstrap again). Default `1800000` (30 min). `0` disables parking. |
 
 ## Tools exposed over MCP
 

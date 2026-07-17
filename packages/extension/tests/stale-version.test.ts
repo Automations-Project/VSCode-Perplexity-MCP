@@ -62,10 +62,22 @@ describe("removeStaleLock", () => {
 });
 
 describe("killStaleDaemonPid", () => {
+  // The reaper now forks by platform: Windows must TREE-kill (taskkill /T /F —
+  // a plain process.kill is TerminateProcess, the daemon's cleanup never runs,
+  // and its orphaned Chrome keeps the browser-data ProcessSingleton, breaking
+  // every later launch). POSIX keeps SIGTERM so the daemon's own handler can
+  // close its browser gracefully.
   const realKill = process.kill;
-  afterEach(() => { process.kill = realKill; });
+  const realPlatform = process.platform;
+  const setPlatform = (value: string) =>
+    Object.defineProperty(process, "platform", { value, configurable: true });
+  afterEach(() => {
+    process.kill = realKill;
+    setPlatform(realPlatform);
+  });
 
-  it("calls SIGTERM on the supplied pid", () => {
+  it("POSIX: calls SIGTERM on the supplied pid (graceful — daemon closes its own browser)", () => {
+    setPlatform("linux");
     const spy = vi.fn();
     process.kill = spy as unknown as typeof process.kill;
     const log = vi.fn();
@@ -74,7 +86,18 @@ describe("killStaleDaemonPid", () => {
     expect(log).not.toHaveBeenCalled();
   });
 
+  it("Windows: never uses process.kill — tree-kill only, and it must not throw", () => {
+    setPlatform("win32");
+    const spy = vi.fn();
+    process.kill = spy as unknown as typeof process.kill;
+    const log = vi.fn();
+    // taskkill fires against a nonexistent pid; the callback logs, never throws.
+    expect(() => killStaleDaemonPid(0x7fffffff, log)).not.toThrow();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
   it("swallows ESRCH (already dead) silently", () => {
+    setPlatform("linux");
     process.kill = ((): never => {
       const e = new Error("no such process") as Error & { code: string };
       e.code = "ESRCH";
@@ -86,6 +109,7 @@ describe("killStaleDaemonPid", () => {
   });
 
   it("logs (but does not throw) on EPERM", () => {
+    setPlatform("linux");
     process.kill = ((): never => {
       const e = new Error("not permitted") as Error & { code: string };
       e.code = "EPERM";
@@ -97,6 +121,7 @@ describe("killStaleDaemonPid", () => {
   });
 
   it("logs unknown errors without throwing", () => {
+    setPlatform("linux");
     process.kill = ((): never => { throw new Error("boom"); }) as unknown as typeof process.kill;
     const log = vi.fn();
     expect(() => killStaleDaemonPid(42, log)).not.toThrow();
@@ -122,6 +147,10 @@ describe("integration: stale lock kill+clean before respawn", () => {
     const lock = JSON.parse(readFileSync(lockPath, "utf8")) as typeof stale;
     expect(isLockStale(lock, "0.8.9")).toBe(true);
 
+    // Pin POSIX: the Windows branch goes through taskkill (tree-kill), not
+    // process.kill — asserted separately in the killStaleDaemonPid suite.
+    const realPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "linux", configurable: true });
     const killSpy = vi.fn();
     const realKill = process.kill;
     process.kill = killSpy as unknown as typeof process.kill;
@@ -130,6 +159,7 @@ describe("integration: stale lock kill+clean before respawn", () => {
       removeStaleLock(lockPath);
     } finally {
       process.kill = realKill;
+      Object.defineProperty(process, "platform", { value: realPlatform, configurable: true });
     }
 
     expect(killSpy).toHaveBeenCalledWith(31456, "SIGTERM");

@@ -9,6 +9,6 @@ export function launchWithRetry<T>(
     baseDelayMs?: number;
     sleep?: (ms: number) => Promise<void>;
     isRetriable?: (err: unknown) => boolean;
-    beforeAttempt?: (attempt: number) => void;
+    beforeAttempt?: (attempt: number) => void | Promise<void>;
   },
 ): Promise<T>;

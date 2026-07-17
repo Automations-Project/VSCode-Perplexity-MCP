@@ -59,6 +59,24 @@ export function killStaleDaemonPid(
   pid: number,
   log: (line: string) => void,
 ): void {
+  // Windows: tree-kill, or the daemon's Chrome child survives. process.kill
+  // is TerminateProcess there — the daemon's cleanup handler never runs, the
+  // orphaned browser keeps the browser-data ProcessSingleton, and every
+  // launch from the NEW daemon gets forwarded to it ("Opening in existing
+  // browser session" tab spam). Fire-and-forget on purpose: activation must
+  // not block on taskkill, and the ensure loop tolerates a still-dying pid.
+  if (process.platform === "win32") {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { execFile } = require("node:child_process") as typeof import("node:child_process");
+      execFile("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true }, (err) => {
+        if (err) log(`[daemon] taskkill(${pid}) failed: ${err.message}`);
+      });
+    } catch (err) {
+      log(`[daemon] taskkill(${pid}) threw: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return;
+  }
   try {
     process.kill(pid, "SIGTERM");
   } catch (err) {
