@@ -154,6 +154,8 @@ export function getIdeConfigPath(
       return join(home, ".roo", "mcp.json");
     case "codexCli":
       return join(home, ".codex", "config.toml");
+    case "grok":
+      return join(home, ".grok", "config.toml");
     case "continueDev":
       return join(home, ".continue", "config.yaml");
     case "copilot":
@@ -1293,7 +1295,9 @@ const AUTO_CONFIGURABLE_IDES: IdeTarget[] = [
   "cursor", "windsurf", "windsurfNext", "claudeDesktop", "claudeCode", "codexCli",
   "cline", "amp", "geminiCli", "kiro", "vscode", "firebaseStudio",
   // 2026-05 expansion (primary-source-verified):
-  "vs2022", "copilotCli", "openCode", "factoryDroid", "qwenCode"
+  "vs2022", "copilotCli", "openCode", "factoryDroid", "qwenCode",
+  // 2026-07: xAI Grok (config.toml, same shape as Codex CLI).
+  "grok"
 ];
 
 export interface ConfigureTargetsOptions {

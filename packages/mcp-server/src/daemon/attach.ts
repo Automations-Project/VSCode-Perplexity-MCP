@@ -2,7 +2,6 @@ import type { Readable, Writable } from "node:stream";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ensureDaemon } from "./launcher.js";
-import { getPackageVersion } from "../package-version.js";
 
 export class DaemonAttachError extends Error {
   readonly code = "DAEMON_UNREACHABLE";
@@ -59,16 +58,24 @@ export async function attachToDaemon(options: AttachToDaemonOptions = {}): Promi
     daemon = await ensure({
       configDir: options.configDir,
       startTimeoutMs: options.ensureTimeoutMs ?? 15_000,
-      // Refuse to attach to a daemon from a different build. This launcher is
-      // loaded from the same on-disk chunk graph the daemon would have to
-      // import, so our own package version is exactly what a usable daemon
-      // must be running. A stale-version daemon answers /daemon/health
-      // perfectly but its dynamic imports for code-split chunks (e.g. doctor's
-      // hashed chunk) were overwritten by the upgrade and fail forever — the
-      // extension already reaped that on its own activation path, but every
-      // external stdio client (Cursor, Claude Desktop, Cline, …) came through
-      // here and happily attached to it.
-      expectedMcpVersion: getPackageVersion(),
+      // NOTE: an external stdio client (Grok, Cursor, Claude Desktop, Cline, …)
+      // is a GUEST of the daemon, not its owner, so it deliberately does NOT
+      // pass expectedMcpVersion here. It once did (0.8.59) — and that was a
+      // regression: on a version mismatch the gate reclaimed (killed) the
+      // running daemon, then could not spawn a replacement from the bundled
+      // stdio layout, leaving the daemon dead and every client's handshake
+      // failing (issue: Grok "handshake failed / Timed out waiting for daemon
+      // startup" after an in-place extension update).
+      //
+      // A guest must attach to whatever HEALTHY daemon is running, never evict
+      // it — killing the shared daemon disrupts every OTHER attached client and
+      // creates a two-owner port-coordination mess. Version reconciliation is
+      // the EXTENSION HOST's job: it reaps a stale-version daemon on activation
+      // and gates its own ensure with a working spawner (ensureBundledDaemon),
+      // so a normal editor reload after an update brings up a matching daemon.
+      // The narrow risk of attaching to a mildly-stale daemon (a code-split
+      // dynamic import could fail) is far better than a daemon that is dead for
+      // everyone.
     });
   } catch (error) {
     if (options.fallbackStdio) {

@@ -1167,7 +1167,8 @@ async function spawnDetachedDaemon(options: {
   child.unref();
 }
 
-function resolveCliEntry(): string {
+/** @internal Exported only so unit tests can assert the entry-resolution branches. */
+export function resolveCliEntry(): string {
   // tsup CJS-bundles this module into the VS Code extension host, where
   // import.meta.url is polyfilled to empty. Extension callers must pass
   // spawnDaemon (see packages/extension/src/daemon/runtime.ts); this path
@@ -1185,5 +1186,21 @@ function resolveCliEntry(): string {
   if (existsSync(mjsPath)) {
     return mjsPath;
   }
-  return fileURLToPath(new URL("../cli.js", moduleUrl));
+  const jsPath = fileURLToPath(new URL("../cli.js", moduleUrl));
+  if (existsSync(jsPath)) {
+    return jsPath;
+  }
+  // Extension-bundled ESM layout: attach.ts + launcher.ts are inlined into
+  // `dist/mcp/server.mjs`, which has NO `cli.*` sibling — so the paths above
+  // point at files that don't exist and spawn would silently fail. But this
+  // very bundle IS a valid `daemon start` entry (`spawnBundledDaemon` runs
+  // exactly `node server.mjs daemon start`), so spawn ourselves. Without this,
+  // an external stdio client (Grok, Cursor, …) that finds no daemon could not
+  // start the shared one and fell back to its own in-process browser,
+  // defeating the N-clients-one-Chromium design.
+  const selfPath = fileURLToPath(moduleUrl);
+  if (existsSync(selfPath)) {
+    return selfPath;
+  }
+  return jsPath;
 }

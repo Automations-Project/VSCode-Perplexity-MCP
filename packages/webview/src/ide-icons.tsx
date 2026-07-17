@@ -12,6 +12,10 @@ import firebaseStudioLogo from "../../../mcp-tool-icons/firebase-studio.svg?raw"
 import geminiLogo from "../../../mcp-tool-icons/gemini.svg?raw";
 import githubCopilotLogo from "../../../mcp-tool-icons/github-copilot.svg?raw";
 import gooseLogo from "../../../mcp-tool-icons/goose.svg?raw";
+// Grok mark: the official lobehub/@lobehub/icons artwork, vendored as an SVG
+// to match the repo's icon system (and to keep @lobehub/icons' antd + @lobehub/ui
+// peer deps out of this lean webview bundle).
+import grokLogo from "../../../mcp-tool-icons/grok.svg?raw";
 import kiroLogo from "../../../mcp-tool-icons/kiro.svg?raw";
 import lmStudioLogo from "../../../mcp-tool-icons/lmstudio.svg?raw";
 import openCodeLogo from "../../../mcp-tool-icons/opencode.svg?raw";
@@ -90,6 +94,7 @@ export const WarpIcon = createBrandIcon(warpLogo);
 export const TraeIcon = createBrandIcon(traeLogo);
 export const LmStudioIcon = createBrandIcon(lmStudioLogo);
 export const OpenCodeIcon = createBrandIcon(openCodeLogo);
+export const GrokIcon = createBrandIcon(grokLogo);
 // 2026-05 expansion: VS 2022, Copilot CLI, Factory, Qwen Code, Kilo Code don't
 // ship dedicated SVGs in mcp-tool-icons/ yet — reuse closest-fit brand or fall
 // back to GenericIdeIcon. Replace with proper SVGs when added.
@@ -129,6 +134,7 @@ const IDE_ICON_MAP: Record<string, () => React.ReactNode> = {
   qwenCode: GenericIdeIcon,
   kiloCode: GenericIdeIcon,
   lmStudio: LmStudioIcon,
+  grok: GrokIcon,
 };
 
 export function getIdeIcon(ideKey: string): () => React.ReactNode {

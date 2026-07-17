@@ -232,6 +232,26 @@ export const IDE_METADATA: Record<string, IdeMeta> = {
       },
     },
   },
+  grok: {
+    // xAI Grok CLI / Grok Build. User-scoped `~/.grok/config.toml` with the
+    // same `[mcp_servers.<name>]` TOML shape Codex CLI uses (command/args/env,
+    // plus `enabled = true` which buildTomlMcpBlock already emits). Grok reads
+    // AGENTS.md for project rules, same as Codex.
+    displayName: "Grok (xAI)",
+    configFormat: "toml",
+    configScope: "user",
+    autoConfigurable: true,
+    rulesFormat: "md-section",
+    rulesPath: "AGENTS.md",
+    capabilities: {
+      // httpBearerLoopback stays evidence-gated (false) until a dated smoke
+      // record exists; stdio is the verified path (the reporter ran it live).
+      stdio: true,
+      httpBearerLoopback: false,
+      httpOAuthLoopback: false,
+      httpOAuthTunnel: false,
+    },
+  },
   continueDev: {
     displayName: "Continue.dev",
     configFormat: "yaml",

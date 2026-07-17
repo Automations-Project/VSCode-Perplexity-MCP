@@ -22,6 +22,7 @@ const DEFAULTS: ExtensionSettingsSnapshot = {
   autoConfigureCline: false,
   autoConfigureAmp: false,
   autoConfigureCodexCli: false,
+  autoConfigureGrok: false,
   autoRefreshIntervalHours: 0,
   debugVerboseHttp: false,
   oauthConsentCacheTtlHours: 24,
@@ -64,6 +65,10 @@ export function getSettingsSnapshot(): ExtensionSettingsSnapshot {
     autoConfigureCodexCli: configuration.get(
       "autoConfigureCodexCli",
       DEFAULTS.autoConfigureCodexCli
+    ),
+    autoConfigureGrok: configuration.get(
+      "autoConfigureGrok",
+      DEFAULTS.autoConfigureGrok
     ),
     autoRefreshIntervalHours: configuration.get("autoRefreshIntervalHours", DEFAULTS.autoRefreshIntervalHours),
     debugVerboseHttp: configuration.get("debugVerboseHttp", DEFAULTS.debugVerboseHttp),

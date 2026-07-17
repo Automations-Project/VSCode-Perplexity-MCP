@@ -339,6 +339,11 @@
           "default": false,
           "description": "Offer and generate OpenAI Codex CLI MCP configuration."
         },
+        "Perplexity.autoConfigureGrok": {
+          "type": "boolean",
+          "default": false,
+          "description": "Offer and generate xAI Grok (~/.grok/config.toml) MCP configuration."
+        },
         "Perplexity.autoRefreshIntervalHours": {
           "type": "number",
           "default": 0,

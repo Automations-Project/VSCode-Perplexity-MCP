@@ -11,7 +11,9 @@ export type IdeTarget =
   | "aider" | "augment"
   // 2026-05 expansion: file-based MCP clients with first-party docs.
   | "vs2022" | "copilotCli" | "openCode" | "factoryDroid" | "qwenCode"
-  | "kiloCode" | "lmStudio";
+  | "kiloCode" | "lmStudio"
+  // 2026-07: xAI Grok CLI / Grok Build (~/.grok/config.toml).
+  | "grok";
 
 /**
  * Classification of the `command` field on a stored IDE MCP config entry.
@@ -88,6 +90,7 @@ export interface ExtensionSettingsSnapshot {
   autoConfigureCline: boolean;
   autoConfigureAmp: boolean;
   autoConfigureCodexCli: boolean;
+  autoConfigureGrok: boolean;
   autoRefreshIntervalHours: number;
   debugVerboseHttp: boolean;
   /** Hours a granted OAuth consent is remembered before the user is prompted again. 0 disables the cache (modal every time). */

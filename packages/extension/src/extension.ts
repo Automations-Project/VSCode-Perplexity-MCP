@@ -525,6 +525,7 @@ async function maybePromptAutoConfiguration(
     { key: "cline", setting: settings.autoConfigureCline, label: "Cline" },
     { key: "amp", setting: settings.autoConfigureAmp, label: "Amp" },
     { key: "codexCli", setting: settings.autoConfigureCodexCli, label: "Codex CLI" },
+    { key: "grok", setting: settings.autoConfigureGrok, label: "Grok" },
   ];
 
   for (const { key, setting, label } of autoChecks) {
