@@ -255,7 +255,18 @@ export async function getDaemonStatus(options: {
   const stale = !probeHealthy && isStale(record, { echoedUuid: health?.uuid ?? null });
 
   if (stale && options.reclaimStale) {
-    release({ lockPath, expectedUuid: record.uuid });
+    // Fence the loser, don't just drop the lock (issue #15). "Stale" usually
+    // means the pid is dead, but isStale() also condemns a LIVE holder whose
+    // health responder echoes a different uuid. Releasing the lock while that
+    // process lives on left an orphan daemon holding Chromium + the
+    // browser-data profile singleton; the next ensure then spawned a fresh
+    // daemon straight into a profile-lock fight with it ("Target page,
+    // context or browser has been closed", 5-daemon pile-up in the report).
+    if (record.pid !== process.pid && isProcessAliveForReclaim(record.pid)) {
+      await reclaimDaemonProcess(record, configDir, "stale lock held by a live process");
+    } else {
+      release({ lockPath, expectedUuid: record.uuid });
+    }
     return {
       running: false,
       healthy: false,
@@ -281,11 +292,28 @@ export async function getDaemonStatus(options: {
   };
 }
 
+/** Alive check for reclaim decisions. EPERM = alive, owned by someone else. */
+function isProcessAliveForReclaim(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error as { code?: unknown }).code === "EPERM"
+    );
+  }
+}
+
 /**
  * Stop the process holding the lock and free it, so the caller can start a
- * replacement. Used for the two "alive but unusable" cases: a wedged daemon
- * (never answers health) and a version-mismatched one (answers, wrong code
- * graph). Refuses to signal our own pid.
+ * replacement. Used for the "alive but unusable" cases: a wedged daemon
+ * (never answers health), a version-mismatched one (answers, wrong code
+ * graph), and a live holder judged stale by uuid mismatch (issue #15).
+ * Refuses to signal our own pid.
  */
 async function reclaimDaemonProcess(
   record: DaemonLockRecord,

@@ -252,7 +252,7 @@ Path: `~/.config/opencode/opencode.json`.
 | `PERPLEXITY_BROWSER_CHANNEL` | `chrome` / `msedge` / `chromium`. Channel passed to Patchright. |
 | `PERPLEXITY_CHROME_PATH` | **Legacy** alias for `PERPLEXITY_BROWSER_PATH`. Still honored. |
 | `PERPLEXITY_HEADLESS_ONLY` | `1` to skip the headed Turnstile bootstrap and rely on cached `cf_clearance`. Useful on servers; fails if no clearance is cached yet. Also forces the persistent search context headless. |
-| `PERPLEXITY_PERSISTENT_HEADED` | `1` forces the persistent search context headed-offscreen, `0` forces it headless. Default: headed-offscreen where a display exists (Cloudflare re-challenges headless contexts — issue #12), headless on Linux with no `DISPLAY`/`WAYLAND_DISPLAY`. Overrides `PERPLEXITY_HEADLESS_ONLY`. |
+| `PERPLEXITY_PERSISTENT_HEADED` | `1` opts the persistent search context into headed-offscreen — try this if Cloudflare re-challenges your headless session (issue #12). **Default: headless.** The headed window is long-lived and, despite off-screen positioning, has a taskbar presence and can be re-placed on-screen by ordinary window-manager events. Ignored on Linux without `DISPLAY`/`WAYLAND_DISPLAY` (a headed launch would kill the daemon at start). |
 | `PERPLEXITY_SESSION_TOKEN` | Pre-supplied `__Secure-next-auth.session-token` (skips interactive login). |
 | `PERPLEXITY_CSRF_TOKEN` | Optional companion to `PERPLEXITY_SESSION_TOKEN`. |
 | `PERPLEXITY_DISABLE_IMPIT_LOGIN` | `1` to force browser-driven login even when Speed Boost is installed. |

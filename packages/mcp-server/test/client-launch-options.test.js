@@ -38,26 +38,15 @@ describe("resolvePhase2Headless (issue #12)", () => {
     setPlatform(realPlatform);
   });
 
-  it("paints headed-offscreen on non-Linux so CF does not re-challenge", () => {
-    for (const platform of ["darwin", "win32"]) {
+  // The headed-offscreen DEFAULT shipped briefly for #12 and was reverted the
+  // same day: a long-lived headed window has a taskbar icon and ordinary
+  // window-manager events re-place it on-screen — users saw a permanent
+  // visible Chrome. Headed is opt-in now.
+  it("defaults to headless on every platform (visible-browser regression guard)", () => {
+    for (const platform of ["darwin", "win32", "linux"]) {
       setPlatform(platform);
-      expect(resolvePhase2Headless(false)).toBe(false);
+      expect(resolvePhase2Headless(false)).toBe(true);
     }
-  });
-
-  it("stays headless on Linux with no display, so the daemon still starts", () => {
-    setPlatform("linux");
-    expect(resolvePhase2Headless(false)).toBe(true);
-  });
-
-  it("paints headed-offscreen on Linux when X or Wayland is available", () => {
-    setPlatform("linux");
-    process.env.DISPLAY = ":0";
-    expect(resolvePhase2Headless(false)).toBe(false);
-
-    delete process.env.DISPLAY;
-    process.env.WAYLAND_DISPLAY = "wayland-0";
-    expect(resolvePhase2Headless(false)).toBe(false);
   });
 
   it("honours PERPLEXITY_HEADLESS_ONLY=1 (servers, airgapped, doctor probe)", () => {
@@ -65,13 +54,25 @@ describe("resolvePhase2Headless (issue #12)", () => {
     expect(resolvePhase2Headless(true)).toBe(true);
   });
 
-  it("lets PERPLEXITY_PERSISTENT_HEADED override the inference both ways", () => {
-    setPlatform("linux"); // no display: would infer headless
+  it("PERPLEXITY_PERSISTENT_HEADED=1 opts into headed-offscreen (the #12 mitigation)", () => {
+    setPlatform("win32");
     process.env.PERPLEXITY_PERSISTENT_HEADED = "1";
     expect(resolvePhase2Headless(false)).toBe(false);
-    expect(resolvePhase2Headless(true)).toBe(false); // beats HEADLESS_ONLY
+    expect(resolvePhase2Headless(true)).toBe(false); // explicit opt-in beats HEADLESS_ONLY
 
-    setPlatform("darwin"); // would infer headed
+    setPlatform("linux");
+    process.env.DISPLAY = ":0";
+    expect(resolvePhase2Headless(false)).toBe(false);
+  });
+
+  it("refuses the headed opt-in on display-less Linux — a dead daemon helps nobody", () => {
+    setPlatform("linux"); // no DISPLAY/WAYLAND_DISPLAY
+    process.env.PERPLEXITY_PERSISTENT_HEADED = "1";
+    expect(resolvePhase2Headless(false)).toBe(true);
+  });
+
+  it("PERPLEXITY_PERSISTENT_HEADED=0 still forces headless explicitly", () => {
+    setPlatform("darwin");
     process.env.PERPLEXITY_PERSISTENT_HEADED = "0";
     expect(resolvePhase2Headless(false)).toBe(true);
   });

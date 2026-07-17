@@ -217,15 +217,36 @@ export function buildLaunchOptions(headless: boolean): Record<string, any> {
  */
 export function resolvePhase2Headless(skipHeaded: boolean): boolean {
   const override = process.env.PERPLEXITY_PERSISTENT_HEADED;
-  if (override === "1") return false;
+  if (override === "1") {
+    // Explicit opt-in to headed-offscreen — the #12 mitigation. Still refuse
+    // on a display-less Linux box: Chromium throws "Missing X server or
+    // $DISPLAY" there, which does not match LOCK_CONTENTION_RE, so init()
+    // rethrows and the daemon dies on start. A dead daemon helps nobody.
+    const canPaint =
+      process.platform !== "linux" || !!process.env.DISPLAY || !!process.env.WAYLAND_DISPLAY;
+    if (!canPaint) {
+      console.error(
+        "[perplexity-mcp] PERPLEXITY_PERSISTENT_HEADED=1 ignored: no DISPLAY/WAYLAND_DISPLAY — staying headless.",
+      );
+      return true;
+    }
+    return false;
+  }
   if (override === "0") return true;
   if (skipHeaded) return true;
-  // ponytail: env probe, not a display handshake. An exported DISPLAY pointing
-  // at a dead X server still fails — upgrade to an xdpyinfo/xvfb check only if
-  // that shows up in the wild.
-  const canPaint =
-    process.platform !== "linux" || !!process.env.DISPLAY || !!process.env.WAYLAND_DISPLAY;
-  return !canPaint;
+  // Default: HEADLESS. A headed-offscreen default shipped briefly for issue
+  // #12 ("CF re-challenges the headless persistent context") and was reverted
+  // the same day: the off-screen trick was designed for the ~20s bootstrap
+  // (issue #9), but a LONG-LIVED headed window has a taskbar icon and gets
+  // re-placed on-screen by ordinary window-manager events — users saw a
+  // permanent visible Chrome. Meanwhile #12's diagnosis was never confirmed
+  // for the cf_clearance REUSE path (the repro only showed headless cannot
+  // SOLVE a challenge, which Phase 1 exists for), and issue #15 revealed a
+  // 5-daemon pile-up on that same machine fighting over one browser-data —
+  // which produces the identical "Target page ... has been closed" error.
+  // Anyone genuinely CF-blocked on reuse can opt in with
+  // PERPLEXITY_PERSISTENT_HEADED=1.
+  return true;
 }
 
 // Block-shape contracts used by parseASIReconnectSSE / extractFromWorkflowBlock.
