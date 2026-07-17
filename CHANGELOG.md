@@ -6,6 +6,10 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed — history lock crashed the second writer on Windows delete-pending (CI red on the lifecycle commit)
+
+- **`openSync(path, "wx")` on Windows fails `EPERM` — not `EEXIST` — while a peer's release `rmSync` is mid-flight** ([`history-lock.js`](packages/mcp-server/src/history-lock.js)). The file sits in *delete-pending*: it still exists, is marked for deletion, and opening it is denied until the handle count drops. The lock treated any non-`EEXIST` open error as fatal, so under real contention the second writer **crashed with an unhandled `EPERM`** instead of backing off — exactly what the windows-latest CI cell caught (Ubuntu can't produce this state; local runs missed the window on a fast disk). `EPERM`/`EACCES`/`EBUSY` are now classified as "busy — retry with backoff", stale-reclaim stays `EEXIST`-only (a delete-pending file must not be "reclaimed"), and genuinely unexpected errors (e.g. `EIO`) still propagate. Covered via an injectable open seam — the race cannot be produced deterministically with the real fs — plus a 10× cross-process stress run; the `EPERM` test fails against the pre-fix classification by construction. Full suite **1347 passed / 154 files**.
+
 ### Daemon lifecycle hardening — orphan browsers, reinit storms, idle cost
 
 > **Field anatomy this addresses** (diagnostics bundle, 2026-07-17): an orphaned Chrome kept holding `browser-data`'s ProcessSingleton after its daemon died. Every later `launchPersistentContext` was **forwarded to the orphan** (`"Opening in existing browser session"`), the new chrome.exe exited 0, Playwright reported `"Target page, context or browser has been closed"` — and each retry opened another tab in the orphan while three editor windows drove **138 reinit cycles**. The user watched a browser fill up with `about:blank` tabs.

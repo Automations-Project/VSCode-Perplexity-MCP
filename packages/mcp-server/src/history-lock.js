@@ -87,7 +87,9 @@ function isStaleLock(lockPath) {
  *
  * @param {string} lockPath
  * @param {() => any} fn
- * @param {{ attempts?: number, backoffMs?: number }} [opts]
+ * @param {{ attempts?: number, backoffMs?: number, openSyncImpl?: typeof openSync }} [opts]
+ *   `openSyncImpl` is a test-only seam: the Windows delete-pending EPERM race
+ *   cannot be produced deterministically with the real fs.
  */
 let depth = 0;
 export function withFileLock(lockPath, fn, opts = {}) {
@@ -110,17 +112,29 @@ export function withFileLock(lockPath, fn, opts = {}) {
     // by the fail-open path rather than throwing out of a history write.
   }
 
+  const open = opts.openSyncImpl ?? openSync;
   for (let i = 0; i < attempts && !acquired; i++) {
     try {
-      const fd = openSync(lockPath, "wx");
+      const fd = open(lockPath, "wx");
       writeFileSync(fd, `${process.pid}\n${Date.now()}`);
       closeSync(fd);
       acquired = true;
     } catch (err) {
-      if (err?.code !== "EEXIST") throw err;
+      const code = err?.code;
+      // EEXIST: held by a peer. EPERM/EACCES/EBUSY: Windows transients — the
+      // most important being DELETE-PENDING: a peer's release rmSync is
+      // mid-flight, the file still exists but is marked for deletion, and
+      // opening it fails EPERM (not EEXIST) until the delete completes.
+      // Treating that as fatal crashed the second writer under contention on
+      // CI's slower disks (worker died with an unhandled EPERM). All of these
+      // mean the same thing: busy — back off and retry. Anything else is a
+      // genuine error and propagates.
+      if (code !== "EEXIST" && code !== "EPERM" && code !== "EACCES" && code !== "EBUSY") {
+        throw err;
+      }
       // Reclaim a lock whose owner died mid-write — but only once, so a
       // pathological loop can never livelock two processes against each other.
-      if (!reclaimed && isStaleLock(lockPath)) {
+      if (code === "EEXIST" && !reclaimed && isStaleLock(lockPath)) {
         reclaimed = true;
         try {
           rmSync(lockPath, { force: true });

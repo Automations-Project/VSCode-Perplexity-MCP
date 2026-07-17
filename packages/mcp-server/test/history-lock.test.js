@@ -110,6 +110,68 @@ describe("withFileLock", () => {
     expect(existsSync(lockPath)).toBe(false); // released
   });
 
+  // Broke CI on windows-latest: openSync(path,"wx") on Windows fails EPERM —
+  // not EEXIST — while a peer's release rmSync is mid-flight (delete-pending:
+  // the file exists but is marked for deletion until the handle count drops).
+  // Treating non-EEXIST as fatal crashed the second writer under contention.
+  // The race needs a slow disk + exact timing, so it is reproduced through the
+  // injectable open seam rather than the real fs.
+  it("retries (not crashes) on Windows delete-pending EPERM during a peer's release", () => {
+    const lockPath = tempLock();
+    let callCount = 0;
+    const flakyOpen = (path, flags) => {
+      callCount += 1;
+      if (callCount <= 2) {
+        const err = new Error("EPERM: operation not permitted, open");
+        err.code = "EPERM";
+        throw err;
+      }
+      const { openSync } = require("node:fs");
+      return openSync(path, flags);
+    };
+
+    let ran = false;
+    expect(() =>
+      withFileLock(lockPath, () => { ran = true; }, { attempts: 10, backoffMs: 1, openSyncImpl: flakyOpen }),
+    ).not.toThrow();
+    expect(ran).toBe(true);
+    expect(callCount).toBe(3); // two EPERM retries, then acquired
+    expect(existsSync(lockPath)).toBe(false); // and released
+  });
+
+  it("EBUSY and EACCES are retried the same way", () => {
+    for (const code of ["EBUSY", "EACCES"]) {
+      const lockPath = tempLock();
+      let first = true;
+      const flakyOpen = (path, flags) => {
+        if (first) {
+          first = false;
+          const err = new Error(`${code}: transient`);
+          err.code = code;
+          throw err;
+        }
+        return require("node:fs").openSync(path, flags);
+      };
+      let ran = false;
+      expect(() =>
+        withFileLock(lockPath, () => { ran = true; }, { attempts: 5, backoffMs: 1, openSyncImpl: flakyOpen }),
+      ).not.toThrow();
+      expect(ran).toBe(true);
+    }
+  });
+
+  it("genuinely unexpected open errors still propagate", () => {
+    const lockPath = tempLock();
+    const brokenOpen = () => {
+      const err = new Error("EIO: disk on fire");
+      err.code = "EIO";
+      throw err;
+    };
+    expect(() =>
+      withFileLock(lockPath, () => {}, { attempts: 3, backoffMs: 1, openSyncImpl: brokenOpen }),
+    ).toThrow(/EIO/);
+  });
+
   it("proceeds fail-open rather than throwing when the lock stays busy", () => {
     const lockPath = tempLock();
     // Held by a live process (us) with a fresh mtime → never reclaimable.
