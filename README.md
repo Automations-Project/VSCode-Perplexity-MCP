@@ -1,3 +1,5 @@
+[![MCP Toplist](https://mcptoplist.com/badge/glama%2FAutomations-Project%2FVSCode-Perplexity-MCP.svg)](https://mcptoplist.com/server/glama%2FAutomations-Project%2FVSCode-Perplexity-MCP)
+
 <div align="center">
 
 <p align="center">
